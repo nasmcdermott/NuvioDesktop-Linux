@@ -383,7 +383,12 @@ fun AuthScreen(
                          * preview handler), and the row's buttons keep their explicit Left/Right so
                          * the two halves of the action row stay in step.
                          */
-                        .arrowKeyFocusNavigation(releaseWhenStuck = true),
+                        .arrowKeyFocusNavigation(releaseWhenStuck = true)
+                        // If focus lands on any control other than the initial target, the person
+                        // has taken over: stop the startup retry so it cannot pull focus back.
+                        .onFocusChanged { state ->
+                            if (state.hasFocus && !initialTargetFocused) userInteractedWithAuth = true
+                        },
                     horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.Center,
                 ) {
