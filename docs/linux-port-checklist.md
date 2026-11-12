@@ -39,7 +39,7 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 ## Port slices
 
 - [x] Linux input / gamepad / media keys / OSK integration — `dabbe260`
-- [ ] Linux player / native bridge / HUD
+- [x] Linux player / native bridge / HUD — `6e677db4`
 - [ ] Build / packaging / native runtime
 - [ ] Navigation / focus / shared UI
 - [ ] Auth / login / QR
@@ -68,3 +68,8 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - Player / YouTube shared — 1
 
 The full three-way audit is in `docs/linux-port-audit.md` on `feature/linux-1.36-goals`.
+
+## Known pre-existing test failures
+
+The three `linux-hud-volume-nav.test.cjs` cases fail identically on the old branch. They are not introduced by the port.
+
