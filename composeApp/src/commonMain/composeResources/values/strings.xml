@@ -4285,6 +4285,10 @@
     <string name="shortcut_app_select_focused">Select / open focused item</string>
     <string name="shortcut_app_go_back">Go back</string>
     <string name="shortcut_app_dismiss_overlay">Close / dismiss overlay</string>
+    <string name="shortcut_app_move_up">Move focus up</string>
+    <string name="shortcut_app_move_down">Move focus down</string>
+    <string name="shortcut_app_move_left">Move focus left</string>
+    <string name="shortcut_app_move_right">Move focus right</string>
     <string name="shortcut_app_voice_command">Voice command (push to talk)</string>
     <string name="settings_shortcuts_gamepad_in_player">In player: %1$s</string>
     <string name="settings_shortcuts_page_down">Page down (row in TV mode, page otherwise)</string>

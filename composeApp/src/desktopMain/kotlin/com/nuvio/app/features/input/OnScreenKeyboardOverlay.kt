@@ -38,6 +38,7 @@ import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -73,7 +74,10 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.TextInputFocusTracker
 import com.nuvio.app.core.ui.nuvio
 import java.awt.Cursor
+import java.awt.KeyEventDispatcher
+import java.awt.KeyboardFocusManager
 import java.awt.MouseInfo
+import java.awt.event.KeyEvent
 import kotlin.math.roundToInt
 import kotlinx.coroutines.flow.combine
 
@@ -96,6 +100,47 @@ import kotlinx.coroutines.flow.combine
 @Composable
 internal fun OnScreenKeyboardOverlay() {
     val visible by OnScreenKeyboard.visible.collectAsState()
+
+    // A remote that emits arrow keys is a keyboard, not a gamepad, so it never passes through
+    // GamepadInput and OnScreenKeyboard.consume() cannot see it. While the panel is up, take the
+    // arrows here before the page behind can move focus or a text field can move its caret.
+    val arrowDispatcher = remember {
+        KeyEventDispatcher { event ->
+            if (!OnScreenKeyboard.visible.value || event.id != KeyEvent.KEY_PRESSED) {
+                return@KeyEventDispatcher false
+            }
+            when (event.keyCode) {
+                KeyEvent.VK_UP -> {
+                    OnScreenKeyboard.moveSelection(OskDirection.Up)
+                }
+                KeyEvent.VK_DOWN -> {
+                    OnScreenKeyboard.moveSelection(OskDirection.Down)
+                }
+                KeyEvent.VK_LEFT -> {
+                    OnScreenKeyboard.moveSelection(OskDirection.Left)
+                }
+                KeyEvent.VK_RIGHT -> {
+                    OnScreenKeyboard.moveSelection(OskDirection.Right)
+                }
+                // Enter is the OSK's Select, not the page's submit. Without this, collapsing the
+                // keyboard with Enter signs the form in behind it.
+                KeyEvent.VK_ENTER -> {
+                    OnScreenKeyboard.press(OskLayout.keyAt(OnScreenKeyboard.selection.value))
+                }
+                // Escape closes the panel instead of opening the page's server menu.
+                KeyEvent.VK_ESCAPE -> {
+                    OnScreenKeyboard.dismiss()
+                }
+                else -> return@KeyEventDispatcher false
+            }
+            true
+        }
+    }
+    DisposableEffect(Unit) {
+        val focusManager = KeyboardFocusManager.getCurrentKeyboardFocusManager()
+        focusManager.addKeyEventDispatcher(arrowDispatcher)
+        onDispose { focusManager.removeKeyEventDispatcher(arrowDispatcher) }
+    }
 
     LaunchedEffect(Unit) {
         // One place decides visibility, so the panel cannot be left up by a pad that was unplugged
@@ -150,6 +195,13 @@ private fun DockedKeyboard(transition: MutableTransitionState<Boolean>, windowWi
                         modifier = Modifier.fillMaxWidth(),
                         header = {
                             Spacer(Modifier.weight(1f))
+                            PanelButton(
+                                icon = Icons.Default.PictureInPictureAlt,
+                                label = "Undock",
+                                onClick = { OskPlacement.setFloating(true) },
+                            )
+                        },
+                        sideHeader = {
                             PanelButton(
                                 icon = Icons.Default.PictureInPictureAlt,
                                 label = "Undock",
@@ -347,6 +399,7 @@ private fun OnScreenKeyboardPanel(
     shape: Shape,
     modifier: Modifier,
     header: @Composable RowScope.() -> Unit,
+    sideHeader: @Composable () -> Unit = {},
     overlay: @Composable BoxScope.() -> Unit = {},
 ) {
     val tokens = MaterialTheme.nuvio
@@ -354,6 +407,38 @@ private fun OnScreenKeyboardPanel(
     val caps by OnScreenKeyboard.caps.collectAsState()
     val padEnabled by GamepadSettingsRepository.enabledState.collectAsState()
     val padConnected by GamepadSettingsRepository.connected.collectAsState()
+
+    val legendText = if (padEnabled && padConnected) {
+        "A Select\nB Delete\nX Space\nY Caps\nLB/RB Caret\nStart Done\nBack Close"
+    } else {
+        "Click a key to type\nDone to finish"
+    }
+    val keyGrid: @Composable (Modifier) -> Unit = { gridModifier ->
+        Column(
+            // Capped so the keys stay a comfortable size on a large TV instead of stretching
+            // into a strip the user has to sweep across.
+            modifier = gridModifier.widthIn(max = KeyGridMaxWidth),
+            verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+        ) {
+            OskLayout.rows.forEachIndexed { rowIndex, row ->
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
+                ) {
+                    row.forEachIndexed { columnIndex, key ->
+                        KeyCell(
+                            key = key,
+                            caps = caps,
+                            selected = selection.row == rowIndex && selection.column == columnIndex,
+                            // Action keys are wider, so the bottom row reads as controls
+                            // rather than as four oversized letters.
+                            modifier = Modifier.weight(if (key is OskKey.Action) 2.5f else 1f),
+                        )
+                    }
+                }
+            }
+        }
+    }
 
     // The modal glass (see NuvioDialogSurface): the night base it needs over busy content, the
     // glass fill and the one-pixel edge, so the panel matches the dialogs it now opens over.
@@ -369,56 +454,56 @@ private fun OnScreenKeyboardPanel(
         color = Color.Transparent,
         shadowElevation = 16.dp,
     ) {
-        Box {
-            Column(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
-                horizontalAlignment = Alignment.CenterHorizontally,
-                verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
-            ) {
+        BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
+            // On a wide panel the legend and the dock/undock control sit beside the keys instead
+            // of above and below them. That lets the key grid use the panel's full height, so the
+            // keys are taller and the panel background hugs them with only a small edge.
+            val sideControls = maxWidth >= KeyGridMaxWidth + 320.dp
+            if (sideControls) {
                 Row(
-                    modifier = Modifier.widthIn(max = KeyGridMaxWidth).fillMaxWidth(),
+                    modifier = Modifier.align(Alignment.Center),
                     verticalAlignment = Alignment.CenterVertically,
-                    content = header,
-                )
+                ) {
+                    Box(modifier = Modifier.padding(end = NuvioTokens.Space.s12)) {
+                        sideHeader()
+                    }
+                    keyGrid(
+                        Modifier
+                            .width(KeyGridMaxWidth)
+                            .padding(vertical = NuvioTokens.Space.s4),
+                    )
+                    Text(
+                        text = legendText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        textAlign = TextAlign.Start,
+                        modifier = Modifier
+                            .padding(start = NuvioTokens.Space.s12)
+                            .widthIn(max = 160.dp),
+                    )
+                }
+            } else {
                 Column(
-                    // Capped so the keys stay a comfortable size on a large TV instead of stretching
-                    // into a strip the user has to sweep across.
-                    modifier = Modifier.widthIn(max = KeyGridMaxWidth),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .padding(horizontal = NuvioTokens.Space.s16, vertical = NuvioTokens.Space.s12),
+                    horizontalAlignment = Alignment.CenterHorizontally,
                     verticalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
                 ) {
-                    OskLayout.rows.forEachIndexed { rowIndex, row ->
-                        Row(
-                            modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s4),
-                        ) {
-                            row.forEachIndexed { columnIndex, key ->
-                                KeyCell(
-                                    key = key,
-                                    caps = caps,
-                                    selected = selection.row == rowIndex && selection.column == columnIndex,
-                                    // Action keys are wider, so the bottom row reads as controls
-                                    // rather than as four oversized letters.
-                                    modifier = Modifier.weight(if (key is OskKey.Action) 2.5f else 1f),
-                                )
-                            }
-                        }
-                    }
+                    Row(
+                        modifier = Modifier.widthIn(max = KeyGridMaxWidth).fillMaxWidth(),
+                        verticalAlignment = Alignment.CenterVertically,
+                        content = header,
+                    )
+                    keyGrid(Modifier)
+                    Text(
+                        text = legendText,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                        textAlign = TextAlign.Center,
+                        modifier = Modifier.padding(top = NuvioTokens.Space.s4),
+                    )
                 }
-                Text(
-                    // Pad legend only when a pad could have opened this; a mouse-only user cannot
-                    // press any of those buttons.
-                    text = if (padEnabled && padConnected) {
-                        "A Select   ·   B Delete   ·   X Space   ·   Y Caps   ·   LB/RB Caret   ·   Start Done   ·   Back Close"
-                    } else {
-                        "Click a key to type   ·   Done to finish"
-                    },
-                    style = MaterialTheme.typography.bodySmall,
-                    color = tokens.colors.textMuted,
-                    textAlign = TextAlign.Center,
-                    modifier = Modifier.padding(top = NuvioTokens.Space.s4),
-                )
             }
             overlay()
         }
@@ -442,7 +527,7 @@ private fun KeyCell(
     val shape = NuvioGlass.Shape
     Box(
         modifier = modifier
-            .height(46.dp)
+            .height(54.dp)
             // Keys are glass like the settings controls; the highlighted one is the accent seen
             // through it. accentFill rather than a flat accent so custom themes paint it with their
             // gradient; it resolves to the solid accent on the built-in themes.
@@ -481,13 +566,13 @@ private fun KeyCell(
 
 private const val SelectedKeyGlassAlpha = 0.85f
 
-private val KeyGridMaxWidth = 760.dp
+private val KeyGridMaxWidth = 850.dp
 
 /** The full-size panel's width: the key grid plus its side padding. Floating sizes scale from it. */
-private val BasePanelWidth = 792.dp
+private val BasePanelWidth = 882.dp
 
 /** Roughly the full-size panel's height: header, five key rows, legend and padding. */
-private const val BasePanelHeightDp = 340f
+private const val BasePanelHeightDp = 350f
 private const val DockedMaxHeightFraction = 0.32f
 private const val MinDockedScale = 0.55f
 private const val FloatingWindowMarginDp = 16f

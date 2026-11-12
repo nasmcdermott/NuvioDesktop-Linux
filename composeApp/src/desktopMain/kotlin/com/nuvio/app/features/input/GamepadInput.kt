@@ -73,6 +73,8 @@ object GamepadInput {
     private const val ALL_SLOTS = 0xFF
 
     private const val POLL_INTERVAL_MS = 16L
+    /** Extra travel a resting stick must exceed before it starts repeating a direction. */
+    private const val STICK_ENTER_MARGIN = 0.10f
 
     /**
      * Querying an empty XInput slot is the slow case, and re-enumerating HID devices is slower
@@ -172,7 +174,14 @@ object GamepadInput {
     }
 
     private fun startPolling() {
-        val backend = createGamepadBackend(DesktopHostOs.current) ?: return
+        val backend = createGamepadBackend(DesktopHostOs.current) ?: run {
+            GamepadDiagnostics.log { "no controller backend for ${DesktopHostOs.current}" }
+            return
+        }
+        GamepadDiagnostics.log {
+            "listener starting: os=${DesktopHostOs.current} enabled=${GamepadSettingsRepository.enabled} " +
+                "bridge=${com.nuvio.app.features.player.desktop.NativePlayerBridge.linuxLoadDiagnostics()}"
+        }
         if (!started.compareAndSet(false, true)) return
         val myGeneration = generation.get()
         thread = Thread({
@@ -213,6 +222,8 @@ object GamepadInput {
         // Buttons whose key press is still down, waiting for the button to come up to release it.
         val heldKeys = HashMap<GamepadButton, Int>()
         var connectedMask = 0
+        var previousConnectedMask = -1
+        val stickHysteresis = StickHysteresis()
         var nextRescanAt = 0L
 
         try {
@@ -224,6 +235,7 @@ object GamepadInput {
                     releaseHeldKeys(heldKeys)
                     connectedMask = 0
                     nextRescanAt = 0L
+                    stickHysteresis.reset()
                     if (isLinux) {
                         backend.close()
                         linuxSession.publish({ isCurrent(myGeneration) }) { GamepadSettingsRepository.setConnected(false) }
@@ -264,7 +276,19 @@ object GamepadInput {
                     if (!isLinux) GamepadSettingsRepository.setConnected(connectedMask != 0)
                 }
 
-                val current = if (connectedMask == 0) emptySet() else readPressed(state, connectedMask)
+                if (connectedMask != previousConnectedMask) {
+                    previousConnectedMask = connectedMask
+                    GamepadDiagnostics.log {
+                        "controllers mask=0x${connectedMask.toString(16)} " +
+                            "(${if (connectedMask == 0) "none" else "slots " + (0 until 8).filter { connectedMask and (1 shl it) != 0 }})"
+                    }
+                }
+                val current = if (connectedMask == 0) {
+                    stickHysteresis.reset()
+                    emptySet()
+                } else {
+                    readPressed(state, connectedMask, hysteresis = stickHysteresis)
+                }
                 if (isLinux) {
                     if (!linuxSession.publish({ isCurrent(myGeneration) }) {
                         GamepadSettingsRepository.setConnected(connectedMask != 0)
@@ -309,10 +333,33 @@ object GamepadInput {
      * Collapses every connected pad into one set of held controls. Merging rather than picking a
      * "primary" pad means a second controller just works, and costs only the OR.
      */
+    /**
+     * Stick directions with hysteresis: a direction engages only above the dead zone plus a margin,
+     * and holds until the stick falls back inside the dead zone. A resting analogue stick that sits
+     * just past the configured dead zone (common on worn/Bluetooth pads, and the value drifts) then
+     * no longer registers as a permanently held D-pad: that produced continuous synthetic arrows
+     * (fighting the real keyboard and remote) and continuous seeks during playback.
+     */
+    internal class StickHysteresis {
+        private val current = arrayOfNulls<StickDirection>(SLOT_COUNT)
+
+        fun direction(slot: Int, rawX: Int, rawY: Int, deadZone: Float): StickDirection? {
+            val existing = current[slot]
+            val threshold = if (existing == null) deadZone + STICK_ENTER_MARGIN else deadZone
+            val next = stickDirection(rawX, rawY, threshold)
+            current[slot] = next
+            return next
+        }
+
+        fun reset(slot: Int) { current[slot] = null }
+        fun reset() { current.fill(null) }
+    }
+
     internal fun readPressed(
         state: IntArray,
         connectedMask: Int,
         deadZone: Float = GamepadSettingsRepository.deadZone,
+        hysteresis: StickHysteresis? = null,
     ): Set<GamepadButton> {
         val held = HashSet<GamepadButton>()
         for (slot in 0 until SLOT_COUNT) {
@@ -322,7 +369,12 @@ object GamepadInput {
             buttonBits.forEach { (button, bit) -> if (buttons and bit != 0) held += button }
             if (state[base + 1] >= TRIGGER_PRESS_THRESHOLD) held += GamepadButton.LeftTrigger
             if (state[base + 2] >= TRIGGER_PRESS_THRESHOLD) held += GamepadButton.RightTrigger
-            stickDirection(state[base + 3], state[base + 4], deadZone)?.let { held += leftStickButton(it) }
+            val left = if (hysteresis != null) {
+                hysteresis.direction(slot, state[base + 3], state[base + 4], deadZone)
+            } else {
+                stickDirection(state[base + 3], state[base + 4], deadZone)
+            }
+            left?.let { held += leftStickButton(it) }
             stickDirection(
                 state[base + 5],
                 state[base + 6],
@@ -406,6 +458,9 @@ object GamepadInput {
         heldKeys: MutableMap<GamepadButton, Int>,
         now: Long,
     ) {
+        if (current != previous) {
+            GamepadDiagnostics.log { "raw buttons=${current.joinToString { it.name }} previous=${previous.joinToString { it.name }}" }
+        }
         previous.forEach { button ->
             if (button !in current) heldKeys.remove(button)?.let(GamepadKeyInjector::release)
         }
@@ -470,13 +525,25 @@ object GamepadInput {
 
     private fun send(button: GamepadButton, inPlayer: Boolean, heldKeys: MutableMap<GamepadButton, Int>) {
         lastInputAtMs = System.currentTimeMillis()
-        // Picking up the pad while a text field already holds focus summons the keyboard, for the
-        // case where the field was reached with the mouse.
-        if (OnScreenKeyboard.onPadInputWhileTextFocused(TextInputFocusTracker.active.value)) return
         // While the on-screen keyboard is up it owns the pad entirely, including the buttons it does
         // not use. A press falling through to the screen behind would fire a browsing shortcut in
         // the middle of a word.
         if (OnScreenKeyboard.consume(button)) return
+        if (TextInputFocusTracker.active.value) {
+            // B/Back leaves the field instead of deleting a character or reopening the on-screen
+            // keyboard. The field's own Escape ends the edit and moves focus to a valid neighbour,
+            // so a controller can always get out of a text box.
+            if (button == GamepadButton.B || button == GamepadButton.Back) {
+                GamepadKeyInjector.sendKeyCode(java.awt.event.KeyEvent.VK_ESCAPE)
+                return
+            }
+            // Any other pad button with a field focused summons the keyboard, for a field reached
+            // with the mouse.
+            if (OnScreenKeyboard.onPadInputWhileTextFocused(true)) {
+                GamepadDiagnostics.log { "pad press while text field focused: opened on-screen keyboard" }
+                return
+            }
+        }
         val binding = GamepadDefaults.binding(button)
         val target = if (inPlayer) binding.player else binding.browsing
         // fork:voice-control - straight to the voice session rather than a synthesized key, so it
@@ -485,6 +552,7 @@ object GamepadInput {
             VoiceControlRepository.toggleListening()
             return
         }
+        GamepadDiagnostics.log { "translate ${button.name} -> $target (player=$inPlayer)" }
         if (holdsUntilRelease(target)) {
             GamepadKeyInjector.press(target)?.let { keyCode -> heldKeys[button] = keyCode }
         } else {

@@ -168,6 +168,13 @@ class GamepadInputTest {
                 AppShortcutAction.OpenYouTube,
                 // On a music page the pad's Y (the trailer key) does this; elsewhere the player is a D-pad stop away.
                 AppShortcutAction.FocusMusicPlayer,
+                // Directional navigation is the D-pad itself, bound as fixed arrow keys rather than
+                // as these rebindable keyboard actions. The four names exist so keyboard users can
+                // rebind movement; the pad already performs the movement.
+                AppShortcutAction.MoveUp,
+                AppShortcutAction.MoveDown,
+                AppShortcutAction.MoveLeft,
+                AppShortcutAction.MoveRight,
             ),
             AppShortcutAction.entries.toSet() - boundApp,
             "app actions with no button",

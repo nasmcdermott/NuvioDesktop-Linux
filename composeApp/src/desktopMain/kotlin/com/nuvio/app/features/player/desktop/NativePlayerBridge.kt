@@ -310,6 +310,15 @@ internal object NativePlayerBridge {
         linuxLoadFailure?.let { throw IllegalStateException("Linux native player bridge is unavailable.", it) }
     }
 
+    /** One-line state for diagnostic screens/logs: loaded path, or the exact load failure. */
+    fun linuxLoadDiagnostics(): String = when {
+        DesktopHostOs.current != DesktopHostOs.LINUX -> "not Linux"
+        linuxLoadFailure != null ->
+            "unavailable: ${linuxLoadFailure?.message ?: linuxLoadFailure?.javaClass?.simpleName}"
+        loadedRuntimeDir != null -> "loaded from ${loadedRuntimeDir?.absolutePath}"
+        else -> "available"
+    }
+
     private fun loadNativeLibrary() {
         val platform = DesktopHostOs.current
         if (platform == DesktopHostOs.LINUX) {
