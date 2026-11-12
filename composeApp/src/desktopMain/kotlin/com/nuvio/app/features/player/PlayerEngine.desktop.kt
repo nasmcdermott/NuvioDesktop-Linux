@@ -1,6 +1,10 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.features.player.desktop.LinuxShaderMedia
+import com.nuvio.app.features.player.desktop.LinuxHudSelectRepeatGuard
+import com.nuvio.app.features.player.desktop.linuxHudNavKey
+import com.nuvio.app.features.player.desktop.linuxVolumeKeyType
+import com.nuvio.app.features.player.desktop.playerOwnsKeys
 import com.nuvio.app.features.player.desktop.linuxShaderProfile
 import com.nuvio.app.core.i18n.localizedString
 import androidx.compose.foundation.background
@@ -493,6 +497,8 @@ private fun NativePlayerSurface(
         GamepadContext.playerActive = true
         // The screensaver's "during playback" switch keys off the same fact.
         DesktopScreensaver.playerActive = true
+        // Linux only: a held Enter-class key is forwarded once per press, not once per auto-repeat.
+        val selectRepeat = LinuxHudSelectRepeatGuard()
         val dispatcher = KeyEventDispatcher { event ->
             if (DesktopHostOs.current == DesktopHostOs.LINUX &&
                 (event.keyCode == KeyEvent.VK_ESCAPE ||
@@ -502,9 +508,21 @@ private fun NativePlayerSurface(
                 // behind it. The controller also consumes key-up/repeat for our own window.
                 return@KeyEventDispatcher controller.dispatchLinuxEscapeKey(event)
             }
+            if (event.id == KeyEvent.KEY_RELEASED && DesktopHostOs.current == DesktopHostOs.LINUX) {
+                selectRepeat.release(event.keyCode)
+            }
             if (event.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
             // fork:pip-browse - the video in its corner box over the app: the keys drive the app.
-            if (com.nuvio.app.features.player.PlayerBrowsePip.active.value) return@KeyEventDispatcher false
+            // fork:youtube-mini-player - same for the YouTube corner player and classic PiP: the
+            // player only owns the keys while the video fills the window (see playerOwnsKeys).
+            if (!playerOwnsKeys(
+                    controller.miniPlayer,
+                    com.nuvio.app.features.player.desktop.desktopPictureInPictureState.value,
+                    com.nuvio.app.features.player.PlayerBrowsePip.active.value,
+                )
+            ) {
+                return@KeyEventDispatcher false
+            }
             if (event.isMetaDown || event.isControlDown || event.isAltDown || event.isShiftDown) {
                 return@KeyEventDispatcher false
             }
@@ -551,7 +569,30 @@ private fun NativePlayerSurface(
                 AppShortcutsRepository.keyCode(AppShortcutAction.DismissOverlay) -> "Escape"
                 else -> null
             }
+            val hudNavKey = if (DesktopHostOs.current == DesktopHostOs.LINUX) {
+                linuxHudNavKey(
+                    event.keyCode,
+                    controller.hudNavState,
+                    AppShortcutsRepository.keyCode(AppShortcutAction.SelectFocused),
+                    PlayerShortcutsRepository.keyCode(PlayerShortcutAction.PlayPause),
+                    AppShortcutsRepository.keyCode(AppShortcutAction.DismissOverlay),
+                )
+            } else {
+                null
+            }
+            val forwardsEnter = DesktopHostOs.current == DesktopHostOs.LINUX &&
+                ((panelKey == "Enter" && controller.panelOpenForKeys) || hudNavKey == "Enter")
+            if (forwardsEnter && !selectRepeat.accept(event.keyCode)) {
+                event.consume()
+                return@KeyEventDispatcher true
+            }
             if (panelKey != null && controller.dispatchKeyboardPanelKey(panelKey)) {
+                event.consume()
+                return@KeyEventDispatcher true
+            }
+            // Linux HUD navigation: while controls.js reports a state that allows it, arrows and the
+            // bound Select key drive the HUD instead of seeking. Panels above keep priority.
+            if (hudNavKey != null && controller.dispatchHudNavKey(hudNavKey)) {
                 event.consume()
                 return@KeyEventDispatcher true
             }
@@ -577,12 +618,20 @@ private fun NativePlayerSurface(
                 event.consume()
                 return@KeyEventDispatcher true
             }
+            // Up and Down are volume here. With "Player volume control" off they are swallowed
+            // instead, so they change nothing and do not fall through to the player beneath.
+            if (event.keyCode == KeyEvent.VK_UP || event.keyCode == KeyEvent.VK_DOWN) {
+                linuxVolumeKeyType(
+                    event.keyCode,
+                    PlayerSettingsRepository.uiState.value.desktopVolumeControlEnabled,
+                )?.let { controller.dispatchKeyboardShortcut(it, 1.0) }
+                event.consume()
+                return@KeyEventDispatcher true
+            }
             // Directional controls stay fixed so keyboard/panel navigation remains recoverable.
             val fixedType = when (event.keyCode) {
                 KeyEvent.VK_LEFT -> "keyboardSeekBack"
                 KeyEvent.VK_RIGHT -> "keyboardSeekForward"
-                KeyEvent.VK_UP -> "volumeUp"
-                KeyEvent.VK_DOWN -> "volumeDown"
                 else -> null
             }
             if (fixedType != null) {

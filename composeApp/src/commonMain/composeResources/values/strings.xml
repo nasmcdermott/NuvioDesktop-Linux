@@ -4744,6 +4744,8 @@
     <string name="player_hud_audio">Audio</string>
     <string name="player_hud_hdr">HDR</string>
     <string name="player_hud_color">Color</string>
+    <string name="player_hud_theater">Theater</string>
+    <string name="player_hud_default_view">Default view</string>
     <string name="player_hud_svp">SVP</string>
     <string name="player_hud_submit">Submit</string>
     <string name="player_hud_party">Party</string>
