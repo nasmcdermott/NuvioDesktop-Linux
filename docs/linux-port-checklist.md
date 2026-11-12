@@ -63,9 +63,9 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - The old local history patches (`docs/history/patches-1.32/*.patch`, `v1.36-to-1.37.patch`) were removed from `feature/linux-1.36-goals`. They were never part of `linux-clean`.
 - Upstream build patches under `composeApp/src/desktopMain/native/` and `tools/linux/` remain; they are build inputs, not port history.
 
-## Known remaining gap
+## YouTube mini-player
 
-- The YouTube mini-player wiring in `App.kt` is not ported. The `youTubeMiniTopChromePadding` helper and its test are present, but the corner-page call site is not.
+- The corner-page wiring in `App.kt` is ported (`23281fc7`), including the mini tablet layout, nav bar handoff, and top-chrome padding.
 
 ## Local-only file counts from the audit
 
