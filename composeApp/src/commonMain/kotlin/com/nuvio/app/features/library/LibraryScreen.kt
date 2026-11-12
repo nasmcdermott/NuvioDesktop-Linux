@@ -94,6 +94,7 @@ import com.nuvio.app.core.ui.NuvioScreen
 import com.nuvio.app.core.ui.NuvioNetworkOfflineCard
 import com.nuvio.app.core.ui.NuvioScreenHeader
 import com.nuvio.app.core.ui.NuvioViewAllPillSize
+import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.nuvioConsumePointerEvents
@@ -307,6 +308,12 @@ fun LibraryScreen(
                                 true
                             }
                             Key.DirectionUp -> {
+                                // fork:linux-keyboard-nav - nothing above the first row: the bar
+                                // across the top of the screen is, as the sidebar is left of the
+                                // first card.
+                                if (focusedRowIndex <= 0 && RootNavFocus.enterTopBar()) {
+                                    return@onPreviewKeyEvent true
+                                }
                                 focusedRowIndex = (focusedRowIndex - 1).coerceAtLeast(0)
                                 if (displaySettings.layoutMode != LibraryLayoutMode.GRID) focusedItemIndex = 0
                                 coroutineScope.launch {
