@@ -58,6 +58,8 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.StartupOverlayCoordinator
 import com.nuvio.app.core.ui.ditheredBackground
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.player.AppShortcutAction
+import com.nuvio.app.features.player.appShortcutMatches
 import com.nuvio.app.isDesktop
 import kotlinx.coroutines.delay
 import nuvio.composeapp.generated.resources.Res
@@ -166,7 +168,12 @@ fun FirstRunWizardPanel(
                         FirstRunWizardController.close()
                         true
                     }
-                    else -> false
+                    else -> if (appShortcutMatches(AppShortcutAction.DismissOverlay, event)) {
+                        FirstRunWizardController.close()
+                        true
+                    } else {
+                        false
+                    }
                 }
             }
             .padding(NuvioTokens.Space.s16),
