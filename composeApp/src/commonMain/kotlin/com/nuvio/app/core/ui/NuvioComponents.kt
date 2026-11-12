@@ -60,6 +60,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.Shape
 import androidx.compose.ui.graphics.vector.ImageVector
@@ -236,11 +237,23 @@ fun NuvioActionLabel(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val ringShape = RoundedCornerShape(NuvioTokens.Radius.sm)
     Text(
         text = text,
         // Masked so a gradient accent sweeps the label the way it sweeps a filled accent surface;
-        // a no-op on the built-in palettes, which paint accents flat.
+        // a no-op on the built-in palettes, which paint accents flat. The ring marks it as a real
+        // keyboard stop, like every other clickable in Settings.
         modifier = modifier
+            .clip(ringShape)
+            .onFocusChanged { focused = it.isFocused }
+            .then(
+                if (focused) {
+                    Modifier.border(2.dp, MaterialTheme.nuvio.colors.borderFocus, ringShape)
+                } else {
+                    Modifier
+                },
+            )
             .then(
                 if (onClick != null) {
                     Modifier.clickable(onClick = onClick)
@@ -343,16 +356,28 @@ fun NuvioPrimaryButton(
     modifier: Modifier = Modifier,
     enabled: Boolean = true,
     height: Dp = NuvioTokens.Space.s48 + NuvioTokens.Space.s4,
+    /**
+     * Draws the app's 2dp accent ring around the button while the keyboard is on it. Off by
+     * default because the sweep of light is already the signal elsewhere; pages whose controls are
+     * otherwise plain surfaces ask for the ring so a focused control is never invisible.
+     */
+    focusRing: Boolean = false,
     onClick: () -> Unit = {},
 ) {
     val tokens = MaterialTheme.nuvio
     val interactionSource = remember { MutableInteractionSource() }
     val isFocused by interactionSource.collectIsFocusedAsState()
     val isHovered by interactionSource.collectIsHoveredAsState()
+    // Read from the focus target itself rather than the interaction source: a disabled button's
+    // `clickable` emits no interactions, so a ring driven by them disappeared on exactly the
+    // control the keyboard was on.
+    var hasFocus by remember { mutableStateOf(false) }
+    val ringVisible = focusRing && hasFocus && KeyboardInputMode.active
     Box(
         modifier = modifier
             .fillMaxWidth()
             .height(height)
+            .onFocusChanged { hasFocus = it.isFocused }
             .nuvioSweepHighlight(
                 highlighted = enabled && (isFocused || isHovered),
                 cornerRadius = NuvioTokens.Radius.button,
@@ -365,10 +390,26 @@ fun NuvioPrimaryButton(
                 shape = tokens.shapes.button,
                 alpha = if (enabled) 1f else tokens.opacity.disabled,
             )
-            .clickable(
+            // Painted after the fill, so the stroke is not covered by it. Drawn for a disabled
+            // button too: it still has focus, and a focused control that looks unfocused is exactly
+            // the dead end this page had.
+            .then(
+                if (ringVisible) {
+                    Modifier.border(
+                        width = tokens.borders.medium,
+                        color = tokens.colors.borderFocus,
+                        shape = tokens.shapes.button,
+                    )
+                } else {
+                    Modifier
+                },
+            )
+            // Focusable and Select-activated, not just clickable: without this the arrows and a
+            // pad's D-pad cannot reach the button at all, which is how the sign-in page ended up
+            // mouse-only. Existing pointer behaviour is unchanged.
+            .selectWithKeyboardOrPointer(
                 enabled = enabled,
                 interactionSource = interactionSource,
-                indication = null,
                 onClick = onClick,
             ),
         contentAlignment = Alignment.Center,
