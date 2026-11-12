@@ -44,9 +44,9 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - [x] Navigation / focus / shared UI — `afc1a07d`
 - [x] Auth / login / QR — `f60632ba`
 - [x] Home / TV rows / navbar — `5eb00420`
-- [ ] Settings (`SettingsNav.kt` is already ported as a navigation dependency)
+- [x] Settings — `3d47179b`
 - [ ] Music / MPRIS (MPRIS files are in `dabbe260`; music UI changes remain)
-- [ ] Backup / Google Drive
+- [x] Backup / Google Drive — ported as a settings dependency (`3d47179b`)
 - [ ] Other app features
 - [ ] Tests (ported with each slice)
 - [ ] Remove patch files and document the port
