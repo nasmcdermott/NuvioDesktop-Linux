@@ -48,8 +48,20 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - [x] Music / MPRIS UI — `fbf5ba66` (MPRIS files are in `dabbe260`)
 - [x] Backup / Google Drive — ported as a settings dependency (`3d47179b`)
 - [x] Other app features — `deacfdc9`
-- [ ] Tests (ported with each slice)
-- [ ] Remove patch files and document the port
+- [x] Tests (ported with each slice)
+- [x] Remove patch files and document the port
+
+## Final verification
+
+- `./gradlew :composeApp:compileKotlinDesktop` passes.
+- `./gradlew :composeApp:desktopTest` runs 6131 tests: 7 failures, 78 skipped.
+- The 7 failures are pre-existing game/install tests that also fail on the old branch:
+  - `GameLauncherTest`
+  - `GameLaunchTargetTest`
+  - `SteamArtworkTest`
+  - `InstallManifestMigrationTest`
+- The old local history patches (`docs/history/patches-1.32/*.patch`, `v1.36-to-1.37.patch`) were removed from `feature/linux-1.36-goals`. They were never part of `linux-clean`.
+- Upstream build patches under `composeApp/src/desktopMain/native/` and `tools/linux/` remain; they are build inputs, not port history.
 
 ## Known remaining gap
 
