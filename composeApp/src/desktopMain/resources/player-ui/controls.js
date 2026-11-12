@@ -188,6 +188,8 @@ const episodesLabel = document.getElementById("episodesLabel");
 const submitIntroButton = document.getElementById("submitIntroButton");
 const lockButton = document.getElementById("lockButton");
 const videoSettingsButton = document.getElementById("videoSettingsButton");
+const theaterButton = document.getElementById("theaterButton");
+const theaterLabel = document.getElementById("theaterLabel");
 const pictureInPictureButton = document.getElementById("pictureInPictureButton");
 const pictureInPictureExitButton = document.getElementById("pictureInPictureExitButton");
 const pictureInPicturePlayButton = document.getElementById("pictureInPicturePlayButton");
@@ -561,6 +563,7 @@ let state = {
   seekHandleEnabled: true,
   hudVignetteEnabled: true,
   alwaysShowClock: false,
+  volumeControlEnabled: true,
   playbackInfoPanelEnabled: false,
   activeSubtitleLabel: "",
   appFullscreenKeyCode: 122,
@@ -756,6 +759,568 @@ let isChromePointerDown = false;
 let isChromeFocusInside = false;
 let hostChromeInteractionActive = false;
 let nativeViewportTimer = 0;
+
+// >>> linux-hud-nav
+// Linux d-pad navigation of the playback chrome. While the HUD is visible and no overlay is open,
+// the arrows move focus between controls and Enter activates the focused one. Kotlin forwards keys
+// only while the reported hudNavState allows it (PlayerEngine.desktop.kt), so this stays inert on
+// Windows and macOS, where linuxHost is false. Declared here, before renderChrome can run.
+let navFocusEl = null;
+let volumeAdjusting = false;
+let hudNavEmitted = -1;
+const NAV_ARROW_KEYS = ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight"];
+// One Up/Down press on the focused volume slider. Matches PlayerVolumeStepFraction (0.05) in Kotlin.
+const NAV_VOLUME_STEP_PERCENT = 5;
+const NAV_CANDIDATE_SELECTOR = ".header-button, #seek, #volumeMuteButton, #playerVolumeSlider, .center-controls button, .action-row button";
+
+const hudNavAvailable = () => Boolean(
+  linuxHost &&
+  !isHeroTrailerSurface &&
+  !state.heroTrailerMode &&
+  !state.isLocked &&
+  !playbackErrorText() &&
+  !activeModal &&
+  !contextMenuOpen &&
+  !colorGradePanelOpen &&
+  !actionOverflowOpen &&
+  !subtitleHexField &&
+  !keyboardPanelMode,
+);
+
+// Matches linuxHudNavKey in LinuxHudNav.kt: 0 unavailable, 1 hidden, 2 visible, 3 control focused.
+const hudNavStateValue = () => {
+  if (!hudNavAvailable()) return 0;
+  if (!state.controlsVisible) return 1;
+  // The volume slider has a mode of its own once selected (Enter): all four arrows change volume
+  // until Escape. Merely focused, it is an ordinary control and the arrows move out of it.
+  if (volumeAdjusting && navFocusEl === playerVolumeSlider) return 4;
+  return navFocusEl ? 3 : 2;
+};
+
+// The same key rule as the Kotlin side, for the keydown fallback below.
+const hudNavConsumes = (code, value) => {
+  if (code === "Enter" || code === "NumpadEnter") return value >= 1;
+  return NAV_ARROW_KEYS.includes(code) && value >= 2;
+};
+
+const navFocusable = el => Boolean(el && !el.disabled && !el.hidden && el.getClientRects().length > 0);
+
+const navCandidates = () => Array.from(root.querySelectorAll(NAV_CANDIDATE_SELECTOR)).filter(navFocusable);
+
+// Rows come from geometry, not DOM nesting, so the HUD's layouts group the way they look.
+const navRows = items => {
+  const entries = items
+    .map(el => ({ el, rect: el.getBoundingClientRect() }))
+    .sort((a, b) => a.rect.top - b.rect.top || a.rect.left - b.rect.left);
+  const rows = [];
+  for (const entry of entries) {
+    const row = rows[rows.length - 1];
+    if (row && Math.abs(entry.rect.top - row.top) <= Math.max(entry.rect.height, row.height) / 2) {
+      row.items.push(entry);
+    } else {
+      rows.push({ top: entry.rect.top, height: entry.rect.height, items: [entry] });
+    }
+  }
+  rows.forEach(row => row.items.sort((a, b) => a.rect.left - b.rect.left));
+  return rows;
+};
+
+const navLocate = rows => {
+  for (let row = 0; row < rows.length; row += 1) {
+    const index = rows[row].items.findIndex(entry => entry.el === navFocusEl);
+    if (index >= 0) return { row, index };
+  }
+  return null;
+};
+
+const navCenterX = entry => entry.rect.left + entry.rect.width / 2;
+
+const navSetFocus = el => {
+  if (navFocusEl && navFocusEl !== el) navFocusEl.classList.remove("chrome-nav-focus");
+  if (navFocusEl !== el) volumeAdjusting = false;
+  navFocusEl = el;
+  el.classList.add("chrome-nav-focus");
+  el.focus({ preventScroll: true });
+  syncHudNavState();
+};
+
+// Every navigation key while the HUD is visible is user activity. The JS timer restarts here, and
+// revealChrome restarts Kotlin's auto-hide (PlayerScreenRuntimeEffects keys it on mouseActivitySignal),
+// which is the timer that actually hides the HUD. Nav focus is exempt from the pin, so this is the
+// only thing keeping the HUD up while the user moves.
+const navActivity = () => {
+  noteChromeActivity(true);
+  send("revealChrome", 0);
+};
+
+const navClear = () => {
+  if (navFocusEl) navFocusEl.classList.remove("chrome-nav-focus");
+  navFocusEl = null;
+  volumeAdjusting = false;
+};
+
+// Reports the nav state to Kotlin and drops nav focus the moment the HUD can no longer show it.
+// renderChrome calls this, so a timer hide, Back, toggle or an opened modal all clear focus.
+const syncHudNavState = () => {
+  // Windows and macOS send nothing new: the nav state exists only on Linux.
+  if (!linuxHost) return;
+  if (navFocusEl && (!state.controlsVisible || !hudNavAvailable() || !navFocusable(navFocusEl))) navClear();
+  const next = hudNavStateValue();
+  if (next === hudNavEmitted) return;
+  hudNavEmitted = next;
+  send("hudNavState", next);
+};
+
+// Back hides the HUD first. The next Back leaves the player through the shared escape path.
+const hideHudForNav = () => {
+  navClear();
+  clearChromeAutoHideTimer();
+  state = { ...state, controlsVisible: false };
+  renderChrome();
+  send("hideChrome", 0);
+};
+
+const handleHudNavKey = code => {
+  if (!hudNavAvailable()) return;
+  if (!state.controlsVisible) {
+    // Hidden: Select brings the HUD back. Arrows keep seeking and changing volume.
+    if (code === "Enter") revealChromeForPlaybackInteraction();
+    return;
+  }
+  navActivity();
+  // Escape leaves the volume slider's four-way mode (Kotlin forwards it only in state 4).
+  if (code === "Escape") {
+    if (volumeAdjusting && navFocusEl === playerVolumeSlider) {
+      volumeAdjusting = false;
+      syncHudNavState();
+    }
+    return;
+  }
+  const rows = navRows(navCandidates());
+  const located = navLocate(rows);
+  if (!located) {
+    // Idle HUD, or the focused control vanished: arrows and Select take focus at the default control.
+    const toggle = root.querySelector("#toggle");
+    const start = navFocusable(toggle) ? toggle : rows[0] && rows[0].items[0] && rows[0].items[0].el;
+    if (start) navSetFocus(start);
+    return;
+  }
+  const { row, index } = located;
+  // The progress bar seeks like J/L instead of moving focus. Up and Down still leave it.
+  if ((code === "ArrowLeft" || code === "ArrowRight") && navFocusEl === seek) {
+    send(code === "ArrowLeft" ? "keyboardSeekBack" : "keyboardSeekForward", 0);
+    return;
+  }
+  // Selected, the volume slider owns all four arrows: Right/Up louder, Left/Down quieter, one step
+  // per press, keeping focus. Escape (above) leaves the mode so the arrows navigate again. The
+  // slider is out of the nav order when the setting is off, because its CSS hides it and
+  // navFocusable drops it.
+  if (volumeAdjusting && playerVolumeSlider && navFocusEl === playerVolumeSlider &&
+      (code === "ArrowUp" || code === "ArrowDown" || code === "ArrowLeft" || code === "ArrowRight")) {
+    const up = code === "ArrowUp" || code === "ArrowRight";
+    const step = up ? NAV_VOLUME_STEP_PERCENT : -NAV_VOLUME_STEP_PERCENT;
+    adjustLocalVolume(step);
+    send("volumeDelta", step / 100);
+    return;
+  }
+  if (code === "ArrowLeft" || code === "ArrowRight") {
+    const next = rows[row].items[index + (code === "ArrowLeft" ? -1 : 1)];
+    if (next) navSetFocus(next.el);
+  } else if (code === "ArrowUp" || code === "ArrowDown") {
+    const target = rows[row + (code === "ArrowUp" ? -1 : 1)];
+    if (target) {
+      const x = navCenterX(rows[row].items[index]);
+      const nearest = target.items.reduce((best, entry) =>
+        Math.abs(navCenterX(entry) - x) < Math.abs(navCenterX(best) - x) ? entry : best);
+      navSetFocus(nearest.el);
+    }
+  } else if (code === "Enter") {
+    // Enter selects the volume slider into four-arrow volume mode; other controls click.
+    if (navFocusEl === playerVolumeSlider) {
+      // Select again to give the arrows back to focus navigation.
+      volumeAdjusting = !volumeAdjusting;
+      syncHudNavState();
+    } else {
+      navFocusEl.click();
+    }
+  }
+};
+
+window.nuvioHandleHudNavKey = code => handleHudNavKey(code);
+// <<< linux-hud-nav
+
+// >>> linux-speed-wrap
+// Select on the speed button (and a click, on Linux). Past the 4x maximum the next press goes to 1x,
+// because Kotlin's step clamps at the top of its list. The wrap is sent as an absolute speed. Windows
+// and macOS keep the clamped step.
+const SPEED_WRAP_MAX = 4;
+const SPEED_WRAP_TARGET = 1;
+const cycleSpeedFromButton = () => {
+  if (linuxHost && parsedPlaybackSpeed() >= SPEED_WRAP_MAX - 0.01) {
+    // Set the label now: the pushed label lags the send, so a second press would otherwise re-read 4x.
+    state = { ...state, playbackSpeedLabel: "1x" };
+    speedLabel.textContent = "1x";
+    window.nuvioShowPresetPill(hudText("player_hud_playback_speed", "Playback speed"), "1x");
+    send("setPlaybackSpeed", SPEED_WRAP_TARGET);
+    return;
+  }
+  stepPlaybackSpeed(1);
+};
+// <<< linux-speed-wrap
+
+// >>> linux-subtitle-panel-nav
+// Keyboard navigation of the subtitles and audio panels on Linux. Their rows are rebuilt on every
+// state push, so the highlight is an index re-applied after each render rather than DOM focus. Up and
+// Down move through the rows, and Enter clicks the highlighted row, the same handler the mouse uses.
+// The subtitles panel's Left and Right switch tabs. Opening either panel on Linux puts Kotlin in
+// keyboard-panel mode, so the arrows reach this code instead of seeking or changing volume.
+let keyboardTrackIndex = -1;
+const SUBTITLE_TABS = ["BuiltIn", "Addons", "Style"];
+
+const currentTrackRows = () => {
+  if (keyboardPanelMode === "audio") return Array.from(audioTrackList.querySelectorAll(".track-row"));
+  const tab = state.subtitleActiveTab || "BuiltIn";
+  if (tab === "Addons") return Array.from(addonSubtitleList.querySelectorAll(".addon-subtitle-row, .addon-fetch-row"));
+  if (tab === "BuiltIn") return Array.from(subtitleTrackList.querySelectorAll(".subtitle-track-row"));
+  return [];
+};
+
+const applyTrackKeyboardFocus = () => {
+  if (keyboardPanelMode !== "subtitles" && keyboardPanelMode !== "audio") {
+    keyboardTrackIndex = -1;
+    return;
+  }
+  const rows = currentTrackRows();
+  if (rows.length === 0) {
+    keyboardTrackIndex = -1;
+    return;
+  }
+  if (keyboardTrackIndex < 0) {
+    const selected = rows.findIndex(row => row.classList.contains("selected"));
+    keyboardTrackIndex = selected >= 0 ? selected : 0;
+  }
+  keyboardTrackIndex = Math.min(keyboardTrackIndex, rows.length - 1);
+  rows.forEach((row, index) => row.classList.toggle("keyboard-focused", index === keyboardTrackIndex));
+  rows[keyboardTrackIndex].scrollIntoView({ block: "nearest" });
+};
+
+const enterTrackKeyboardMode = panel => {
+  keyboardPanelMode = panel;
+  keyboardTrackIndex = -1;
+  setStyleFocus(null);
+  closeStyleDropdown();
+  send("keyboardPanelOpened", 0);
+  applyTrackKeyboardFocus();
+};
+
+const handleTrackPanelKey = code => {
+  if (keyboardPanelMode === "subtitles" && state.subtitleActiveTab === "Style") {
+    handleStylePanelKey(code);
+    return;
+  }
+  applyTrackKeyboardFocus();
+  const rows = currentTrackRows();
+  if (code === "ArrowDown" || code === "ArrowUp") {
+    if (rows.length === 0) return;
+    const step = code === "ArrowDown" ? 1 : -1;
+    keyboardTrackIndex = Math.max(0, Math.min(rows.length - 1, keyboardTrackIndex + step));
+    applyTrackKeyboardFocus();
+    return;
+  }
+  if (keyboardPanelMode === "subtitles" && (code === "ArrowLeft" || code === "ArrowRight")) {
+    const tab = state.subtitleActiveTab || "BuiltIn";
+    const current = SUBTITLE_TABS.indexOf(tab);
+    const next = SUBTITLE_TABS[Math.max(0, Math.min(SUBTITLE_TABS.length - 1, current + (code === "ArrowRight" ? 1 : -1)))];
+    if (next !== tab) {
+      keyboardTrackIndex = -1;
+      selectSubtitleTab(next, SUBTITLE_TABS.indexOf(next));
+    }
+    return;
+  }
+  if (code === "Enter") {
+    const row = rows[keyboardTrackIndex];
+    if (row) row.click();
+  }
+};
+// <<< linux-subtitle-panel-nav
+
+// >>> linux-panel-chips
+// Filter chips in the sources and episode-stream panels take keyboard focus on Linux. Up from the top
+// row of the list moves focus up to the chip row, Left and Right move between chips, Enter clicks the
+// highlighted chip (the same handler the mouse uses), and Down returns to the list. The chips are rebuilt
+// on every state push, so the highlight is re-applied after each render.
+let keyboardChipFocus = "";
+let keyboardChipIndex = -1;
+
+const chipListFor = id => (id === "sources" ? sourceFilterList : episodeStreamFilterList);
+const chipsIn = id => Array.from(chipListFor(id).querySelectorAll(".filter-chip"));
+
+const applyChipFocus = () => {
+  [sourceFilterList, episodeStreamFilterList].forEach(list => {
+    list.querySelectorAll(".filter-chip").forEach(chip => chip.classList.remove("keyboard-focused"));
+  });
+  if (!keyboardChipFocus) return;
+  const chips = chipsIn(keyboardChipFocus);
+  if (chips.length === 0) {
+    keyboardChipFocus = "";
+    return;
+  }
+  keyboardChipIndex = Math.max(0, Math.min(chips.length - 1, keyboardChipIndex));
+  chips.forEach((chip, index) => chip.classList.toggle("keyboard-focused", index === keyboardChipIndex));
+  chips[keyboardChipIndex].scrollIntoView({ block: "nearest", inline: "nearest" });
+};
+
+// The list's own row highlight is held off while the chip row has focus; rendering the rows applies that.
+const refreshListRows = id => {
+  if (id === "sources") renderSourceVirtualRows();
+  else renderEpisodeStreams();
+};
+
+const enterChipRow = id => {
+  const chips = chipsIn(id);
+  if (chips.length === 0) return false;
+  const selected = chips.findIndex(chip => chip.classList.contains("selected"));
+  keyboardChipFocus = id;
+  keyboardChipIndex = selected >= 0 ? selected : 0;
+  applyChipFocus();
+  refreshListRows(id);
+  return true;
+};
+
+const leaveChipRow = () => {
+  const id = keyboardChipFocus;
+  keyboardChipFocus = "";
+  applyChipFocus();
+  refreshListRows(id);
+};
+
+// Called only while the chip row has focus.
+const handleChipKey = code => {
+  const chips = chipsIn(keyboardChipFocus);
+  if (code === "ArrowLeft" || code === "ArrowRight") {
+    keyboardChipIndex = Math.max(0, Math.min(chips.length - 1, keyboardChipIndex + (code === "ArrowRight" ? 1 : -1)));
+    applyChipFocus();
+    return;
+  }
+  if (code === "ArrowDown") {
+    leaveChipRow();
+    return;
+  }
+  if (code === "Enter") {
+    const chip = chips[keyboardChipIndex];
+    if (chip) chip.click();
+  }
+};
+// <<< linux-panel-chips
+
+// >>> linux-style-panel-nav
+// Keyboard navigation of the subtitles Style tab on Linux. The tab bar is entered from the top row of
+// controls with Up: Left and Right then switch tabs there, and Down returns to the controls. Within the
+// controls, Left and Right move along a row, Up and Down move between rows, and Enter clicks the focused
+// control. The controls are static DOM, so the highlight stays on the element. It is not moved with DOM
+// focus, which would also make a forwarded Enter activate the control twice.
+let keyboardStyleEl = null;
+let keyboardStyleOnTabs = false;
+
+const styleTabElements = () => [subtitleBuiltInTab, subtitleAddonsTab, subtitleStyleTab];
+const activeStyleTabElement = () => styleTabElements()[SUBTITLE_TABS.indexOf(state.subtitleActiveTab || "BuiltIn")];
+const styleControlVisible = el => Boolean(el && !el.disabled && !el.hidden && el.getClientRects().length > 0);
+const styleControlRows = () => Array.from(subtitleStylePanel.querySelectorAll(".style-row"))
+  .map(row => Array.from(row.querySelectorAll("button, select"))
+    .filter(el => !el.classList.contains("style-dropdown-option") && styleControlVisible(el)))
+  .filter(items => items.length > 0);
+
+const styleControlPosition = rows => {
+  for (let row = 0; row < rows.length; row += 1) {
+    const col = rows[row].indexOf(keyboardStyleEl);
+    if (col >= 0) return { row, col };
+  }
+  return null;
+};
+
+const setStyleFocus = (el, onTabs = false) => {
+  if (keyboardStyleEl) keyboardStyleEl.classList.remove("keyboard-focused");
+  keyboardStyleEl = el || null;
+  keyboardStyleOnTabs = Boolean(el) && onTabs;
+  if (keyboardStyleEl) {
+    keyboardStyleEl.classList.add("keyboard-focused");
+    // The style panel scrolls, so bring the focused control into view as focus moves.
+    keyboardStyleEl.scrollIntoView({ block: "nearest" });
+  }
+};
+
+// The font picker. A native <select> popup does not open in this embedded view, from a mouse or a key,
+// so the select stays as the value store and a button with its own list stands in for it. Choosing an
+// option sets the select and fires its change event, the same path a native pick takes.
+let styleDropdownOpen = false;
+let styleDropdownIndex = 0;
+let styleDropdownSelect = null;
+let styleDropdownTrigger = null;
+let styleDropdownMenu = null;
+let styleDropdownLabel = null;
+let styleDropdownWrap = null;
+
+const styleDropdownOptions = () => (styleDropdownSelect ? Array.from(styleDropdownSelect.options) : []);
+
+const syncStyleDropdownLabel = () => {
+  if (!styleDropdownLabel || !styleDropdownSelect) return;
+  const option = styleDropdownSelect.options[styleDropdownSelect.selectedIndex];
+  styleDropdownLabel.textContent = option ? option.textContent : "";
+};
+
+const highlightStyleDropdown = () => {
+  Array.from(styleDropdownMenu.children).forEach((item, index) => {
+    item.classList.toggle("keyboard-focused", index === styleDropdownIndex);
+  });
+  const current = styleDropdownMenu.children[styleDropdownIndex];
+  if (current && current.scrollIntoView) current.scrollIntoView({ block: "nearest" });
+};
+
+const renderStyleDropdownMenu = () => {
+  styleDropdownMenu.textContent = "";
+  const chosen = styleDropdownSelect.selectedIndex;
+  styleDropdownOptions().forEach((option, index) => {
+    const item = document.createElement("button");
+    item.type = "button";
+    item.className = "style-dropdown-option";
+    item.textContent = option.textContent;
+    item.setAttribute("role", "option");
+    item.setAttribute("aria-selected", index === chosen ? "true" : "false");
+    item.classList.toggle("selected", index === chosen);
+    item.addEventListener("click", event => {
+      event.stopPropagation();
+      chooseStyleDropdownOption(index);
+    });
+    styleDropdownMenu.appendChild(item);
+  });
+};
+
+const openStyleDropdown = () => {
+  if (!styleDropdownSelect) return;
+  styleDropdownIndex = Math.max(0, styleDropdownSelect.selectedIndex);
+  renderStyleDropdownMenu();
+  styleDropdownMenu.hidden = false;
+  styleDropdownOpen = true;
+  styleDropdownTrigger.setAttribute("aria-expanded", "true");
+  highlightStyleDropdown();
+};
+
+const closeStyleDropdown = () => {
+  if (!styleDropdownOpen) return;
+  styleDropdownOpen = false;
+  styleDropdownMenu.hidden = true;
+  styleDropdownTrigger.setAttribute("aria-expanded", "false");
+};
+
+const chooseStyleDropdownOption = index => {
+  if (index < 0 || index >= styleDropdownOptions().length) return;
+  styleDropdownSelect.selectedIndex = index;
+  styleDropdownSelect.dispatchEvent(new Event("change"));
+  closeStyleDropdown();
+  syncStyleDropdownLabel();
+};
+
+const moveStyleDropdownHighlight = delta => {
+  const count = styleDropdownOptions().length;
+  if (count === 0) return;
+  styleDropdownIndex = Math.max(0, Math.min(count - 1, styleDropdownIndex + delta));
+  highlightStyleDropdown();
+};
+
+// Builds the trigger and the menu beside the select. Enter or a click on the trigger opens the list.
+const createStyleDropdown = select => {
+  const wrap = document.createElement("div");
+  wrap.className = "style-dropdown";
+  const trigger = document.createElement("button");
+  trigger.type = "button";
+  trigger.className = "style-select style-dropdown-trigger";
+  trigger.setAttribute("aria-haspopup", "listbox");
+  trigger.setAttribute("aria-expanded", "false");
+  const label = document.createElement("span");
+  label.className = "style-dropdown-label";
+  const caret = document.createElement("span");
+  caret.className = "style-dropdown-caret";
+  caret.textContent = "\u25BE";
+  trigger.appendChild(label);
+  trigger.appendChild(caret);
+  const menu = document.createElement("div");
+  menu.className = "style-dropdown-menu";
+  menu.setAttribute("role", "listbox");
+  menu.hidden = true;
+  wrap.appendChild(trigger);
+  wrap.appendChild(menu);
+  select.parentNode.insertBefore(wrap, select);
+  select.hidden = true;
+  trigger.addEventListener("click", event => {
+    event.stopPropagation();
+    if (styleDropdownOpen) closeStyleDropdown();
+    else openStyleDropdown();
+  });
+  document.addEventListener("pointerdown", event => {
+    if (styleDropdownOpen && !wrap.contains(event.target)) closeStyleDropdown();
+  }, true);
+  styleDropdownSelect = select;
+  styleDropdownWrap = wrap;
+  styleDropdownTrigger = trigger;
+  styleDropdownMenu = menu;
+  styleDropdownLabel = label;
+  syncStyleDropdownLabel();
+  return trigger;
+};
+
+if (fontFamilySelect) createStyleDropdown(fontFamilySelect);
+
+// Called only while the subtitles panel is on the Style tab.
+const handleStylePanelKey = code => {
+  if (styleDropdownOpen) {
+    if (code === "ArrowDown" || code === "ArrowUp") moveStyleDropdownHighlight(code === "ArrowDown" ? 1 : -1);
+    else if (code === "Enter") chooseStyleDropdownOption(styleDropdownIndex);
+    else if (code === "ArrowLeft" || code === "ArrowRight") closeStyleDropdown();
+    return;
+  }
+  const rows = styleControlRows();
+  if (keyboardStyleOnTabs) {
+    const current = SUBTITLE_TABS.indexOf(state.subtitleActiveTab || "BuiltIn");
+    if (code === "ArrowLeft" || code === "ArrowRight") {
+      const next = Math.max(0, Math.min(SUBTITLE_TABS.length - 1, current + (code === "ArrowRight" ? 1 : -1)));
+      if (next !== current) selectSubtitleTab(SUBTITLE_TABS[next], next);
+      // Leaving the Style tab hands the keys to the track panel, which highlights its own rows.
+      if (SUBTITLE_TABS[next] === "Style") setStyleFocus(styleTabElements()[next], true);
+      else setStyleFocus(null);
+      return;
+    }
+    if (code === "ArrowDown") {
+      if (rows[0]) setStyleFocus(rows[0][0]);
+      return;
+    }
+    if (code === "Enter" && keyboardStyleEl) keyboardStyleEl.click();
+    return;
+  }
+  const position = keyboardStyleEl ? styleControlPosition(rows) : null;
+  if (!position) {
+    // First key on the Style tab only places the highlight. Enter does not click here.
+    if (code === "ArrowUp") setStyleFocus(activeStyleTabElement(), true);
+    else if (rows[0]) setStyleFocus(rows[0][0]);
+    return;
+  }
+  const { row, col } = position;
+  if (code === "ArrowLeft" || code === "ArrowRight") {
+    const items = rows[row];
+    setStyleFocus(items[Math.max(0, Math.min(items.length - 1, col + (code === "ArrowRight" ? 1 : -1)))]);
+    return;
+  }
+  if (code === "ArrowUp" || code === "ArrowDown") {
+    if (code === "ArrowUp" && row === 0) {
+      setStyleFocus(activeStyleTabElement(), true);
+      return;
+    }
+    const target = rows[row + (code === "ArrowUp" ? -1 : 1)];
+    if (target) setStyleFocus(target[Math.min(col, target.length - 1)]);
+    return;
+  }
+  if (code === "Enter") keyboardStyleEl.click();
+};
+// <<< linux-style-panel-nav
 
 // User UI-scale knob (desktopUiScalePercent, -50..+50). Native player hosts apply it as browser
 // page zoom so viewport reflow, media queries, text, spacing, and pointer coordinates scale as one.
@@ -3018,6 +3583,7 @@ const openPlayerModal = modal => {
     sourceList.scrollTop = 0;
     requestSourceVirtualRender();
   }
+  if (linuxHost && (modal === "subtitles" || modal === "audio")) enterTrackKeyboardMode(modal);
   renderChrome();
 };
 
@@ -4218,6 +4784,7 @@ const renderAudioTrackList = () => {
       () => send("selectAudioTrack", trackIndexValue(track)),
     );
   });
+  applyTrackKeyboardFocus();
 };
 
 const renderSubtitleTrackList = () => {
@@ -4293,7 +4860,7 @@ const renderAddonSubtitleList = () => {
   if (items.length === 0) {
     const row = document.createElement("button");
     row.type = "button";
-    row.className = "track-row";
+    row.className = "track-row addon-fetch-row";
     row.addEventListener("click", event => {
       event.stopPropagation();
       send("fetchAddonSubtitles", 0);
@@ -4598,6 +5165,7 @@ const renderSubtitleStylePanel = () => {
     const current = style.fontFamily || "";
     const selectedIndex = fonts.indexOf(current);
     fontFamilySelect.value = String(selectedIndex >= 0 ? selectedIndex : 0);
+    syncStyleDropdownLabel();
   }
   outlineLabel.textContent = state.outlineLabel || "Outline";
   setStyleSwitch(outlineToggle, Boolean(style.outlineEnabled));
@@ -4667,6 +5235,7 @@ const renderSubtitleModal = () => {
   if (tab === "Style") renderSubtitleStylePanel();
   if (tab !== "Style") closeStyleDropdown();
   syncStyleDropdowns();
+  applyTrackKeyboardFocus();
 };
 
 // The style sheet's dropdowns. A native <select> popup is drawn by the OS from the unzoomed field,
@@ -5012,7 +5581,7 @@ const renderSourceVirtualRows = () => {
       send("selectSource", Number(selected.index) || 0);
     });
     row.dataset.keyboardSourceIndex = String(index);
-    row.classList.toggle("keyboard-focused", keyboardPanelMode === "sources" && index === keyboardSourceIndex);
+    row.classList.toggle("keyboard-focused", keyboardPanelMode === "sources" && index === keyboardSourceIndex && keyboardChipFocus !== "sources");
     wrapper.appendChild(row);
     fragment.appendChild(wrapper);
     rendered.push({ index, wrapper });
@@ -5197,6 +5766,8 @@ const renderSourceModal = () => {
     pinSourceListTop();
     renderSourceModal();
   });
+
+  applyChipFocus();
 
   // Captured before the list is emptied: anything below that forces a layout (the width
   // measurement reads computed style) clamps scrollTop to 0 against the empty list, and the
@@ -5497,6 +6068,7 @@ const renderEpisodeStreams = () => {
     episodeStreamFilterId = id;
     renderEpisodeStreams();
   });
+  applyChipFocus();
 
   episodeStreamList.textContent = "";
   let items = normalizeItems(state.episodeStreamItems);
@@ -5516,7 +6088,7 @@ const renderEpisodeStreams = () => {
       window.setTimeout(closePlayerModal, 120);
     });
     row.dataset.keyboardEpisodeStreamIndex = String(index);
-    row.classList.toggle("keyboard-focused", keyboardPanelMode === "episodes" && keyboardEpisodeShowingStreams && index === keyboardEpisodeStreamIndex);
+    row.classList.toggle("keyboard-focused", keyboardPanelMode === "episodes" && keyboardEpisodeShowingStreams && index === keyboardEpisodeStreamIndex && keyboardChipFocus !== "episodeStreams");
     episodeStreamList.appendChild(row);
   });
   if (keyboardPanelMode === "episodes") {
@@ -5951,7 +6523,9 @@ const isOpeningOverlayActive = () =>
 const isChromeInteractionTarget = target =>
   Boolean(target && target.closest && target.closest(chromeInteractionSelector));
 
+// Linux nav focus is exempt: it must not pin the HUD. Its idle timer hides the HUD instead.
 const hasKeyboardVisibleChromeFocus = () => Boolean(
+  !navFocusEl &&
   isChromeFocusInside &&
   document.activeElement &&
   document.activeElement.matches &&
@@ -6604,6 +7178,7 @@ const renderChrome = () => {
   root.classList.toggle("ultra-hud", ultraHud);
   root.classList.toggle("official-hud", officialHud);
   root.classList.toggle("seek-handle-hidden", state.seekHandleEnabled === false);
+  root.classList.toggle("volume-control-hidden", state.volumeControlEnabled === false);
   root.classList.toggle("vignette-hidden", state.hudVignetteEnabled === false);
   applyHiddenHudButtons(state.hiddenHudButtons);
   // The YouTube watch page hides the comments and related panels it shows itself: their edge notches too.
@@ -6632,6 +7207,7 @@ const renderChrome = () => {
   // so Back remains immediately available instead of turning the error into a modal takeover.
   const isChromeHidden = Boolean(!pictureInPictureActive && !showError && (!activeModal && !contextMenuOpen && !colorGradePanelOpen && !actionOverflowOpen && !playlistPeekOpen && !state.controlsVisible && keyboardPanelMode !== "controls" && !(state.isLocked && state.lockedOverlayVisible)));
   root.classList.toggle("chrome-hidden", isChromeHidden);
+  syncHudNavState();
   if (isChromeHidden || activeModal) hideControlTooltip();
   // Never hide the cursor in hero-trailer mode — it's a background surface, not the
   // focused player, so the OS/app cursor must behave normally.
@@ -6678,6 +7254,9 @@ const renderChrome = () => {
 
   setVisible(submitIntroButton, Boolean(state.showSubmitIntro));
   setVisible(videoSettingsButton, Boolean(state.showVideoSettings));
+  // Theater and full screen live on the HUD control row, in YouTube mode only. The fullscreen
+  // button is shared; theater toggles the watch page's theater mode (Kotlin decides).
+  setVisible(theaterButton, Boolean(state.isYouTubeVideo) && !pictureInPictureActive && !Boolean(state.miniPlayer));
   renderColorGradePanel();
   setVisible(sourcesButton, Boolean(state.showSources));
   setVisible(episodesButton, Boolean(state.showEpisodes));
@@ -7112,10 +7691,11 @@ const shortcutCommandForEvent = event => {
       return "keyboardSeekBack";
     case "ArrowRight":
       return "keyboardSeekForward";
+    // With "Player volume control" off the arrows do nothing here, matching the Kotlin dispatcher.
     case "ArrowUp":
-      return "volumeUp";
+      return state.volumeControlEnabled === false ? "" : "volumeUp";
     case "ArrowDown":
-      return "volumeDown";
+      return state.volumeControlEnabled === false ? "" : "volumeDown";
     default:
       return "";
   }
@@ -7861,7 +8441,7 @@ document.querySelectorAll("[data-command]").forEach(button => {
       return;
     }
     if (command === "speed") {
-      stepPlaybackSpeed(1);
+      cycleSpeedFromButton();
       return;
     }
     if (command === "resize") {
@@ -8385,6 +8965,7 @@ window.nuvioOpenKeyboardPanel = panel => {
   }
   if (panel === "sources") {
     keyboardPanelMode = "sources";
+    keyboardChipFocus = "";
     send("keyboardPanelOpened", 0);
     keyboardSourceIndex = 0;
     sourceFilterId = "";
@@ -8394,6 +8975,7 @@ window.nuvioOpenKeyboardPanel = panel => {
   }
   if (panel === "episodes") {
     keyboardPanelMode = "episodes";
+    keyboardChipFocus = "";
     send("keyboardPanelOpened", 0);
     keyboardEpisodeShowingStreams = false;
     keyboardEpisodeStreamIndex = 0;
@@ -8421,11 +9003,20 @@ window.nuvioHandleKeyboardPanelKey = code => {
     closePlayerModal(true);
     return;
   }
+  if (keyboardPanelMode === "subtitles" || keyboardPanelMode === "audio") {
+    handleTrackPanelKey(code);
+    return;
+  }
   if (keyboardPanelMode === "iptvChannels") {
     handleIptvPanelKey(code);
     return;
   }
   if (keyboardPanelMode === "sources") {
+    if (keyboardChipFocus === "sources") {
+      handleChipKey(code);
+      return;
+    }
+    if (code === "ArrowUp" && keyboardSourceIndex === 0 && enterChipRow("sources")) return;
     if (code === "ArrowUp") moveKeyboardSource(-1);
     if (code === "ArrowDown") moveKeyboardSource(1);
     if (code === "Enter") {
@@ -8436,6 +9027,11 @@ window.nuvioHandleKeyboardPanelKey = code => {
   }
   if (keyboardPanelMode === "episodes") {
     if (keyboardEpisodeShowingStreams) {
+      if (keyboardChipFocus === "episodeStreams") {
+        handleChipKey(code);
+        return;
+      }
+      if (code === "ArrowUp" && keyboardEpisodeStreamIndex === 0 && enterChipRow("episodeStreams")) return;
       if (code === "ArrowUp") moveKeyboardEpisodeStream(-1);
       if (code === "ArrowDown") moveKeyboardEpisodeStream(1);
       if (code === "ArrowLeft") send("backToEpisodes", 0);
@@ -9443,6 +10039,7 @@ document.addEventListener("mousedown", event => {
 // Keep the existing focused-WebView order for Windows/macOS; Linux must dismiss an
 // open panel even if a playback error arrived underneath it.
 function handlePlayerEscape(linux = false) {
+  if (styleDropdownOpen) { closeStyleDropdown(); return; }
   if (subtitleHexField) { closeSubtitleHexPrompt(); return; }
   if (contextMenuOpen) { closeContextMenu(); return; }
   if (actionOverflowOpen) { setActionOverflowOpen(false); return; }
@@ -9452,6 +10049,11 @@ function handlePlayerEscape(linux = false) {
   if (activeModal) {
     closePlayerModal(true);
     focusShortcutRoot();
+    return;
+  }
+  // Linux: Back hides a visible HUD before it leaves the player (the next Back leaves).
+  if (linux && linuxHost && state.controlsVisible && !state.isLocked) {
+    hideHudForNav();
     return;
   }
   // The shared Back action also checks this authoritatively if controls state is in flight.
@@ -9520,6 +10122,13 @@ document.addEventListener("keydown", event => {
   if (keyboardPanelMode && !caretKey && ["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", "Enter", "NumpadEnter"].includes(event.code)) {
     event.preventDefault();
     window.nuvioHandleKeyboardPanelKey(event.code === "NumpadEnter" ? "Enter" : event.code);
+    return;
+  }
+  // Keyboard fallback for the Linux HUD nav (Kotlin normally consumes these keys first). The focused
+  // progress bar is a text-entry target, but its arrows belong to the nav, not the browser's step.
+  if ((!isTextEntryTarget(event.target) || event.target === navFocusEl) && hudNavConsumes(event.code, hudNavStateValue())) {
+    event.preventDefault();
+    handleHudNavKey(event.code === "NumpadEnter" ? "Enter" : event.code);
     return;
   }
   if (activeModal || isTextEntryTarget(event.target)) {
