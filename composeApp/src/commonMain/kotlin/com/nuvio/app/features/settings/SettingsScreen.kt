@@ -4,15 +4,22 @@ import androidx.compose.material.icons.rounded.MusicNote
 import androidx.compose.material.icons.rounded.SmartDisplay
 import androidx.compose.runtime.key
 import com.nuvio.app.core.ui.LocalOpenMetaDetails
+import com.nuvio.app.features.music.coverUrl
 import nuvio.composeapp.generated.resources.settings_desktop_recent_searches
 import androidx.compose.material.icons.rounded.History
+import androidx.compose.material.icons.rounded.KeyboardArrowDown
+import androidx.compose.material.icons.rounded.KeyboardArrowRight
 import com.nuvio.app.core.perf.PerfTelemetry
 import com.nuvio.app.features.library.LibraryQuickAccess
 import com.nuvio.app.core.build.AppFeaturePolicy
 
 import androidx.compose.foundation.border
+import androidx.compose.foundation.focusGroup
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
+import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -45,6 +52,7 @@ import androidx.compose.animation.fadeOut
 import androidx.compose.animation.shrinkVertically
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.animation.core.FastOutSlowInEasing
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.ui.graphics.Brush
@@ -52,6 +60,7 @@ import com.nuvio.app.DesktopFullscreenHoverButtonState
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.lerp
 import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.graphics.TransformOrigin
 import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.layout.onPlaced
 import androidx.compose.ui.draw.clip
@@ -94,6 +103,7 @@ import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.remember
@@ -105,7 +115,13 @@ import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.focus.FocusRequester
+import com.nuvio.app.core.ui.DesktopNavigationGestureBridge
+import com.nuvio.app.core.ui.focusedControl
+import com.nuvio.app.core.ui.navigationKey
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.focusProperties
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -132,6 +148,7 @@ import androidx.compose.ui.unit.max
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.accentGradientMask
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import com.nuvio.app.core.ui.TextInputFocusTracker
 import com.nuvio.app.core.ui.labelRes
 import com.nuvio.app.core.ui.LocalNuvioBottomNavigationOverlayPadding
@@ -142,7 +159,10 @@ import com.nuvio.app.core.ui.PlatformBackHandler
 import com.nuvio.app.core.ui.isLiquidGlassNativeTabBarSupported
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.platformExitApp
+import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.secondaryClick
+import com.nuvio.app.core.ui.TopBarLeaveRestoresContent
+import com.nuvio.app.core.ui.topBarKeyNavigation
 import com.nuvio.app.features.addons.AddonRepository
 import com.nuvio.app.features.details.MetaScreenSettingsRepository
 import com.nuvio.app.features.details.MetaScreenSettingsUiState
@@ -299,12 +319,40 @@ fun SettingsScreen(
     val textInputActive by TextInputFocusTracker.active.collectAsStateWithLifecycle()
     // H returns to the home tab. onKeyEvent (bubble phase) so settings text fields,
     // which consume their own keystrokes, are never disrupted.
+    // The page root holds focus when Settings opens. An arrow or Select while the root itself has focus
+    // hands focus to the selected sidebar row (the page's entry point); Back while it holds the keys is
+    // passed to the app-level handler, which goes up a level or leaves Settings.
+    val settingsEntryRequester = remember { FocusRequester() }
+    val entryFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
+    var settingsRootFocused by remember { mutableStateOf(false) }
     val homeKeyModifier = if (isDesktop && onNavigateToHome != null) {
         Modifier
             .focusRequester(homeKeyFocusRequester)
+            // Before focusable(), not after: Compose reports focus to an onFocusChanged that sits
+            // outside the focus target, so a root observing it afterwards never sees its own focus
+            // and the entry key below never fires.
+            .onFocusChanged { settingsRootFocused = it.isFocused }
             .focusable()
             .onKeyEvent { event ->
-                if (event.type == KeyEventType.KeyDown && event.key == Key.H && !settingsSearchHasFocus && !textInputActive) {
+                val action = settingsNavKeyAction(event.navigationKey())
+                val enterPage = event.type == KeyEventType.KeyDown &&
+                    settingsRootEntersPage(
+                        rootFocused = settingsRootFocused,
+                        textInputActive = textInputActive,
+                        searchFocused = settingsSearchHasFocus,
+                        action = action,
+                    )
+                if (enterPage) {
+                    runCatching { settingsEntryRequester.requestFocus() }
+                    true
+                } else if (event.type == KeyEventType.KeyDown && settingsRootFocused &&
+                    action == SettingsNavKeyAction.Back && !textInputActive
+                ) {
+                    // Back with the page root holding the keys: a sub-page goes up a level, the
+                    // root leaves Settings. The app-level ladder decides which.
+                    DesktopNavigationGestureBridge.requestBack()
+                    true
+                } else if (event.type == KeyEventType.KeyDown && event.key == Key.H && !settingsSearchHasFocus && !textInputActive) {
                     onNavigateToHome(); true
                 } else {
                     false
@@ -313,6 +361,18 @@ fun SettingsScreen(
     } else {
         Modifier
     }
+    // The root holds the keys when Settings opens, so the first arrow hands them to the sidebar
+    // row. Nothing requested it on a plain tab entry (the page-change effect only runs when the
+    // page changes), which left focus null when Settings was opened from the homepage. Only when
+    // nothing has already taken the keys, so a requested/search page keeps its own entry focus.
+    LaunchedEffect(Unit) {
+        if (!isDesktop) return@LaunchedEffect
+        withFrameNanos { }
+        if (entryFocusManager.focusedControl() == null) {
+            runCatching { homeKeyFocusRequester.requestFocus() }
+        }
+    }
+
     // Re-requested when game mode closes over Settings, not just on first composition: its library
     // holds focus while it is up, and Compose leaves nothing focused once that focusable goes —
     // which silently kills H and every other single-key shortcut until something is clicked.
@@ -525,6 +585,12 @@ fun SettingsScreen(
                 } else {
                     scrollToTopRequests.tryEmit(Unit)
                 }
+                // Re-selecting the Settings tab is still an entry: take the keys even if a
+                // persistent control elsewhere (the music bar) was holding them.
+                if (isDesktop) {
+                    withFrameNanos { }
+                    runCatching { homeKeyFocusRequester.requestFocus() }
+                }
             }
         }
 
@@ -547,6 +613,23 @@ fun SettingsScreen(
             },
         )
 
+        // Desktop Back (Backspace, gamepad B, browser Back, mouse Back) reaches the app-level handler
+        // first. It asks this page to go up a level, and goes to Home only when the page has no parent.
+        val backBridgeToken = remember { Any() }
+        DisposableEffect(previousPage, rootActionsEnabled) {
+            SettingsBackBridge.register(backBridgeToken) {
+                if (!rootActionsEnabled) return@register false
+                when (val target = settingsBackTarget(SettingsScrollAnchor.consumeBackTo(), previousPage)) {
+                    is SettingsBackTarget.Page -> {
+                        currentPage = target.page.name
+                        true
+                    }
+                    SettingsBackTarget.Home -> false
+                }
+            }
+            onDispose { SettingsBackBridge.unregister(backBridgeToken) }
+        }
+
         if (maxWidth >= 768.dp) {
             // A page merged into another (Plugins, Continue Watching, Downloads) opens its host.
             // Rewritten in state as well, so back, the sidebar highlight and the saved page agree;
@@ -557,6 +640,7 @@ fun SettingsScreen(
             }
             TabletSettingsScreen(
                 page = mergedInto ?: page,
+                entryRequester = settingsEntryRequester,
                 scrollToTopRequests = scrollToTopRequests,
                 onPageChange = { currentPage = it.name },
                 showContextPanel = maxWidth >= 1180.dp,
@@ -908,6 +992,7 @@ private fun MobileSettingsScreen(
             languageCode = selectedAppLanguage.code,
         )
 
+        val searchFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
         fun openSearchTarget(target: SettingsSearchTarget) {
             SettingsSearchHistoryRepository.record(
                 settingsSearchQuery,
@@ -916,6 +1001,7 @@ private fun MobileSettingsScreen(
             // Remove the results layer before mounting the destination. Otherwise it can keep
             // covering the page whose row is waiting to consume the requested scroll anchor.
             settingsSearchQuery = ""
+            searchFocusManager.clearFocus()
             when (target) {
                 is SettingsSearchTarget.Page -> {
                     target.anchor?.let { anchor ->
@@ -1108,8 +1194,6 @@ private fun MobileSettingsScreen(
                     selectedTheme = selectedTheme,
                     onThemeSelected = onThemeSelected,
                     customTheme = customTheme,
-                    amoledEnabled = amoledEnabled,
-                    onAmoledToggle = onAmoledToggle,
                     liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                     liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                     onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
@@ -1332,6 +1416,7 @@ private fun rememberSettingsRootSearchRevealConnection(
 @Composable
 private fun TabletSettingsScreen(
     page: SettingsPage,
+    entryRequester: FocusRequester?,
     scrollToTopRequests: Flow<Unit>,
     onPageChange: (SettingsPage) -> Unit,
     showContextPanel: Boolean,
@@ -1452,6 +1537,64 @@ private fun TabletSettingsScreen(
     val activeSidebarPage = remember(page) { page.desktopSidebarPage() }
     val profileState by remember { ProfileRepository.state }.collectAsStateWithLifecycle()
 
+    // SaveableStateProvider(page.name) rebuilds the whole page subtree when the page changes, so the
+    // row that took the Select — or whatever else held the keys — is disposed with it and nothing is
+    // focused afterwards. Hand the keys back once the new page has composed: the first content row
+    // for a page that was opened, the category row for a sub-page that Back folded back into it.
+    var pageBeforeChange by remember { mutableStateOf(page) }
+    val contentEntryRequester = remember { FocusRequester() }
+    var contentEntryActive by remember { mutableStateOf(false) }
+    LaunchedEffect(page) {
+        val from = pageBeforeChange
+        if (from == page) return@LaunchedEffect
+        pageBeforeChange = page
+        // A frame for the new subtree to compose and attach its focus requesters.
+        withFrameNanos { }
+
+        suspend fun focusSidebarEntry(): Boolean {
+            var focused = false
+            var attempts = 0
+            while (!focused && attempts < 3) {
+                focused = SettingsSidebarFocus.requestEntry(focusManager) ||
+                    (entryRequester != null && runCatching { entryRequester.requestFocus() }.getOrDefault(false))
+                if (!focused) withFrameNanos { }
+                attempts++
+            }
+            return focused
+        }
+
+        // Back from a sub-page belongs on the category list it came from.
+        if (from.desktopBackPage() == page) {
+            focusSidebarEntry()
+            SettingsFocusDiagnostics.log("page-change back-to-parent $from -> $page: sidebar entry")
+            return@LaunchedEffect
+        }
+
+        // A page that was opened takes the keys in its content. The controls register themselves as
+        // entry points, so focus lands on the first real row rather than on a proxy. If the page has
+        // no registered control yet (a text field first, say), geometry gets the keys into the
+        // column; the 1dp stop remains as the last resort before giving up and leaving the keys in
+        // the category list.
+        var contentFocused = SettingsContentFocus.requestEntry(focusManager)
+        if (!contentFocused) {
+            contentFocused = focusManager.moveFocus(FocusDirection.Right)
+        }
+        if (!contentFocused) {
+            contentEntryActive = true
+            try {
+                withFrameNanos { }
+                val entered = runCatching { contentEntryRequester.requestFocus() }.getOrDefault(false)
+                withFrameNanos { }
+                contentFocused = entered && focusManager.moveFocus(FocusDirection.Down)
+            } finally {
+                contentEntryActive = false
+            }
+        }
+        // A page with nothing focusable: leave the keys on the category list instead.
+        if (!contentFocused) focusSidebarEntry()
+        SettingsFocusDiagnostics.log("page-change $from -> $page: contentFocused=$contentFocused")
+    }
+
     BoxWithConstraints(
         modifier = Modifier
             .fillMaxSize()
@@ -1465,7 +1608,10 @@ private fun TabletSettingsScreen(
         val shellWidth = if (desktopSettingsFullWidth || maxWidth < desiredShellWidth) maxWidth else desiredShellWidth
         val contentWidth = shellWidth - DesktopSettingsSidebarWidth
 
-        saveableStateHolder.SaveableStateProvider(page.name) {
+        // Constant key: the provider's identity must survive category changes. Keying on page.name
+        // disposed this subtree (and the focused control) on every page change, so focus went null
+        // and keys stopped working. The page is still read below, so content recomposes.
+        saveableStateHolder.SaveableStateProvider("settings-page") {
             val localLibraryUiState by LocalLibraryRepository.uiState.collectAsStateWithLifecycle()
             val localLibraryTitlesState = rememberLocalLibraryTitlesState()
 
@@ -1509,12 +1655,16 @@ private fun TabletSettingsScreen(
                 languageCode = selectedAppLanguage.code,
             )
 
+            val searchFocusManager = androidx.compose.ui.platform.LocalFocusManager.current
             fun openSearchTarget(target: SettingsSearchTarget) {
                 SettingsSearchHistoryRepository.record(
                     settingsSearchQuery,
                     (target as? SettingsSearchTarget.Page)?.page,
                 )
                 settingsSearchQuery = ""
+                // The field is in the top bar, outside the page. Without this it kept the keys,
+                // so the arrows edited text instead of moving through the page the result opened.
+                searchFocusManager.clearFocus()
                 when (target) {
                     is SettingsSearchTarget.Page -> {
                         if (target.page.isEnabledByFeaturePolicy()) {
@@ -1560,6 +1710,18 @@ private fun TabletSettingsScreen(
                 }
             }
             SeekSettingsAnchorIntoView(listState)
+
+            // The content's Down/Up fallback: when focus is on the last composed row, an arrow has
+            // nowhere to go until the list reveals more. Page the list and the item retries.
+            DisposableEffect(listState) {
+                SettingsContentScroll.register { direction ->
+                    val viewport = listState.layoutInfo.viewportSize.height
+                    if (viewport > 0f) {
+                        hapticScope.launch { listState.animateScrollBy(viewport * 0.85f * direction) }
+                    }
+                }
+                onDispose { SettingsContentScroll.unregister() }
+            }
 
         val columnGuideBrush = settingsColumnGuideBrush()
         val columnGuideModifier = if (desktopColumnGuidesVisible) {
@@ -1611,6 +1773,7 @@ private fun TabletSettingsScreen(
                 onNavigateToLiveTv = onNavigateToLiveTv,
                 onNavigateToMusic = onNavigateToMusic,
                 contextPanelWidth = contextPanelWidth,
+                page = page,
             )
             if (desktopColumnGuidesVisible) {
                 Box(
@@ -1626,6 +1789,7 @@ private fun TabletSettingsScreen(
                     .width(DesktopSettingsSidebarWidth)
                     .fillMaxSize(),
             ) {
+                CompositionLocalProvider(LocalSettingsFocusRegion provides SettingsFocusRegion.Sidebar) {
                 Column(
                     modifier = Modifier
                         .fillMaxSize()
@@ -1651,6 +1815,19 @@ private fun TabletSettingsScreen(
                         .configureIconVisible
                         .collectAsStateWithLifecycle()
                     var categoryVisibilityDialogVisible by remember { mutableStateOf(false) }
+                    // With every category hidden there is no row to hand the page's entry to, so the
+                    // heading that opens the customization dialog becomes that entry.
+                    val categoriesEmpty = visibleSidebarItems.isEmpty()
+                    DisposableEffect(entryRequester, focusManager, categoriesEmpty) {
+                        if (categoriesEmpty && entryRequester != null) {
+                            SettingsSidebarFocus.register(entryRequester, focusManager)
+                        }
+                        onDispose {
+                            if (categoriesEmpty && entryRequester != null) {
+                                SettingsSidebarFocus.unregister(entryRequester)
+                            }
+                        }
+                    }
                     Box(modifier = Modifier.weight(1f)) {
                         DesktopPanelSection(
                             title = stringResource(Res.string.settings_desktop_categories),
@@ -1662,6 +1839,11 @@ private fun TabletSettingsScreen(
                                 Res.string.settings_desktop_categories_customize,
                             ),
                             onTitleClick = { categoryVisibilityDialogVisible = true },
+                            modifier = if (categoriesEmpty && entryRequester != null) {
+                                Modifier.focusRequester(entryRequester)
+                            } else {
+                                Modifier
+                            },
                         ) {
                             if (visibleSidebarItems.isEmpty()) {
                                 Text(
@@ -1671,6 +1853,7 @@ private fun TabletSettingsScreen(
                                 )
                             } else {
                                 DesktopSettingsSidebarList(
+                                    entryRequester = entryRequester,
                                     items = visibleSidebarItems,
                                     allItems = orderedSidebarItems,
                                     activeSidebarPage = activeSidebarPage,
@@ -1704,6 +1887,7 @@ private fun TabletSettingsScreen(
                         )
                     }
                 }
+                }
                 if (desktopColumnGuidesVisible) {
                     Box(
                         modifier = Modifier
@@ -1723,6 +1907,17 @@ private fun TabletSettingsScreen(
                     } else {
                         DesktopSettingsMainColumnWidth
                     }
+                    // The page content's keyboard entry: a 1dp stop at its top edge, focused when a
+                    // category opens and then stepped Down onto the first row. It is focusable only
+                    // for that move (see contentEntryActive), so it adds no extra stop to traversal.
+                    Box(
+                        modifier = Modifier
+                            .align(Alignment.TopStart)
+                            .size(1.dp)
+                            .focusRequester(contentEntryRequester)
+                            .focusProperties { canFocus = contentEntryActive }
+                            .focusable(),
+                    )
                     Row(modifier = Modifier.fillMaxSize()) {
                         // The list's size, for headings that scroll themselves to the top of it.
                         val listViewportSize = remember { mutableStateOf(IntSize.Zero) }
@@ -1744,6 +1939,7 @@ private fun TabletSettingsScreen(
                             LocalSettingsPage provides page,
                             LocalSettingsSectionCards provides true,
                             LocalSettingsAnchorViewport provides anchorViewport,
+                            LocalSettingsFocusRegion provides SettingsFocusRegion.Content,
                         ) {
                         LazyColumn(
                             state = listState,
@@ -1755,7 +1951,27 @@ private fun TabletSettingsScreen(
                                 .graphicsLayer { alpha = if (SettingsScrollAnchor.seeking) 0f else 1f }
                                 .onSizeChanged { listViewportSize.value = it }
                                 .onPlaced { anchorViewport.coordinates = it }
-                                .nestedScroll(rootSearchRevealConnection),
+                                .nestedScroll(rootSearchRevealConnection)
+                                // Up out of the content belongs to the row of tab icons, not to
+                                // the search field that happens to sit above the right-hand rows.
+                                // With the content a focus group, leaving it upward asks the top
+                                // bar first; the field is still reachable by Right from the bar.
+                                .focusProperties {
+                                    onExit = {
+                                        if (requestedFocusDirection == FocusDirection.Up &&
+                                            SettingsTopBarFocus.requestEntry(focusManager)
+                                        ) {
+                                            cancelFocusChange()
+                                        }
+                                    }
+                                }
+                                .focusGroup()
+                                // Fallback traversal for any content control that does not use
+                                // [settingsNavItem] (a text field, a heading action): an arrow it
+                                // does not consume still moves focus, so no focusable control in the
+                                // content is a dead stop. Rows consume their arrows in the preview
+                                // phase, so this only ever sees the ones they leave alone.
+                                .arrowKeyFocusNavigation(releaseWhenStuck = false),
                             contentPadding = PaddingValues(
                                 start = 32.dp,
                                 top = DesktopSettingsPageTopInset,
@@ -1953,8 +2169,6 @@ private fun TabletSettingsScreen(
                             selectedTheme = selectedTheme,
                             onThemeSelected = onThemeSelected,
                             customTheme = customTheme,
-                            amoledEnabled = amoledEnabled,
-                            onAmoledToggle = onAmoledToggle,
                             liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                             liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                             onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
@@ -2405,6 +2619,7 @@ private fun orderDesktopSettingsSidebarItems(
 
 @Composable
 private fun DesktopSettingsSidebarList(
+    entryRequester: FocusRequester?,
     items: List<DesktopSettingsSidebarItem>,
     allItems: List<DesktopSettingsSidebarItem>,
     activeSidebarPage: SettingsPage,
@@ -2415,6 +2630,55 @@ private fun DesktopSettingsSidebarList(
 ) {
     val hapticFeedback = LocalHapticFeedback.current
     val listState = rememberLazyListState()
+    val focusManager = LocalFocusManager.current
+    // The category whose sections are unfolded. Select sets it; moving the arrow keys never does, so
+    // walking down the list does not open every category it passes. A page change from elsewhere
+    // (a sub-page's parent, a favourite, a search result) opens that page's category.
+    var expandedPage by remember { mutableStateOf<SettingsPage?>(activeSidebarPage) }
+    LaunchedEffect(activeSidebarPage) { expandedPage = activeSidebarPage }
+    // One requester per category, so an arrow can move the focus to a row without changing which
+    // category is open. The selected row still has [entryRequester] for the page's keyboard entry.
+    val rowRequesters = remember(items.size) { List(items.size) { FocusRequester() } }
+    // The row the arrow keys moved to, waiting to be scrolled to and focused. A row below the fold
+    // is not composed, so its focus requester does not exist yet: the list has to bring it into
+    // view before it can take the focus.
+    var moveToIndex by remember { mutableIntStateOf(-1) }
+    // Which category rows currently have a focused stop inside them (their own row or a control
+    // within). Empty while the keys sit in the page content, which is when the selected category
+    // keeps its resting zoom.
+    var focusedCategories by remember { mutableStateOf(setOf<Int>()) }
+    LaunchedEffect(moveToIndex) {
+        if (moveToIndex < 0) return@LaunchedEffect
+        val index = moveToIndex
+        // Instant rather than animated: holding Up/Down re-keys this effect every repeat, and an
+        // animation restarted mid-flight reads as stutter. The focused row still brings itself into
+        // view, so a single press lands without the jitter.
+        listState.scrollToItem(index)
+        // A frame for the row that just scrolled in to attach the requester the focus goes to.
+        withFrameNanos { }
+        runCatching { rowRequesters.getOrNull(index)?.requestFocus() }
+        moveToIndex = -1
+    }
+    // The selected row is where the page's keyboard focus enters, so a Left at the page's left edge
+    // comes back to the categories. Registered here rather than in the row because the selected row
+    // can be scrolled out of the viewport, where it has no node to focus: the fallback scrolls to
+    // it and focuses it once it is composed.
+    val selectedIndex by rememberUpdatedState(items.indexOfFirst { it.page == activeSidebarPage })
+    DisposableEffect(entryRequester, focusManager) {
+        if (entryRequester != null) {
+            SettingsSidebarFocus.register(entryRequester, focusManager) {
+                val index = selectedIndex
+                if (index < 0) {
+                    false
+                } else {
+                    moveToIndex = index
+                    true
+                }
+            }
+        }
+        onDispose { if (entryRequester != null) SettingsSidebarFocus.unregister(entryRequester) }
+    }
+
     val reorderableLazyListState = rememberReorderableLazyListState(listState) { from, to ->
         SettingsCategoryOrderRepository.moveByIndex(
             fromIndex = from.index,
@@ -2430,7 +2694,7 @@ private fun DesktopSettingsSidebarList(
         state = listState,
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        itemsIndexed(items, key = { _, item -> item.page.name }) { _, item ->
+        itemsIndexed(items, key = { _, item -> item.page.name }) { index, item ->
             ReorderableItem(reorderableLazyListState, key = item.page.name) {
                 val selected = item.page == activeSidebarPage
                 Column {
@@ -2438,6 +2702,15 @@ private fun DesktopSettingsSidebarList(
                         label = item.label,
                         icon = item.icon,
                         selected = selected,
+                        // The selected row is where the page's keyboard focus enters. Up on the
+                        // first row reaches the categories heading above it; there is no longer a
+                        // dead end at the top of the list.
+                        entryRequester = entryRequester.takeIf { selected },
+                        moveRequester = rowRequesters.getOrNull(index),
+                        // A category with sub-items shows the expand/collapse triangle; only Select
+                        // changes it, so navigating over one never opens or closes it.
+                        expandable = subItems.size > 1,
+                        expanded = expandedPage == item.page && subItems.size > 1,
                         modifier = with(this@ReorderableItem) {
                             // The whole row is both clickable (select category) and the drag handle, so
                             // draggableHandle's immediate slop-based drag turned a click with the
@@ -2449,13 +2722,39 @@ private fun DesktopSettingsSidebarList(
                                 },
                             )
                         },
-                        onClick = { onPageChange(item.page) },
+                        // Up and Down walk the categories by index and scroll the one they land on
+                        // into view. A lazy list only composes what is on screen, so focus traversal
+                        // cannot reach a row below the fold. Moving the focus does not change the
+                        // open category: only Select does. Down on the open category is left to
+                        // traversal, so it reaches the sections listed under it first.
+                        onVertical = { direction ->
+                            val intoSections = direction > 0 && expandedPage == item.page && subItems.size > 1
+                            val next = (index + direction).coerceIn(0, items.lastIndex)
+                            if (intoSections || next == index) {
+                                false
+                            } else {
+                                moveToIndex = next
+                                true
+                            }
+                        },
+                        onClick = {
+                            expandedPage = if (expandedPage == item.page) null else item.page
+                            onPageChange(item.page)
+                        },
+                        idleZoom = selected && focusedCategories.isEmpty(),
+                        onRowFocusChanged = { hasFocus ->
+                            focusedCategories = if (hasFocus) {
+                                focusedCategories + index
+                            } else {
+                                focusedCategories - index
+                            }
+                        },
                     )
-                    // The selected category unfolds its sections underneath, so a page's headings
-                    // are one click away from the sidebar. Only one row is ever open; a single
-                    // entry is not worth a tree.
+                    // The open category unfolds its sections underneath, so a page's headings are
+                    // one click away from the sidebar. Only one row is ever open; a single entry is
+                    // not worth a tree.
                     AnimatedVisibility(
-                        visible = selected && subItems.size > 1,
+                        visible = expandedPage == item.page && subItems.size > 1,
                         enter = expandVertically() + fadeIn(),
                         exit = shrinkVertically() + fadeOut(),
                     ) {
@@ -2463,6 +2762,13 @@ private fun DesktopSettingsSidebarList(
                             items = subItems,
                             currentPage = currentPage,
                             onClick = onSubItemClick,
+                            focusParent = {
+                                // Back from a sub-entry returns to the category row above it rather
+                                // than walking the page ladder (and leaving Settings) from the sidebar.
+                                rowRequesters.getOrNull(index)?.let { requester ->
+                                    runCatching { requester.requestFocus() }.getOrDefault(false)
+                                } ?: false
+                            },
                         )
                     }
                 }
@@ -2476,11 +2782,48 @@ private fun DesktopSettingsSidebarRow(
     label: String,
     icon: ImageVector,
     selected: Boolean,
+    entryRequester: FocusRequester? = null,
+    moveRequester: FocusRequester? = null,
+    /** The category has sub-items to unfold; shows a filled triangle (▶ collapsed, ▼ expanded). */
+    expandable: Boolean = false,
+    expanded: Boolean = false,
     modifier: Modifier = Modifier,
+    onVertical: ((Int) -> Boolean)? = null,
     onClick: () -> Unit,
+    /** Selected row keeps a smaller resting zoom while nothing in the sidebar holds the keys. */
+    idleZoom: Boolean = false,
+    onRowFocusChanged: ((Boolean) -> Unit)? = null,
 ) {
     val tokens = MaterialTheme.nuvio
     val contentColor = if (selected) tokens.colors.accent else tokens.colors.textMuted
+    // The nav bar's icon zoom, applied to the category's icon and label. The label scales from its
+    // leading edge so it reads as growing out from the icon rather than widening around itself;
+    // the scale is visual only, so the row keeps its layout height and its 8dp gaps.
+    var rowFocused by remember { mutableStateOf(false) }
+    // Hover takes the keys and therefore the same zoom, like the app's sidebar rows.
+    val hoverSource = remember { MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    LaunchedEffect(hovered) {
+        if (hovered) runCatching { (moveRequester ?: entryRequester)?.requestFocus() }
+    }
+    val iconScale by animateFloatAsState(
+        targetValue = when {
+            rowFocused || hovered -> 1.18f
+            idleZoom -> 1.10f
+            else -> 1f
+        },
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "settingsCategoryIconScale",
+    )
+    val labelScale by animateFloatAsState(
+        targetValue = when {
+            rowFocused || hovered -> 1.08f
+            idleZoom -> 1.04f
+            else -> 1f
+        },
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "settingsCategoryLabelScale",
+    )
     // Masked across the whole row rather than per element, so a selected category reads as one
     // sweep running from its icon through its label instead of two small independent ramps. Only
     // while selected: an unselected row is muted grey and has no accent to gradient.
@@ -2488,8 +2831,21 @@ private fun DesktopSettingsSidebarRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            // Outside the row's focus target, like the focus ring: sees the keys land on the row.
+            .onFocusChanged { state ->
+                if (rowFocused != state.hasFocus) {
+                    rowFocused = state.hasFocus
+                    onRowFocusChanged?.invoke(state.hasFocus)
+                }
+            }
+            .hoverable(hoverSource)
+            .then(if (entryRequester != null) Modifier.focusRequester(entryRequester) else Modifier)
+            .then(if (moveRequester != null) Modifier.focusRequester(moveRequester) else Modifier)
+            .settingsNavItem(onActivate = onClick, onVertical = onVertical)
             .clickable(onClick = onClick)
-            .padding(vertical = 6.dp)
+            // Leave room inside the ring for the focused icon zoom; the 22dp glyph grows about 2dp
+            // each way, so without this it crossed the left border.
+            .padding(start = 6.dp, end = 2.dp, top = 6.dp, bottom = 6.dp)
             .then(accentMask),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
@@ -2498,17 +2854,38 @@ private fun DesktopSettingsSidebarRow(
             imageVector = icon,
             contentDescription = null,
             tint = contentColor,
-            modifier = Modifier.size(22.dp),
+            modifier = Modifier
+                .size(22.dp)
+                .graphicsLayer {
+                    scaleX = iconScale
+                    scaleY = iconScale
+                },
         )
         Text(
             text = label,
-            modifier = Modifier.weight(1f),
+            modifier = Modifier
+                .weight(1f)
+                .graphicsLayer {
+                    scaleX = labelScale
+                    scaleY = labelScale
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                },
             style = MaterialTheme.typography.bodyMedium,
             color = contentColor,
             fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
             maxLines = 1,
             overflow = TextOverflow.Ellipsis,
         )
+        // A filled triangle immediately right of the label, always visible, never a focus stop of
+        // its own: it mirrors the row's selection, not a separate control.
+        if (expandable) {
+            Icon(
+                imageVector = if (expanded) Icons.Rounded.KeyboardArrowDown else Icons.Rounded.KeyboardArrowRight,
+                contentDescription = null,
+                tint = contentColor,
+                modifier = Modifier.size(16.dp),
+            )
+        }
     }
 }
 
@@ -2522,9 +2899,22 @@ private fun DesktopSettingsSidebarSubList(
     items: List<DesktopSettingsSidebarSubItem>,
     currentPage: SettingsPage,
     onClick: (DesktopSettingsSidebarSubItem) -> Unit,
+    focusParent: () -> Boolean,
 ) {
     val tokens = MaterialTheme.nuvio
     val guideColor = tokens.colors.borderDefault
+    // Up and Down walk the entries by index, as the category list above does: a section list can
+    // sit inside an AnimatedVisibility that is still settling when the first arrow arrives, and
+    // index-walking does not depend on the entries being laid out at their final size yet.
+    val requesters = remember(items.size) { List(items.size) { FocusRequester() } }
+    var moveToIndex by remember { mutableIntStateOf(-1) }
+    LaunchedEffect(moveToIndex) {
+        if (moveToIndex < 0) return@LaunchedEffect
+        val index = moveToIndex
+        withFrameNanos { }
+        runCatching { requesters.getOrNull(index)?.requestFocus() }
+        moveToIndex = -1
+    }
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -2541,12 +2931,28 @@ private fun DesktopSettingsSidebarSubList(
             .padding(start = DesktopSidebarSubListTextInset),
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        items.forEach { item ->
+        items.forEachIndexed { index, item ->
             // A sub-page entry (TMDB under Integrations) is "current" while that page is open; a
             // section entry never is, since the page does not report which heading is in view.
             val current = item.anchor == null && item.page == currentPage
             val color = if (current) tokens.colors.accent else tokens.colors.textMuted
             val accentMask = if (current) Modifier.accentGradientMask() else Modifier
+            // The sub-entry text zooms like the category label when it holds the keys, and on hover.
+            var itemFocused by remember { mutableStateOf(false) }
+            val hoverSource = remember { MutableInteractionSource() }
+            val hovered by hoverSource.collectIsHoveredAsState()
+            val scale by animateFloatAsState(
+                targetValue = when {
+                    itemFocused || hovered -> 1.08f
+                    current -> 1.04f
+                    else -> 1f
+                },
+                animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+                label = "settingsSubItemScale",
+            )
+            LaunchedEffect(hovered) {
+                if (hovered) runCatching { requesters.getOrNull(index)?.requestFocus() }
+            }
             Text(
                 text = item.label,
                 style = MaterialTheme.typography.bodySmall,
@@ -2556,9 +2962,32 @@ private fun DesktopSettingsSidebarSubList(
                 overflow = TextOverflow.Ellipsis,
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onFocusChanged { itemFocused = it.hasFocus }
+                    .hoverable(hoverSource)
                     .clip(RoundedCornerShape(NuvioTokens.Radius.sm))
+                    .focusRequester(requesters[index])
+                    .settingsNavItem(
+                        onActivate = { onClick(item) },
+                        onVertical = { direction ->
+                            val next = index + direction
+                            if (next in items.indices) {
+                                moveToIndex = next
+                                true
+                            } else {
+                                // Up from the first entry returns to the category row above, Down
+                                // from the last falls to the next category below.
+                                false
+                            }
+                        },
+                        onBack = focusParent,
+                    )
                     .clickable { onClick(item) }
                     .padding(horizontal = 8.dp, vertical = 5.dp)
+                    .graphicsLayer {
+                        scaleX = scale
+                        scaleY = scale
+                        transformOrigin = TransformOrigin(0f, 0.5f)
+                    }
                     .then(accentMask),
             )
         }
@@ -2566,7 +2995,7 @@ private fun DesktopSettingsSidebarSubList(
 }
 
 /** Centre of the 22.dp category icon, where the sub-list's guide line hangs from. */
-private val DesktopSidebarSubListGuideInset = 11.dp
+private val DesktopSidebarSubListGuideInset = 17.dp
 
 /** From the guide line to the sub-list text, landing the text on the category label's column
  * (icon 22.dp + 12.dp gap) minus the 8.dp of click padding the entries carry. */
@@ -2626,7 +3055,7 @@ internal fun SeekSettingsAnchorIntoView(listState: LazyListState) {
                     if (!pending()) break
                 }
                 if (!listState.canScrollForward) {
-                    SettingsScrollAnchor.expire(request.sequence)
+                            SettingsScrollAnchor.expire(request.sequence)
                     listState.scrollToItem(startIndex, startOffset)
                     break
                 }
@@ -2688,6 +3117,88 @@ private fun DesktopSettingsProfileRow(
     }
 }
 
+/**
+ * The focus ring the rest of the top bar draws, for the utility icons on its left. They are
+ * ordinary focus stops — [arrowKeyFocusNavigation] walks them — but an icon button draws no focus
+ * mark of its own. Apply it before the focus target ([androidx.compose.foundation.clickable], or
+ * the icon button's own clickable) so the observer sits outside it and sees the focus.
+ */
+@Composable
+private fun Modifier.settingsTopBarFocusRing(onFocus: (Boolean) -> Unit = {}): Modifier {
+    var focused by remember { mutableStateOf(false) }
+    return this
+        .onFocusChanged {
+            focused = it.isFocused
+            onFocus(it.isFocused)
+        }
+        .then(if (focused) Modifier.settingsFocusRing() else Modifier)
+}
+
+/**
+ * A utility icon in the Settings top bar: the shared focus ring plus the same zoom the tabs and the
+ * category icons use. The button box stays the focus target and ring bounds, so the larger glyph
+ * stays inside the ring.
+ */
+@Composable
+private fun SettingsTopBarIconButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    content: @Composable (Float) -> Unit,
+) {
+    var focused by remember { mutableStateOf(false) }
+    val requester = remember { FocusRequester() }
+    val hoverSource = remember { MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    LaunchedEffect(hovered) { if (hovered) runCatching { requester.requestFocus() } }
+    val scale by animateFloatAsState(
+        targetValue = if (focused || hovered) 1.18f else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "settingsTopBarIconScale",
+    )
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        modifier = Modifier
+            .hoverable(hoverSource)
+            .focusRequester(requester)
+            .settingsTopBarFocusRing { focused = it },
+    ) {
+        content(scale)
+    }
+}
+
+/**
+ * The Settings top bar's search box, asked for by the remote's Search key while Settings is the
+ * active screen. The box always exists; the counter lets a request reach it without a click.
+ */
+internal object SettingsTopBarSearch {
+    internal var focusRequests by androidx.compose.runtime.mutableIntStateOf(0)
+        private set
+
+    /** A spoken search: the words go into the Settings box, not the video search. */
+    internal var pendingText by androidx.compose.runtime.mutableStateOf<String?>(null)
+
+    /** True only while the Settings top bar is composed, so a stale request cannot fire later. */
+    internal var active by androidx.compose.runtime.mutableStateOf(false)
+
+    fun requestFocus(): Boolean {
+        if (!active) return false
+        focusRequests++
+        return true
+    }
+
+    /** The remote's Search key, or a voice search with no named scope: search Settings. */
+    fun searchFor(query: String?) {
+        pendingText = query
+        requestFocus()
+    }
+
+    fun deactivate() {
+        active = false
+        focusRequests = 0
+    }
+}
+
 @Composable
 private fun DesktopSettingsTopBar(
     query: String,
@@ -2710,8 +3221,33 @@ private fun DesktopSettingsTopBar(
     onNavigateToLiveTv: (() -> Unit)?,
     onNavigateToMusic: (() -> Unit)?,
     contextPanelWidth: Dp,
+    page: SettingsPage,
 ) {
     val tokens = MaterialTheme.nuvio
+    val topBarSearchRequester = remember { FocusRequester() }
+    DisposableEffect(Unit) {
+        SettingsTopBarSearch.active = true
+        onDispose { SettingsTopBarSearch.deactivate() }
+    }
+    val pendingSearchText = SettingsTopBarSearch.pendingText
+    LaunchedEffect(pendingSearchText) {
+        pendingSearchText?.let { text ->
+            onQueryChange(text)
+            SettingsTopBarSearch.pendingText = null
+        }
+    }
+    val topBarSearchRequests = SettingsTopBarSearch.focusRequests
+    var handledTopBarSearchRequests by remember { mutableIntStateOf(topBarSearchRequests) }
+    LaunchedEffect(topBarSearchRequests) {
+        if (topBarSearchRequests == handledTopBarSearchRequests) return@LaunchedEffect
+        handledTopBarSearchRequests = topBarSearchRequests
+        withFrameNanos { }
+        runCatching { topBarSearchRequester.requestFocus() }
+    }
+    // Set by a Right pressed in the utility-icon row. Spatial focus then lands on the tab row's
+    // whole focus target, which would otherwise keep its last index (Calendar, the right edge) even
+    // though the keys arrived from its left. The tab row reads this to enter at Home instead.
+    var enterTabRowFromLeft by remember { mutableStateOf(false) }
     // The search field's clear X sits in the window's top-right corner, under the fullscreen
     // button's hover zone; while it is showing, that button stays out of the way.
     val clearButtonVisible = query.isNotEmpty()
@@ -2724,7 +3260,11 @@ private fun DesktopSettingsTopBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(82.dp),
+            .height(82.dp)
+            // The utility icons and the search field beside the tab row are ordinary focusable
+            // controls: the arrows walk them, and the tab row releases a Left at its first entry so
+            // this reaches the icons drawn to its left. Compose Desktop moves focus on Tab only.
+            .arrowKeyFocusNavigation(),
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -2735,56 +3275,98 @@ private fun DesktopSettingsTopBar(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(start = 32.dp),
+                    .padding(start = 32.dp)
+                    // Remember which side a Right leaves from: entering the tab row from the left
+                    // starts at Home, entering it from the search field still starts at the right
+                    // edge. Any other key drops the flag so a stale one cannot move the entry.
+                    .onKeyEvent { event ->
+                        if (event.type == KeyEventType.KeyDown) {
+                            enterTabRowFromLeft = event.key == Key.DirectionRight
+                        }
+                        false
+                    },
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
+                var profileFocused by remember { mutableStateOf(false) }
+                val profileRequester = remember { FocusRequester() }
+                val profileHoverSource = remember { MutableInteractionSource() }
+                val profileHovered by profileHoverSource.collectIsHoveredAsState()
+                LaunchedEffect(profileHovered) {
+                    if (profileHovered) runCatching { profileRequester.requestFocus() }
+                }
+                val profileScale by animateFloatAsState(
+                    targetValue = if (profileFocused || profileHovered) 1.18f else 1f,
+                    animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+                    label = "settingsTopBarProfileScale",
+                )
                 Box(
                     modifier = Modifier
+                        .hoverable(profileHoverSource)
+                        .focusRequester(profileRequester)
+                        .settingsTopBarFocusRing { profileFocused = it }
                         .clickable(enabled = onProfileClick != null) { onProfileClick?.invoke() }
-                        .padding(2.dp),
+                        // Room for the focused zoom, so the avatar stays inside its ring.
+                        .padding(4.dp),
                 ) {
-                    ActiveProfileMiniAvatar(
-                        profile = activeProfile,
-                        avatars = profileAvatars,
-                        selected = false,
-                        size = 34,
-                    )
+                    Box(
+                        modifier = Modifier.graphicsLayer {
+                            scaleX = profileScale
+                            scaleY = profileScale
+                        },
+                    ) {
+                        ActiveProfileMiniAvatar(
+                            profile = activeProfile,
+                            avatars = profileAvatars,
+                            selected = false,
+                            size = 34,
+                        )
+                    }
                 }
                 // Each icon drawn in the settings glass (see settingsGlassGlyph) so the bar reads as part
                 // of the page. The two toggles are clear glass when off and take the accent when on.
-                IconButton(
+                SettingsTopBarIconButton(
                     onClick = { onShowLatestChangelogClick?.invoke() },
                     enabled = onShowLatestChangelogClick != null,
-                ) {
+                ) { scale ->
                     Icon(
                         imageVector = Icons.Rounded.Notifications,
                         contentDescription = null,
-                        modifier = Modifier.settingsGlassGlyph(lit = onShowLatestChangelogClick != null),
+                        modifier = Modifier
+                            .graphicsLayer { scaleX = scale; scaleY = scale }
+                            .settingsGlassGlyph(lit = onShowLatestChangelogClick != null),
                     )
                 }
-                IconButton(
+                SettingsTopBarIconButton(
                     onClick = { onColumnGuidesVisibleChange(!columnGuidesVisible) },
-                ) {
+                ) { scale ->
                     Icon(
                         imageVector = Icons.Rounded.ViewColumn,
                         contentDescription = stringResource(Res.string.settings_desktop_toggle_column_guides),
-                        modifier = Modifier.settingsGlassGlyph(lit = columnGuidesVisible),
+                        modifier = Modifier
+                            .graphicsLayer { scaleX = scale; scaleY = scale }
+                            .settingsGlassGlyph(lit = columnGuidesVisible),
                     )
                 }
                 // Centred column set vs. the whole window; lit like the guides toggle when it is on.
-                IconButton(onClick = { onFullWidthChange(!fullWidth) }) {
+                SettingsTopBarIconButton(
+                    onClick = { onFullWidthChange(!fullWidth) },
+                ) { scale ->
                     Icon(
                         imageVector = Icons.Rounded.WidthFull,
                         contentDescription = stringResource(Res.string.settings_desktop_toggle_full_width),
-                        modifier = Modifier.settingsGlassGlyph(lit = fullWidth),
+                        modifier = Modifier
+                            .graphicsLayer { scaleX = scale; scaleY = scale }
+                            .settingsGlassGlyph(lit = fullWidth),
                     )
                 }
-                IconButton(onClick = onQuitClick) {
+                SettingsTopBarIconButton(onClick = onQuitClick) { scale ->
                     Icon(
                         imageVector = Icons.Rounded.PowerSettingsNew,
                         contentDescription = null,
-                        modifier = Modifier.settingsGlassGlyph(),
+                        modifier = Modifier
+                            .graphicsLayer { scaleX = scale; scaleY = scale }
+                            .settingsGlassGlyph(),
                     )
                 }
                 Spacer(modifier = Modifier.weight(1f))
@@ -2793,6 +3375,13 @@ private fun DesktopSettingsTopBar(
                         query = query,
                         onQueryChange = onQueryChange,
                         onFocusChange = onSearchFocusChange,
+                        focusRequester = topBarSearchRequester,
+                        onSubmit = {
+                            if (query.isNotBlank()) {
+                                SettingsSearchHistoryRepository.record(query, null)
+                                SettingsSearchResultFocus.request()
+                            }
+                        },
                         modifier = Modifier
                             .padding(end = 18.dp)
                             .height(44.dp)
@@ -2811,6 +3400,13 @@ private fun DesktopSettingsTopBar(
                         query = query,
                         onQueryChange = onQueryChange,
                         onFocusChange = onSearchFocusChange,
+                        focusRequester = topBarSearchRequester,
+                        onSubmit = {
+                            if (query.isNotBlank()) {
+                                SettingsSearchHistoryRepository.record(query, null)
+                                SettingsSearchResultFocus.request()
+                            }
+                        },
                         modifier = Modifier
                             .padding(horizontal = 18.dp)
                             .height(44.dp)
@@ -2820,6 +3416,8 @@ private fun DesktopSettingsTopBar(
             }
         }
         DesktopSettingsRootNavigation(
+            enterFromLeft = { enterTabRowFromLeft },
+            consumeEnterFromLeft = { enterTabRowFromLeft = false },
             onNavigateToHome = onNavigateToHome,
             onNavigateToSearch = onNavigateToSearch,
             onNavigateToLibrary = onNavigateToLibrary,
@@ -2827,12 +3425,16 @@ private fun DesktopSettingsTopBar(
             onNavigateToCalendar = onNavigateToCalendar,
             onNavigateToLiveTv = onNavigateToLiveTv,
             onNavigateToMusic = onNavigateToMusic,
+            pageOwner = page,
         )
     }
 }
 
 @Composable
 private fun DesktopSettingsRootNavigation(
+    /** True when the keys reached this row by a Right pressed in the utility icons on its left. */
+    enterFromLeft: () -> Boolean,
+    consumeEnterFromLeft: () -> Unit,
     onNavigateToHome: (() -> Unit)?,
     onNavigateToSearch: (() -> Unit)?,
     onNavigateToLibrary: (() -> Unit)?,
@@ -2840,6 +3442,7 @@ private fun DesktopSettingsRootNavigation(
     onNavigateToCalendar: (() -> Unit)?,
     onNavigateToLiveTv: (() -> Unit)?,
     onNavigateToMusic: (() -> Unit)?,
+    pageOwner: SettingsPage,
 ) {
     // Settings hides the top bar entirely, so this row is the way to the tabs from here. It holds the
     // same entries in the same order (NavBarLayout.kt), each shown only while its tab is (a button for
@@ -2847,57 +3450,192 @@ private fun DesktopSettingsRootNavigation(
     // floating bar's quadrants (navBarSlotWidth a slot, 6dp inset, 2dp gaps) with Calendar in the
     // profile/Settings slot, so each icon sits where its tab does.
     val entries = com.nuvio.app.features.navbar.rememberNavBarEntries()
-    val slotCount = entries.size + 1
+    // The album cover, as on the floating bar: selecting it expands the mini player and hands it
+    // the keys. It sits after Calendar, next to the utility icons.
+    val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
+    val musicRowShown = musicState.isActive
+    val calendarIndex = entries.size
+    val musicIndex = entries.size + 1
+    val slotCount = entries.size + 1 + if (musicRowShown) 1 else 0
+
+    // Keyboard: this row is the bar across the top while Settings is open, the counterpart of the
+    // floating bar the tabs show. Up at the top of the page reaches it, Left and Right walk it, Select
+    // opens the icon under the cursor and Down, Back or Dismiss give the keys back to the page.
+    //
+    // Only where the app's desktop shortcuts live (the H key and the page root's own entry): on a
+    // tablet the row is drawn but has no keyboard of this kind behind it, and claiming the keys there
+    // would swallow Up without anything to give it to.
+    val keyboard = isDesktop && onNavigateToHome != null
+    val focusManager = LocalFocusManager.current
+    val barFocusRequester = remember { FocusRequester() }
+    var barHasFocus by remember { mutableStateOf(false) }
+    // Calendar, the slot nearest the page's own edge, is where the keys land first, as the
+    // profile/Settings slot is on the floating bar.
+    var barIndex by remember { mutableIntStateOf(entries.size) }
+    DisposableEffect(keyboard) {
+        RootNavFocus.settingsTopBarAvailable = keyboard
+        onDispose { RootNavFocus.settingsTopBarAvailable = false }
+    }
+    // Up released at the top of the page comes here, the way Left at its edge goes to the categories.
+    DisposableEffect(barFocusRequester, focusManager, keyboard) {
+        if (keyboard) {
+            SettingsTopBarFocus.register(barFocusRequester, focusManager) {
+                consumeEnterFromLeft()
+                barIndex = entries.size
+                if (!barHasFocus) RootNavFocus.rememberContentFocus(pageOwner, focusManager)
+            }
+        }
+        onDispose { SettingsTopBarFocus.unregister(barFocusRequester) }
+    }
+    TopBarLeaveRestoresContent(
+        topBarHasFocus = { barHasFocus },
+        pageOwner = { pageOwner },
+    )
+
+    LaunchedEffect(barFocusRequester) {
+        RootNavFocus.topBarEnterRequests.collect {
+            consumeEnterFromLeft()
+            barIndex = entries.size
+            if (!barHasFocus) RootNavFocus.rememberContentFocus(pageOwner, focusManager)
+            runCatching { barFocusRequester.requestFocus() }
+        }
+    }
+
+    // Entries this screen has no callback for go through the app's navigation requests.
+    fun request(entry: com.nuvio.app.features.navbar.NavBarEntry): () -> Unit =
+        { com.nuvio.app.features.navbar.NavBarNavigation.request(entry) }
+    fun onClickOf(slot: Int): (() -> Unit)? = when {
+        musicRowShown && slot == musicIndex -> ({ com.nuvio.app.features.music.MusicPlayback.requestBarFocus() })
+        slot == calendarIndex -> onNavigateToCalendar
+        else -> when (val entry = entries.getOrNull(slot)) {
+        null -> null
+        com.nuvio.app.features.navbar.NavBarEntry.Home -> onNavigateToHome
+        com.nuvio.app.features.navbar.NavBarEntry.Search -> onNavigateToSearch
+        com.nuvio.app.features.navbar.NavBarEntry.Discover -> onNavigateToDiscover
+        com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> onNavigateToLiveTv
+        com.nuvio.app.features.navbar.NavBarEntry.Library -> onNavigateToLibrary
+        com.nuvio.app.features.navbar.NavBarEntry.YouTube -> request(entry) // fork:youtube-mode
+            com.nuvio.app.features.navbar.NavBarEntry.Music -> onNavigateToMusic ?: request(entry) // fork:music
+            com.nuvio.app.features.navbar.NavBarEntry.Games -> request(entry)
+        }
+    }
+
     Row(
         modifier = Modifier
             .width(com.nuvio.app.features.navbar.navBarSlotWidth(slotCount) * slotCount)
-            .padding(horizontal = 6.dp),
+            .padding(horizontal = 6.dp)
+            .then(
+                if (keyboard) {
+                    Modifier
+                        .focusRequester(barFocusRequester)
+                        // Before focusable(), as every focus observer here is: Compose only reports
+                        // focus to one that sits outside the focus target.
+                        .onFocusChanged { state ->
+                            val gained = state.hasFocus && !barHasFocus
+                            barHasFocus = state.hasFocus
+                            // Arrived by Right from the utility icons: the first tab (Home) is the
+                            // icon immediately to the right of the power button.
+                            if (gained && enterFromLeft()) {
+                                consumeEnterFromLeft()
+                                barIndex = 0
+                            }
+                        }
+                        .focusable()
+                        .topBarKeyNavigation(
+                            index = { barIndex },
+                            count = { slotCount },
+                            onMove = { barIndex = it },
+                            onActivate = { onClickOf(barIndex)?.invoke() },
+                            onLeave = { RootNavFocus.leaveTopBar() },
+                        )
+                } else {
+                    Modifier
+                },
+            ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(2.dp),
     ) {
-        // Entries this screen has no callback for go through the app's navigation requests.
-        fun request(entry: com.nuvio.app.features.navbar.NavBarEntry): () -> Unit =
-            { com.nuvio.app.features.navbar.NavBarNavigation.request(entry) }
-        entries.forEach { entry ->
+        entries.forEachIndexed { entryIndex, entry ->
             key(entry) {
+                val focused = barHasFocus && barIndex == entryIndex
                 when (entry) {
                     com.nuvio.app.features.navbar.NavBarEntry.Home -> DesktopSettingsNavIcon(
                         onClick = onNavigateToHome,
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = stringResource(Res.string.compose_nav_home),
                         imageVector = Icons.Filled.Home,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.Search -> DesktopSettingsNavIcon(
                         onClick = onNavigateToSearch,
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = stringResource(Res.string.compose_nav_search),
                         painter = painterResource(Res.drawable.sidebar_search),
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.Discover -> DesktopSettingsNavIcon(
                         onClick = onNavigateToDiscover,
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = stringResource(Res.string.compose_nav_discover),
                         imageVector = Icons.Rounded.Explore,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> DesktopSettingsNavIcon(
                         onClick = onNavigateToLiveTv,
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = stringResource(Res.string.iptv_settings_page),
                         imageVector = Icons.Rounded.LiveTv,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.Library -> DesktopSettingsNavIcon(
                         onClick = onNavigateToLibrary,
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = stringResource(Res.string.compose_nav_library),
                         painter = painterResource(Res.drawable.sidebar_library),
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.YouTube -> DesktopSettingsNavIcon( // fork:youtube-mode
                         onClick = request(entry),
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = "YouTube",
                         imageVector = Icons.Rounded.SmartDisplay,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.Music -> DesktopSettingsNavIcon( // fork:music
                         onClick = onNavigateToMusic ?: request(entry),
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = "Music",
                         imageVector = Icons.Rounded.MusicNote,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.Games -> DesktopSettingsNavIcon(
                         onClick = request(entry),
+                        focused = focused,
+                        onHoverFocus = {
+                            barIndex = entryIndex
+                            runCatching { barFocusRequester.requestFocus() }
+                        },
                         contentDescription = "Games",
                         imageVector = Icons.Rounded.SportsEsports,
                     )
@@ -2908,9 +3646,37 @@ private fun DesktopSettingsRootNavigation(
         // on; from Settings the only other ways in are the hotkey or the Library header icon.
         DesktopSettingsNavIcon(
             onClick = onNavigateToCalendar,
+            focused = barHasFocus && barIndex == calendarIndex,
+            onHoverFocus = {
+                barIndex = calendarIndex
+                runCatching { barFocusRequester.requestFocus() }
+            },
             contentDescription = stringResource(Res.string.calendar_title),
             imageVector = Icons.Rounded.DateRange,
         )
+        if (musicRowShown) {
+            DesktopSettingsNavIcon(
+                onClick = { com.nuvio.app.features.music.MusicPlayback.requestBarFocus() },
+                focused = barHasFocus && barIndex == musicIndex,
+                onHoverFocus = {
+                    barIndex = musicIndex
+                    runCatching { barFocusRequester.requestFocus() }
+                },
+                contentDescription = "Now playing",
+            ) {
+                val cover = musicState.coverUrl
+                if (cover != null) {
+                    com.nuvio.app.core.ui.NuvioAsyncImage(
+                        model = cover,
+                        contentDescription = null,
+                        modifier = Modifier.size(22.dp).clip(RoundedCornerShape(6.dp)),
+                        contentScale = androidx.compose.ui.layout.ContentScale.Crop,
+                    )
+                } else {
+                    Icon(Icons.Rounded.MusicNote, null, modifier = Modifier.size(22.dp))
+                }
+            }
+        }
     }
 }
 
@@ -2953,17 +3719,61 @@ private fun RowScope.DesktopSettingsNavIcon(
     contentDescription: String,
     imageVector: ImageVector? = null,
     painter: Painter? = null,
+    focused: Boolean = false,
+    onHoverFocus: (() -> Unit)? = null,
+    content: (@Composable () -> Unit)? = null,
 ) {
     val enabled = onClick != null
-    val iconModifier = Modifier
+    val hoverSource = remember { MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    LaunchedEffect(hovered) { if (hovered) onHoverFocus?.invoke() }
+    // Same zoom as the app's sidebar icons and the Settings categories, so the row reads as the
+    // same navigation surface. The 48dp button stays the ring and focus bounds.
+    val scale by animateFloatAsState(
+        targetValue = if (focused || hovered) 1.18f else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "settingsRootNavIconScale",
+    )
+    val scaleModifier = Modifier
         .size(22.dp)
-        .settingsGlassGlyph(lit = enabled)
-    Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        IconButton(onClick = { onClick?.invoke() }, enabled = enabled) {
-            if (imageVector != null) {
-                Icon(imageVector, contentDescription, iconModifier)
-            } else if (painter != null) {
-                Icon(painter, contentDescription, iconModifier)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+    // Vector glyphs are masked through the glass tint; a cover image must keep its own colours.
+    val iconModifier = scaleModifier.settingsGlassGlyph(lit = enabled)
+    Box(
+        modifier = Modifier.weight(1f).hoverable(hoverSource),
+        contentAlignment = Alignment.Center,
+    ) {
+        val ringShape = RoundedCornerShape(8.dp)
+        Box(
+            modifier = Modifier
+                // The ring marks the icon the arrow keys are on, as the floating bar's quadrants ring
+                // theirs: while it is up the keys live on the bar, not on the page behind it.
+                .then(
+                    if (focused) {
+                        Modifier.border(2.dp, Color(0xFF9ECAFF).copy(alpha = .9f), ringShape)
+                    } else {
+                        Modifier
+                    },
+                )
+                .padding(2.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            IconButton(
+                onClick = { onClick?.invoke() },
+                enabled = enabled,
+                // The bar itself is the keyboard stop: its arrow keys walk the slots by index. An
+                // icon that took the focus on its own would sit outside that index and swallow the
+                // next key.
+                modifier = Modifier.focusProperties { canFocus = false },
+            ) {
+                when {
+                    content != null -> Box(scaleModifier, contentAlignment = Alignment.Center) { content() }
+                    imageVector != null -> Icon(imageVector, contentDescription, iconModifier)
+                    painter != null -> Icon(painter, contentDescription, iconModifier)
+                }
             }
         }
     }
@@ -3014,6 +3824,7 @@ private fun DesktopSettingsContextPanel(
                         .background(settingsColumnGuideBrush()),
                 )
             }
+            CompositionLocalProvider(LocalSettingsFocusRegion provides SettingsFocusRegion.ContextPanel) {
             Column(
                 modifier = Modifier
                     .fillMaxSize()
@@ -3058,6 +3869,7 @@ private fun DesktopSettingsContextPanel(
                         }
                     }
                 }
+            }
             }
         }
     }
@@ -3130,13 +3942,24 @@ private fun DesktopPanelSection(
     titleAction: ImageVector?,
     titleActionContentDescription: String?,
     onTitleClick: (() -> Unit)?,
+    modifier: Modifier = Modifier,
     content: @Composable () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
         Row(
-            modifier = Modifier
+            modifier = modifier
                 .fillMaxWidth()
+                // A clickable heading is a control the arrow keys must be able to reach, and one
+                // that has to show it is focused. Applying the item before clickable lets the
+                // focus ring sit outside the click target.
+                .then(
+                    if (onTitleClick != null) {
+                        Modifier.settingsNavItem(onActivate = onTitleClick)
+                    } else {
+                        Modifier
+                    },
+                )
                 .then(
                     if (onTitleClick != null) Modifier.clickable(onClick = onTitleClick) else Modifier,
                 ),
@@ -3221,6 +4044,7 @@ private fun DesktopActionRow(
         modifier = modifier
             .fillMaxWidth()
             .secondaryClick(onSecondaryClick)
+            .settingsNavItem(onActivate = onClick)
             .clickable(onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
@@ -3267,9 +4091,13 @@ private fun androidx.compose.foundation.lazy.LazyListScope.watchPartySettingsCon
     item(key = "watch_party_page") {
         val invite by com.nuvio.app.features.party.PartyInvites.latest.collectAsStateWithLifecycle()
         androidx.compose.runtime.key(invite?.id) {
+            val focusManager = LocalFocusManager.current
             com.nuvio.app.features.party.PartyPage(
                 initialCode = invite?.code.orEmpty(),
                 onWatch = onOpenPartyMedia,
+                // Back from the Watch Party content returns to the settings sidebar rather than
+                // leaving Settings; the next Back from the sidebar exits Settings as usual.
+                onBack = { runCatching { SettingsSidebarFocus.requestEntry(focusManager) } },
             )
         }
     }

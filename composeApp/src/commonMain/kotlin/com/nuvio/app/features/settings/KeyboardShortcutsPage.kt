@@ -197,6 +197,15 @@ internal fun LazyListScope.keyboardShortcutsContent(isTablet: Boolean) {
                     },
                 )
                 SettingsGroupDivider(isTablet = isTablet)
+                val escapeFailsafe by ThemeSettingsRepository.escapeFailsafeEnabled.collectAsState()
+                SettingsSwitchRow(
+                    title = stringResource(Res.string.settings_shortcuts_escape_failsafe),
+                    description = stringResource(Res.string.settings_shortcuts_escape_failsafe_description),
+                    checked = escapeFailsafe,
+                    isTablet = isTablet,
+                    onCheckedChange = ThemeSettingsRepository::setEscapeFailsafeEnabled,
+                )
+                SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
                     title = stringResource(Res.string.settings_shortcuts_hold_to_select),
                     description = stringResource(Res.string.settings_shortcuts_hold_to_select_description),
@@ -283,14 +292,13 @@ private fun ShortcutRow(
     description: String? = null,
 ) {
     val tokens = MaterialTheme.nuvio
-    Row(
-        modifier = Modifier
-            .fillMaxWidth()
-            .then(if (onRebind != null) Modifier.clickable(onClick = onRebind) else Modifier)
-            .padding(
-                horizontal = ShortcutRowHorizontalPadding(isTablet),
-                vertical = NuvioTokens.Space.s10,
-            ),
+    SettingsSelectableRow(
+        onSelect = onRebind,
+        modifier = Modifier.fillMaxWidth(),
+        contentModifier = Modifier.padding(
+            horizontal = ShortcutRowHorizontalPadding(isTablet),
+            vertical = NuvioTokens.Space.s10,
+        ),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(NuvioTokens.Space.s12),
     ) {
