@@ -3836,35 +3836,108 @@ private fun MainAppContent(
                         val latestOnBackFromPlayer by rememberUpdatedState(onBackFromPlayer)
                         val miniPlayerPage: @Composable (Modifier) -> Unit = remember(route.launchId) {
                             { pageModifier ->
-                                youTubeMiniStateHolder.SaveableStateProvider("youtube-mini-player") {
-                                    com.nuvio.app.features.youtube.YouTubeTabScreen(
-                                        onPlay = { next ->
-                                            if (navController.currentBackStackEntry?.id == backStackEntry.id) {
-                                                // The shield first: from the corner box it covers only the video.
-                                                PlayerHandoff.holdShield()
-                                                com.nuvio.app.features.youtube.YouTubeWatchLayout.stopBrowsing()
-                                                lastPlayerExitBackMark = TimeSource.Monotonic.markNow()
-                                                ResumePromptRepository.markPlayerExitedNormally()
-                                                PlayerLaunchStore.remove(route.launchId)
-                                                navController.popBackStack()
-                                                coroutineScope.launch {
-                                                    withTimeoutOrNull(PLAYLIST_HANDOFF_DISPOSE_TIMEOUT_MS) {
-                                                        PlayerHandoff.activeRoutes.first { it == 0 }
-                                                    }
-                                                    navController.navigateToPlayer(next)
-                                                }
-                                            }
-                                        },
-                                        onOpenSettings = {
+                                BoxWithConstraints(pageModifier.fillMaxSize()) {
+                                    val miniTabletLayout = maxWidth >= 768.dp
+                                    val miniNativeTabs =
+                                        liquidGlassNativeTabBarSupported && liquidGlassNativeTabBarEnabled
+                                    val miniSidebar = miniTabletLayout && !miniNativeTabs &&
+                                        desktopNavigationLayout == DesktopNavigationLayout.Sidebar
+                                    val miniTopBar = miniTabletLayout && !miniNativeTabs && !miniSidebar
+                                    val statusBarPadding =
+                                        WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                                    // The same inset the main tab gets: the bar floats over the page
+                                    // whether it is pinned or hover-only, so the page starts just
+                                    // under it and never reserves a row of its own. Reserving one
+                                    // here left a dead band above the recommendations after coming
+                                    // back from a video while the bar was pinned.
+                                    val miniTopChromePadding = youTubeMiniTopChromePadding(
+                                        topBarDrawn = miniTopBar,
+                                        statusBarPadding = statusBarPadding,
+                                    )
+                                    // fork:youtube-mini-player - the nav bar stays on screen around the
+                                    // recommendations page. Selecting the YouTube row (the page already
+                                    // open) goes back to the video in the corner; any other row leaves
+                                    // the page and closes the corner player, as its X does.
+                                    val leaveForTab: (AppScreenTab) -> Unit = { tab ->
+                                        if (tab == AppScreenTab.YouTube) {
+                                            com.nuvio.app.features.youtube.YouTubeWatchLayout.stopBrowsing()
+                                        } else {
                                             com.nuvio.app.features.youtube.YouTubeWatchLayout.closeFromCorner()
                                             latestOnBackFromPlayer()
-                                            requestedSettingsPageName = "YouTubeAccount"
-                                            handleRootTabClick(AppScreenTab.Settings)
-                                        },
-                                        modifier = pageModifier,
-                                        // The tab back on screen once this player goes opens it, not this one.
-                                        opensQueueNext = false,
-                                    )
+                                            handleRootTabClick(tab)
+                                        }
+                                    }
+                                    val switchProfile: (NuvioProfile) -> Unit = { profile ->
+                                        com.nuvio.app.features.youtube.YouTubeWatchLayout.closeFromCorner()
+                                        latestOnBackFromPlayer()
+                                        selectedTab = AppScreenTab.Home
+                                        coroutineScope.launch {
+                                            runCatching {
+                                                ProfileRepository.switchToProfile(profile.profileIndex)
+                                                warmProfileStartupRepositories()
+                                                SyncManager.pullAllForProfile(profile.profileIndex)
+                                                launch { warmProfileDeferredRepositories() }
+                                            }
+                                        }
+                                    }
+                                    Box(Modifier.fillMaxSize()) {
+                                        youTubeMiniStateHolder.SaveableStateProvider("youtube-mini-player") {
+                                            com.nuvio.app.features.youtube.YouTubeTabScreen(
+                                                onPlay = { next ->
+                                                    if (navController.currentBackStackEntry?.id == backStackEntry.id) {
+                                                        // The shield first: from the corner box it covers only the video.
+                                                        PlayerHandoff.holdShield()
+                                                        com.nuvio.app.features.youtube.YouTubeWatchLayout.stopBrowsing()
+                                                        lastPlayerExitBackMark = TimeSource.Monotonic.markNow()
+                                                        ResumePromptRepository.markPlayerExitedNormally()
+                                                        PlayerLaunchStore.remove(route.launchId)
+                                                        navController.popBackStack()
+                                                        coroutineScope.launch {
+                                                            withTimeoutOrNull(PLAYLIST_HANDOFF_DISPOSE_TIMEOUT_MS) {
+                                                                PlayerHandoff.activeRoutes.first { it == 0 }
+                                                            }
+                                                            navController.navigateToPlayer(next)
+                                                        }
+                                                    }
+                                                },
+                                                onOpenSettings = {
+                                                    com.nuvio.app.features.youtube.YouTubeWatchLayout.closeFromCorner()
+                                                    latestOnBackFromPlayer()
+                                                    requestedSettingsPageName = "YouTubeAccount"
+                                                    handleRootTabClick(AppScreenTab.Settings)
+                                                },
+                                                modifier = Modifier
+                                                    .fillMaxSize()
+                                                    .padding(
+                                                        start = if (miniSidebar) DesktopSidebarCollapsedWidth else 0.dp,
+                                                    ),
+                                                // The bar floats over the page here too, so the tab
+                                                // gets the inset itself (the same as on the tab host).
+                                                topChromePadding = miniTopChromePadding,
+                                                // The tab back on screen once this player goes opens it, not this one.
+                                                opensQueueNext = false,
+                                            )
+                                        }
+                                        if (miniSidebar) {
+                                            DesktopHoverSidebar(
+                                                selectedTab = AppScreenTab.YouTube,
+                                                onTabSelected = leaveForTab,
+                                                onProfileSelected = switchProfile,
+                                                onAddProfileRequested = onSwitchProfile,
+                                            )
+                                        }
+                                        if (miniTopBar) {
+                                            TabletFloatingTopBar(
+                                                selectedTab = AppScreenTab.YouTube,
+                                                onTabSelected = leaveForTab,
+                                                onProfileSelected = switchProfile,
+                                                onAddProfileRequested = onSwitchProfile,
+                                                dimUntilHovered = !desktopTopBarAlwaysVisible,
+                                                onSearchOverlayOpen = { openSearchOverlay() },
+                                                onLeaveYouTube = { leaveForTab(AppScreenTab.Home) },
+                                            )
+                                        }
+                                    }
                                 }
                             }
                         }
