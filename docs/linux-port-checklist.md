@@ -41,10 +41,10 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - [x] Linux input / gamepad / media keys / OSK integration — `dabbe260`
 - [x] Linux player / native bridge / HUD — `6e677db4`
 - [ ] Build / packaging / native runtime
-- [ ] Navigation / focus / shared UI
+- [x] Navigation / focus / shared UI — `afc1a07d`
 - [ ] Auth / login / QR
 - [ ] Home / TV rows / navbar
-- [ ] Settings
+- [ ] Settings (`SettingsNav.kt` is already ported as a navigation dependency)
 - [ ] Music / MPRIS (MPRIS files are in `dabbe260`; music UI changes remain)
 - [ ] Backup / Google Drive
 - [ ] Other app features
