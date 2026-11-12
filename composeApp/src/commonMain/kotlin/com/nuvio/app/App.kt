@@ -7674,3 +7674,17 @@ private val LaunchTaglineTracking = 6.sp
 
 /** Upper bound on waiting for the outgoing player to dispose before opening the next entry. */
 private const val PLAYLIST_HANDOFF_DISPOSE_TIMEOUT_MS = 3_000L
+
+/**
+ * The top inset for the YouTube mini player's corner page. The floating bar is drawn over the page
+ * whether it is pinned or hover-only (see the app's topChromePadding). The corner copy owns the same
+ * bar, so it uses the same number: reserving the bar's row here left a dead band above the
+ * recommendations after coming back from a video. Without a bar (the sidebar layout) the tab's own
+ * 24 dp margin applies, as it does on the host.
+ */
+private val YouTubeTabTopBarMargin = 16.dp
+
+internal fun youTubeMiniTopChromePadding(
+    topBarDrawn: Boolean,
+    statusBarPadding: Dp,
+): Dp? = if (topBarDrawn) statusBarPadding + YouTubeTabTopBarMargin else null
