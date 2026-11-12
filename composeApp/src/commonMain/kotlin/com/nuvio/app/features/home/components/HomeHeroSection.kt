@@ -2,6 +2,7 @@ package com.nuvio.app.features.home.components
 
 import com.nuvio.app.core.i18n.localizedString
 import com.nuvio.app.core.ui.LocalScreenCovered
+import com.nuvio.app.core.ui.LocalNuvioViewportDensity
 import com.nuvio.app.core.ui.PosterZoomOverlayCoordinator
 import androidx.compose.ui.layout.onSizeChanged
 import coil3.SingletonImageLoader
@@ -118,6 +119,8 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.text.TextStyle
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
+import androidx.compose.ui.text.AnnotatedString
+import androidx.compose.ui.text.rememberTextMeasurer
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.IntOffset
@@ -208,6 +211,9 @@ private val DesktopHeroBackdropAlignment = BiasAlignment(
     horizontalBias = 0f,
     verticalBias = -0.65f,
 )
+/** Linux TV Mode stacked rows: top of the art stays in view (vertical bias -1 is no top crop). */
+private val StackedHeroBackdropAlignment = BiasAlignment(horizontalBias = 1f, verticalBias = -1f)
+
 private val ImmersiveHeroBackdropAlignment = BiasAlignment(
     horizontalBias = 1f,
     verticalBias = -0.6f,
@@ -268,6 +274,14 @@ private const val IMMERSIVE_HERO_SYNOPSIS_MIN_LINES = 2
  * synopsis lines — the panel drops to a single row (two people rather than four) first.
  */
 private val IMMERSIVE_HERO_PEOPLE_PANEL_TOP = 30.dp
+/**
+ * Width of the people panel (Starring / Production): a fraction of the hero, capped so it does not
+ * run away on a very wide window. The cap is expressed in dp at 100% UI scale, but divided by the
+ * GUI scale so it stays a fixed pixel width: as a plain dp it shrank on screen as the UI scale was
+ * lowered (the window holds more dp), squeezing the panel and exaggerating its right margin.
+ */
+private const val IMMERSIVE_HERO_PEOPLE_PANEL_WIDTH_FRACTION = 0.32f
+private val IMMERSIVE_HERO_PEOPLE_PANEL_MAX_WIDTH = 600.dp
 private val IMMERSIVE_HERO_PEOPLE_PANEL_TABS_GAP = 18.dp
 private val IMMERSIVE_HERO_PEOPLE_CHIP_SIZE = 52.dp
 private val IMMERSIVE_HERO_PEOPLE_ROW_GAP = 18.dp
@@ -280,6 +294,13 @@ private val IMMERSIVE_HERO_CONTENT_MIN_OFFSET_Y = 16.dp
 private val IMMERSIVE_HERO_CONTENT_MAX_OFFSET_Y = 42.dp
 private val IMMERSIVE_HERO_LANDSCAPE_SHELF_OVERLAP = 72.dp
 private val HERO_PEOPLE_TAB_HEIGHT = 40.dp
+/**
+ * fork:hero-people-anchor - how wide the right-hand cast name is assumed to be when the
+ * Starring / Production tabs are aligned over it. A constant rather than the measured name: the
+ * measurement made the tabs (and so the whole panel's text) shift sideways by a few dp with every
+ * title the hero showed.
+ */
+private val HERO_PEOPLE_TAB_ANCHOR_NAME_WIDTH_DP = 92.dp
 private val HERO_DISCOVERY_PANEL_PADDING_HORIZONTAL = 20.dp
 private val HERO_DISCOVERY_BADGE_SIZE = 58.dp
 private val HERO_DISCOVERY_BADGE_CELL_SIZE = 58.dp
@@ -356,6 +377,8 @@ fun HomeHeroSection(
     heroReleaseStatusUnavailableOnly: Boolean = true,
     trailersEnabledInCurrentMode: Boolean = true,
     immersiveContentBottomPadding: Dp = IMMERSIVE_HERO_CONTENT_BOTTOM_PADDING,
+    /** Linux TV Mode stacked rows only: window-proportional geometry and text scale. Null elsewhere. */
+    tvStackedMetrics: HomeTvStackedMetrics? = null,
     resumePromptItemKey: String? = null,
     resumePromptLabel: String = "",
     onResumePromptAction: (() -> Unit)? = null,
@@ -688,6 +711,7 @@ fun HomeHeroSection(
             heroReleaseStatusUnavailableOnly = heroReleaseStatusUnavailableOnly,
             trailersEnabledInCurrentMode = trailersEnabledInCurrentMode,
                     immersiveContentBottomPadding = immersiveContentBottomPadding,
+                    tvStackedMetrics = tvStackedMetrics,
                     resumePromptItemKey = resumePromptItemKey,
                     resumePromptLabel = resumePromptLabel,
                     onResumePromptAction = onResumePromptAction,
@@ -1392,6 +1416,7 @@ private fun DesktopHomeHeroFrame(
     heroReleaseStatusUnavailableOnly: Boolean,
     trailersEnabledInCurrentMode: Boolean,
     immersiveContentBottomPadding: Dp,
+    tvStackedMetrics: HomeTvStackedMetrics? = null,
     resumePromptItemKey: String?,
     resumePromptLabel: String,
     onResumePromptAction: (() -> Unit)?,
@@ -1670,13 +1695,28 @@ private fun DesktopHomeHeroFrame(
     // the rail, and the trailer surface, which is a heavyweight native window Compose cannot draw
     // over — running that to the bottom edge would hide the rows outright rather than sit behind
     // them.
-    val immersiveBackdropHeight = immersiveHeroBackdropHeight(
-        heroHeight = layout.heroHeight,
-        immersiveContentBottomPadding = immersiveContentBottomPadding,
-    )
+    // Linux TV Mode stacked rows: the artwork runs the full window, but the trailer and the badges
+    // stay bounded by the stacked hero's own height, so the trailer still stops above the rows.
+    val immersiveBackdropHeight = if (tvStackedMetrics != null) {
+        // Linux TV Mode stacked rows: the trailer and the badges stop at the first media row, so
+        // they never run under the rows they belong beside.
+        tvStackedMetrics.rowBandTopDp.dp
+    } else {
+        immersiveHeroBackdropHeight(
+            heroHeight = layout.heroHeight,
+            immersiveContentBottomPadding = immersiveContentBottomPadding,
+        )
+    }
     // The still artwork, and only it, is what full backdrop extends.
     val heroArtworkHeight =
-        if (immersiveFullBackdropActive) layout.heroHeight else immersiveBackdropHeight
+        if (tvStackedMetrics != null) {
+            // Down to the artwork's own bottom; the rows and the black fade sit over this strip.
+            tvStackedMetrics.artworkBottomDp.dp
+        } else if (immersiveFullBackdropActive) {
+            layout.heroHeight
+        } else {
+            immersiveBackdropHeight
+        }
     val heroBackdropWidthFraction =
         if (immersiveFullBackdropActive) 1f else HERO_BACKDROP_WIDTH_FRACTION
     // TV mode hosts the source picker (continue watching) in its backdrop area, the way the details
@@ -1716,6 +1756,8 @@ private fun DesktopHomeHeroFrame(
             modifier = Modifier
                 .matchParentSize()
                 .then(
+                    // Ambient's dissolve is the bottom treatment in every mode, TV stacked rows
+                    // included: the black fade is what it replaces, not something it sits under.
                     if (ambientFade) {
                         // Own layer, so the dissolve cuts the hero rather than what is under it.
                         Modifier
@@ -1761,6 +1803,10 @@ private fun DesktopHomeHeroFrame(
                         backgroundColor = backgroundColor,
                         fullWidth = immersiveFullBackdropActive,
                         longFade = !immersiveMode,
+                        // Linux TV Mode stacked rows: the black left fade, 45% of the hero width.
+                        stackedWidthFraction = IMMERSIVE_STACKED_SIDE_SCRIM_WIDTH_FRACTION.takeIf {
+                            tvStackedMetrics != null
+                        },
                     )
                     .then(
                         // Basic and Adaptive take TV Mode's vignette as well: without it the text
@@ -1810,6 +1856,7 @@ private fun DesktopHomeHeroFrame(
                                 ),
                             crossfade = !pagesKeyed,
                             alignment = when {
+                                immersiveMode && tvStackedMetrics != null -> StackedHeroBackdropAlignment
                                 immersiveMode -> ImmersiveHeroBackdropAlignment
                                 adaptiveHeroMode -> BiasAlignment(horizontalBias = 0f, verticalBias = adaptiveHeroVerticalBias)
                                 else -> DesktopHeroBackdropAlignment
@@ -1833,13 +1880,25 @@ private fun DesktopHomeHeroFrame(
 
             // Ambient's dissolve takes the place of the bottom fade.
             if (!ambientFade) Box(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .height(if (immersiveMode) layout.heroHeight * 0.52f else layout.bottomFadeHeight)
-                    .align(Alignment.BottomCenter)
+                modifier = (if (immersiveMode && tvStackedMetrics != null) {
+                    Modifier
+                        .align(Alignment.TopStart)
+                        .offset(y = tvStackedMetrics.heroFadeTopDp.dp)
+                        .height(tvStackedMetrics.heroFadeHeightDp.dp)
+                } else {
+                    Modifier
+                        .height(if (immersiveMode) layout.heroHeight * 0.52f else layout.bottomFadeHeight)
+                        .align(Alignment.BottomCenter)
+                }).fillMaxWidth()
                     .background(
                         nuvioDitheredVerticalGradient(
-                            if (immersiveMode) {
+                            if (immersiveMode && tvStackedMetrics != null) {
+                                immersiveHeroStackedBottomFadeStops(
+                                    top = HOME_TV_STACKED_HERO_FADE_TOP_FRACTION,
+                                    solid = (tvStackedMetrics.artworkBottomDp / tvStackedMetrics.backdropHeightDp)
+                                        .coerceIn(0.2f, 1f),
+                                )
+                            } else if (immersiveMode) {
                                 immersiveHeroBottomFadeStops(
                                     backgroundColor = backgroundColor,
                                     fullBackdrop = immersiveFullBackdropActive,
@@ -1847,6 +1906,7 @@ private fun DesktopHomeHeroFrame(
                             } else {
                                 arrayOf(
                                     0f to backgroundColor.copy(alpha = 0f),
+                                    0.55f to backgroundColor.copy(alpha = 0.42f),
                                     1f to backgroundColor,
                                 )
                             },
@@ -1954,7 +2014,7 @@ private fun DesktopHomeHeroFrame(
         val immersivePeopleMaxCount =
             if (immersiveCompactPeoplePanel) IMMERSIVE_HERO_PEOPLE_COMPACT_COUNT else IMMERSIVE_HERO_PEOPLE_MAX_COUNT
         val immersiveContentHeight = if (immersiveMode) {
-            val people = maxOf(
+            val people = if (tvStackedMetrics != null || streamPickerRequest != null) 0 else maxOf(
                 heroDisplayCast(currentItem, maxCount = immersivePeopleMaxCount).size,
                 productionCache["${currentItem.type}:${currentItem.id}"].orEmpty()
                     .size.coerceAtMost(immersivePeopleMaxCount),
@@ -1970,18 +2030,24 @@ private fun DesktopHomeHeroFrame(
             immersiveNaturalContentHeight
         }
 
-        if (immersiveMode && !heroTrailerReady) {
+        // The source picker takes the backdrop area; the cast panel would sit on top of it.
+        if (immersiveMode && !heroTrailerReady && streamPickerRequest == null) {
+            // The panel keeps a constant pixel width across UI scales — see
+            // IMMERSIVE_HERO_PEOPLE_PANEL_MAX_WIDTH.
+            val peoplePanelGuiScale = (LocalDensity.current.density /
+                LocalNuvioViewportDensity.current.density).takeIf { it.isFinite() && it > 0f } ?: 1f
             Box(
                 modifier = Modifier
-                    .align(Alignment.TopStart)
+                    // Starring / Production sits opposite the metadata column: top-right, clear of
+                    // the logo and synopsis on the left.
+                    .align(Alignment.TopEnd)
                     .padding(
-                        start = contentHorizontalPadding,
                         top = IMMERSIVE_HERO_PEOPLE_PANEL_TOP,
                         end = contentHorizontalPadding,
                     )
-                    .fillMaxWidth(0.32f)
-                    .widthIn(max = 600.dp),
-                contentAlignment = Alignment.TopStart,
+                    .fillMaxWidth(IMMERSIVE_HERO_PEOPLE_PANEL_WIDTH_FRACTION)
+                    .widthIn(max = IMMERSIVE_HERO_PEOPLE_PANEL_MAX_WIDTH / peoplePanelGuiScale),
+                contentAlignment = Alignment.TopEnd,
             ) {
                 visiblePages.forEachPage(keyedByPage = pagesKeyed) { layer ->
                     val item = items[layer.page]
@@ -2014,10 +2080,15 @@ private fun DesktopHomeHeroFrame(
         if (!heroTrailerReady) {
             Box(
                 modifier = Modifier
-                    .align(if (immersiveMode) Alignment.BottomStart else Alignment.TopStart)
+                    .align(if (immersiveMode && tvStackedMetrics == null) Alignment.BottomStart else Alignment.TopStart)
                     .padding(start = contentHorizontalPadding, end = contentHorizontalPadding)
                     .then(
-                        if (immersiveMode) {
+                        if (tvStackedMetrics != null) {
+                            // Linux TV Mode stacked rows: the text column sits top-left, above the row band.
+                            Modifier
+                                .padding(top = tvStackedMetrics.contentTopDp.dp)
+                                .height(tvStackedMetrics.contentHeightDp.dp)
+                        } else if (immersiveMode) {
                             Modifier
                                 .padding(bottom = immersiveContentBottomPadding)
                                 .height(immersiveContentHeight)
@@ -2041,7 +2112,14 @@ private fun DesktopHomeHeroFrame(
                             else -> Modifier.fractionalWidthAtMost(layout.contentWidthFraction, layout.contentMaxWidth)
                         },
                     ),
-                contentAlignment = Alignment.TopStart,
+                // Linux TV Mode: centre the logo/metadata/synopsis group in the hero's text
+                // column at the red line, biased a touch upward so a tall logo leaves room for
+                // the text under it (the NCIS/Star Wars case).
+                contentAlignment = if (tvStackedMetrics != null) {
+                    BiasAlignment(horizontalBias = 0f, verticalBias = -0.35f)
+                } else {
+                    Alignment.TopStart
+                },
             ) {
                 visiblePages.forEachPage(keyedByPage = pagesKeyed) { layer ->
                     Box(
@@ -2052,39 +2130,44 @@ private fun DesktopHomeHeroFrame(
                                 translationX = -layer.offset * heroWidthPx * HERO_CONTENT_PARALLAX
                             },
                     ) {
-                        DesktopHeroContentBlock(
-                            item = items[layer.page],
-                            layout = layout,
-                            interactive = true,
-                            showExtendedMetadata = immersiveMode,
-                            showReleaseMetadata = immersiveMode || adaptiveHeroMode,
-                            ratingsCache = ratingsCache,
-                            keywords = keywordsCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty(),
-                            interests = interestsCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty(),
-                            onCastClick = onCastClick,
-                            production = if (adaptiveHeroMode) productionCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty() else emptyList(),
-                            peoplePanelTab = peoplePanelTab,
-                            allowProductionHotkeySwap = adaptiveHeroMode,
-                            resumePromptLabel = if ("${items[layer.page].type}:${items[layer.page].id}" == resumePromptItemKey) {
-                                resumePromptLabel
-                            } else {
-                                null
-                            },
-                            onResumePromptAction = onResumePromptAction,
-                            onResumePromptDismiss = onResumePromptDismiss,
-                            synopsisAutoScroll = layer.visibility >= HeroSettledVisibility &&
-                                items[layer.page].let {
-                                    it.id == currentItem.id && it.type == currentItem.type
+                        HeroTextScale(tvStackedMetrics?.textScale) {
+                            DesktopHeroContentBlock(
+                                item = items[layer.page],
+                                layout = layout,
+                                tvStackedMetrics = tvStackedMetrics,
+                                interactive = true,
+                                showExtendedMetadata = immersiveMode,
+                                showReleaseMetadata = immersiveMode || adaptiveHeroMode,
+                                ratingsCache = ratingsCache,
+                                keywords = keywordsCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty(),
+                                interests = interestsCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty(),
+                                onCastClick = onCastClick,
+                                production = productionCache["${items[layer.page].type}:${items[layer.page].id}"].orEmpty(),
+                                peoplePanelTab = peoplePanelTab,
+                                allowProductionHotkeySwap = adaptiveHeroMode,
+                                resumePromptLabel = if ("${items[layer.page].type}:${items[layer.page].id}" == resumePromptItemKey) {
+                                    resumePromptLabel
+                                } else {
+                                    null
                                 },
-                            onItemClick = onItemClick?.let { handler ->
-                                { _ -> handler(currentItem) }
-                            },
-                        )
+                                onResumePromptAction = onResumePromptAction,
+                                onResumePromptDismiss = onResumePromptDismiss,
+                                synopsisAutoScroll = layer.visibility >= HeroSettledVisibility &&
+                                    items[layer.page].let {
+                                        it.id == currentItem.id && it.type == currentItem.type
+                                    },
+                                onItemClick = onItemClick?.let { handler ->
+                                    { _ -> handler(currentItem) }
+                                },
+                            )
+                        }
                     }
                 }
             }
         }
 
+        val heroMedalDiameter = HERO_DISCOVERY_MEDAL_SIZE *
+            HomeCatalogSettingsRepository.uiState.collectAsState().value.heroBadgeScale
         if (discoveryCache.isNotEmpty() && heroFrost < 1f) {
             Box(
                 modifier = heroDiscoveryMedalOverlayModifier(
@@ -2092,8 +2175,14 @@ private fun DesktopHomeHeroFrame(
                     immersiveMode = immersiveMode,
                     heroHeight = layout.heroHeight,
                     immersiveBackdropHeight = immersiveBackdropHeight,
+                    stackedRowBandTop = tvStackedMetrics?.rowBandTopDp?.dp,
+                    medalDiameter = heroMedalDiameter,
                 ).graphicsLayer { alpha = 1f - heroFrost },
-                contentAlignment = heroBadgePlacement.heroDiscoveryMedalAlignment(),
+                contentAlignment = if (tvStackedMetrics != null && heroBadgePlacement == HeroBadgePlacement.BottomBackdrop) {
+                    Alignment.TopCenter
+                } else {
+                    heroBadgePlacement.heroDiscoveryMedalAlignment()
+                },
             ) {
                 visiblePages.forEachPage(keyedByPage = pagesKeyed) { layer ->
                     val itemKey = "${items[layer.page].type}:${items[layer.page].id}"
@@ -2154,13 +2243,15 @@ private fun Modifier.heroBackdropFadeMask(
      * own text sits lower and narrower, under its vignette, and keeps the short ramp.
      */
     longFade: Boolean = false,
+    /** Linux TV Mode stacked rows only: the black left fade's width as a fraction of the hero box. */
+    stackedWidthFraction: Float? = null,
 ): Modifier =
     drawWithContent {
         drawContent()
         drawRect(
             brush = Brush.horizontalGradient(
                 colorStops = if (fullWidth) {
-                    immersiveHeroSideScrimStops(backgroundColor)
+                    immersiveHeroSideScrimStops(backgroundColor, stackedWidthFraction)
                 } else if (longFade) {
                     arrayOf(
                         0f to backgroundColor,
@@ -2192,7 +2283,8 @@ private fun Modifier.immersiveHeroExtraMask(
                 brush = Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to Color.Transparent,
-                        0.82f to Color.Transparent,
+                        0.55f to Color.Transparent,
+                        0.85f to backgroundColor.copy(alpha = 0.55f),
                         1f to backgroundColor,
                     ),
                 ),
@@ -2496,6 +2588,8 @@ private fun DesktopHeroContentBlock(
      * the page the reader is heading back to.
      */
     synopsisAutoScroll: Boolean = false,
+    /** Linux TV Mode stacked rows only: window geometry for the logo, gaps and text. Null elsewhere. */
+    tvStackedMetrics: HomeTvStackedMetrics? = null,
     onItemClick: ((MetaPreview) -> Unit)?,
 ) {
     val interactionSource = remember { MutableInteractionSource() }
@@ -2523,13 +2617,38 @@ private fun DesktopHeroContentBlock(
         releaseDate = item.rawReleaseDate,
     )
     val ratings = ratingsCache["${item.type}:${item.id}"].orEmpty()
+    // Linux TV Mode stacked rows: the logo block has no reserved slot, so its rendered height is
+    // measured and the metadata line is placed under it. Zero until the first measurement.
+    var stackedLogoBlockPx by remember(item.id) { mutableStateOf(0) }
+    val stackedDensity = LocalDensity.current
+    // Linux TV Mode stacked rows: which optional rows fit under the logo, and the synopsis line count.
+    val stackedFit = tvStackedMetrics?.let { metrics ->
+        homeTvStackedHeroFit(
+            metadataTopDp = homeTvStackedMetadataTopDp(
+                metrics = metrics,
+                logoHeightDp = with(stackedDensity) { stackedLogoBlockPx.toDp().value },
+            ),
+            limitDp = metrics.contentTopDp + metrics.contentHeightDp,
+            lineHeightDp = HOME_TV_STACKED_BODY_LARGE_LINE_HEIGHT_DP * metrics.textScale,
+            hasGenreLine = desktopHeroGenreText(
+                item = item,
+                showExtendedMetadata = true,
+                showReleaseMetadata = !qualityBadgesEnabled,
+                includeAgeRating = false,
+            ).isNotBlank() || !item.ageRating.isNullOrBlank(),
+            hasRatings = ratings.isNotEmpty(),
+            hasFooter = qualityHighlights.isNotEmpty() ||
+                (qualityBadgesEnabled && (!item.releaseInfo.isNullOrBlank() || item.runtime != null)),
+            hasSynopsis = !item.description.isNullOrBlank(),
+        )
+    }
     BoxWithConstraints(modifier = Modifier.fillMaxWidth()) {
         // TV Mode hands this block a box of fixed height (a fraction of the viewport) while every row
         // in it is fixed dp, so at a raised UI scale the rows no longer fit. Budget them: the logo slot
         // becomes the flexible element (weighted, between its min and its natural height), and when
         // even the smallest slot would not make room, the synopsis window gives up lines. The
         // estimates here only decide the line count; the weighted slot absorbs whatever they are off by.
-        val immersiveBudget = if (showExtendedMetadata && maxHeight.value.isFinite()) {
+        val immersiveBudget = if (tvStackedMetrics == null && showExtendedMetadata && maxHeight.value.isFinite()) {
             immersiveHeroColumnBudget(
                 availableHeight = maxHeight,
                 hasGenreLine = desktopHeroGenreText(
@@ -2575,7 +2694,13 @@ private fun DesktopHeroContentBlock(
                 item = item,
                 maxCount = 3,
             )
-            val logoSlotModifier = if (immersiveBudget != null) {
+            val logoSlotModifier = if (tvStackedMetrics != null) {
+                // Linux TV Mode stacked rows: no reserved slot. The block takes the logo's (or the
+                // title's) own height, which is measured so the metadata line can follow it.
+                Modifier
+                    .fillMaxWidth()
+                    .onSizeChanged { stackedLogoBlockPx = it.height }
+            } else if (immersiveBudget != null) {
                 // The weight hands the slot whatever the fixed rows leave; heightIn caps that at the
                 // natural slot height, and fillMaxHeight takes all of the capped room — without it
                 // the slot wraps a two-line title and leaves the leftover blank (measured: 64dp
@@ -2651,7 +2776,12 @@ private fun DesktopHeroContentBlock(
                 // weighted remainder whose height varies with the rows below, and a centred logo
                 // would drift with it. The margins are trimmed first (rememberHeroLogoModel), or
                 // a logo's baked-in padding would decide its position instead.
-                val logoAlignment = if (immersiveBudget != null) Alignment.BottomStart else Alignment.CenterStart
+                // Linux TV Mode stacked rows: the logo sits at the top of its slot, under the text top.
+                val logoAlignment = when {
+                    tvStackedMetrics != null -> Alignment.TopStart
+                    immersiveBudget != null -> Alignment.BottomStart
+                    else -> Alignment.CenterStart
+                }
                 Box(
                     modifier = logoSlotModifier,
                     contentAlignment = logoAlignment,
@@ -2659,9 +2789,14 @@ private fun DesktopHeroContentBlock(
                     AsyncImage(
                         model = rememberHeroLogoModel(logoUrl),
                         contentDescription = item.name,
-                        modifier = Modifier
-                            .fillMaxWidth(desktopHeroLogoWidthFraction(layout))
-                            .fillMaxHeight(),
+                        // Stacked: fixed width, height from the logo's aspect ratio (no slot to fill).
+                        modifier = if (tvStackedMetrics != null) {
+                            Modifier.width(tvStackedMetrics.logoWidthDp.dp)
+                        } else {
+                            Modifier
+                                .fillMaxWidth(desktopHeroLogoWidthFraction(layout))
+                                .fillMaxHeight()
+                        },
                         alignment = logoAlignment,
                         contentScale = ContentScale.Fit,
                         clipToBounds = false,
@@ -2687,10 +2822,11 @@ private fun DesktopHeroContentBlock(
                     // arrive and then replaced. Hold the slot empty instead. The slot keeps its height
                     // either way, so resolving into a logo or into the title causes no layout shift.
                     if (!item.heroMetadataPending) {
+                        val display = MaterialTheme.typography.displayMedium
                         Text(
                             text = item.name,
                             modifier = Modifier.fillMaxWidth(),
-                            style = MaterialTheme.typography.displayMedium,
+                            style = display.copy(fontSize = display.fontSize * 1.05f),
                             color = MaterialTheme.colorScheme.onBackground,
                             fontWeight = FontWeight.Black,
                             textAlign = TextAlign.Start,
@@ -2743,25 +2879,30 @@ private fun DesktopHeroContentBlock(
                 showReleaseMetadata = showReleaseMetadata && !qualityBadgesEnabled,
                 includeAgeRating = false,
             )
-            if (!item.heroMetadataPending && (genreParts.isNotEmpty() || ageRating != null)) {
-                Spacer(modifier = Modifier.height(14.dp * sizeScale))
-                Row(
-                    verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(10.dp),
-                ) {
-                    if (genreParts.isNotEmpty()) {
-                        HeroGenreLine(
-                            parts = genreParts,
-                            keywords = keywords,
-                            interests = interests,
-                            modifier = Modifier.weight(1f, fill = false),
-                        )
+            // The metadata line: genre and age rating. [spacerBefore] is the gap above it; Linux TV Mode
+            // stacked rows pass zero because the logo-to-metadata gap already sits there.
+            val renderGenreRow: @Composable (spacerBefore: Dp) -> Unit = { spacerBefore ->
+                if (!item.heroMetadataPending && (genreParts.isNotEmpty() || ageRating != null)) {
+                    Spacer(modifier = Modifier.height(spacerBefore))
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    ) {
+                        if (genreParts.isNotEmpty()) {
+                            HeroGenreLine(
+                                parts = genreParts,
+                                keywords = keywords,
+                                interests = interests,
+                                modifier = Modifier.weight(1f, fill = false),
+                            )
+                        }
+                        ageRating?.let { rating -> HeroAgeRatingBadge(text = rating) }
                     }
-                    ageRating?.let { rating -> HeroAgeRatingBadge(text = rating) }
                 }
             }
+            if (tvStackedMetrics == null) renderGenreRow(12.dp * sizeScale)
 
-            if (!item.heroMetadataPending) {
+            if (tvStackedMetrics == null && !item.heroMetadataPending) {
                 HomeHeroRatingsRow(ratings = ratings)
                 // fork:music-search - a song's or record's facts (year, tempo, label, length) in the ratings' place.
                 if (item.type.startsWith(com.nuvio.app.features.home.MUSIC_HERO_TYPE_PREFIX)) {
@@ -2782,7 +2923,7 @@ private fun DesktopHeroContentBlock(
                     ?.trim()
                     ?.takeIf { it.isNotBlank() }
                     ?.let { description ->
-                        Spacer(modifier = Modifier.height(16.dp * sizeScale))
+                        Spacer(modifier = Modifier.height(10.dp * sizeScale))
                         HeroSynopsis(
                             text = description,
                             resetKey = "${item.type}:${item.id}",
@@ -2798,6 +2939,37 @@ private fun DesktopHeroContentBlock(
                     // onto the genre line above.
                     showReleaseMetadata = showReleaseMetadata && qualityBadgesEnabled,
                 )
+            }
+
+            // Linux TV Mode stacked rows: the gap under the logo, then the metadata line, a spacer, the
+            // synopsis, the ratings and the footer. The fit decides which optional rows stay and how
+            // many synopsis lines show.
+            if (tvStackedMetrics != null && stackedFit != null) {
+                Spacer(modifier = Modifier.height(tvStackedMetrics.logoMetadataGapDp.dp))
+                if (!item.heroMetadataPending) {
+                    renderGenreRow(0.dp)
+                    item.description
+                        ?.replace(Regex("\\s+"), " ")
+                        ?.trim()
+                        ?.takeIf { it.isNotBlank() }
+                        ?.let { description ->
+                            Spacer(modifier = Modifier.height(HOME_TV_STACKED_ROW_SPACER_DP.dp))
+                            HeroSynopsis(
+                                text = description,
+                                resetKey = "${item.type}:${item.id}",
+                                autoScroll = synopsisAutoScroll,
+                                maxLines = stackedFit.synopsisLines,
+                            )
+                        }
+                    if (stackedFit.showRatings) HomeHeroRatingsRow(ratings = ratings)
+                    if (stackedFit.showFooter) {
+                        HeroReleaseFooter(
+                            item = item,
+                            highlights = qualityHighlights,
+                            showReleaseMetadata = showReleaseMetadata && qualityBadgesEnabled,
+                        )
+                    }
+                }
             }
 
         }
@@ -2905,7 +3077,10 @@ private fun HeroSynopsis(
     modifier: Modifier = Modifier,
     maxLines: Int = HeroSynopsisMaxLines,
 ) {
-    val style = MaterialTheme.typography.bodyLarge
+    // Slightly smaller than bodyLarge: at TV distance the synopsis was the widest, densest block
+    // and made the hierarchy read bottom-heavy against the metadata line.
+    val body = MaterialTheme.typography.bodyLarge
+    val style = body.copy(fontSize = body.fontSize * 0.94f)
     val color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f)
     val density = LocalDensity.current
     val scrollState = remember(resetKey) { ScrollState(0) }
@@ -3041,12 +3216,32 @@ private fun HeroPeopleBlock(
         modifier = Modifier.fillMaxWidth(),
         horizontalAlignment = Alignment.Start,
     ) {
-        HeroPeopleTabs(
-            activeTab = effectiveTab,
-            showProduction = production.isNotEmpty(),
-            starringLabel = starringLabel,
-            onTabChange = onTabChange,
-        )
+        // Right-aligned with the right-hand column's *name text*, not the panel edge: the last
+        // letter of "Production" sits over the end of the name (above the "bs" of Jacobs).
+        //
+        // fork:hero-people-anchor - a fixed nominal name width, not the measured name. Measuring
+        // cast[1].name made the tab row's right edge depend on which title was focused, so
+        // "Starring | Production" slid sideways by a few dp every time the hero changed; the
+        // anchor must be the same for every title. The value is the average name width the
+        // original alignment was tuned against.
+        BoxWithConstraints(Modifier.fillMaxWidth()) {
+            val chipWidth = ((maxWidth - 18.dp) / 2).coerceAtLeast(0.dp)
+            // Panel left -> right chip's name text end: row spacing + chip + portrait + gap +
+            // the nominal name.
+            val textEnd = 18.dp + chipWidth + 62.dp + HERO_PEOPLE_TAB_ANCHOR_NAME_WIDTH_DP
+            val endPadding = (maxWidth - textEnd).coerceAtLeast(0.dp)
+            Box(
+                Modifier.fillMaxWidth().padding(end = endPadding),
+                contentAlignment = Alignment.CenterEnd,
+            ) {
+                HeroPeopleTabs(
+                    activeTab = effectiveTab,
+                    showProduction = production.isNotEmpty(),
+                    starringLabel = starringLabel,
+                    onTabChange = onTabChange,
+                )
+            }
+        }
         Spacer(modifier = Modifier.height(18.dp))
         when (effectiveTab) {
             HeroPeoplePanelTab.Starring -> HeroCastGrid(cast, onCastClick = onCastClick)
@@ -3545,9 +3740,10 @@ private fun HeroReleaseFooter(
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         if (releaseText.isNotBlank()) {
+            val label = MaterialTheme.typography.labelLarge
             Text(
                 text = releaseText,
-                style = MaterialTheme.typography.labelLarge,
+                style = label.copy(fontSize = label.fontSize * 0.92f),
                 color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.76f),
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
@@ -3567,10 +3763,12 @@ private fun HomeHeroRatingsRow(ratings: List<MetaExternalRating>) {
 }
 
 internal fun desktopHeroLogoWidthFraction(layout: HomeHeroLayout): Float {
+    // A small increase from the previous 0.74/0.8: the artwork is the title on a TV hero, and it
+    // read slightly small beside the metadata.
     val base = when {
-        layout.contentMaxWidth >= 640.dp -> 0.74f
-        layout.contentMaxWidth >= 520.dp -> 0.74f
-        else -> 0.8f
+        layout.contentMaxWidth >= 640.dp -> 0.78f
+        layout.contentMaxWidth >= 520.dp -> 0.78f
+        else -> 0.84f
     }
     // Widen the logo only partially with the hero-height scale — the slot height (below) carries
     // most of the growth, and a full-rate width bump would run a wide logo off the content column.
@@ -3682,7 +3880,10 @@ private fun HeroGenreLine(
     modifier: Modifier = Modifier,
 ) {
     val card = GenreSubgenres.card(parts.mapNotNull { it.genre }, interests, keywords)
-    val style = MaterialTheme.typography.titleMedium
+    val title = MaterialTheme.typography.titleMedium
+    // Slightly smaller so the genre/year/runtime line stops competing with the title and leaves
+    // room for the rating badge beside it.
+    val style = title.copy(fontSize = title.fontSize * 0.90f)
     val color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.76f)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         parts.forEachIndexed { index, part ->
@@ -3933,21 +4134,31 @@ private fun BoxScope.heroDiscoveryMedalOverlayModifier(
     immersiveMode: Boolean,
     heroHeight: Dp,
     immersiveBackdropHeight: Dp,
+    /** Linux TV Mode stacked rows: the row band top. Null everywhere else. */
+    stackedRowBandTop: Dp? = null,
+    medalDiameter: Dp = HERO_DISCOVERY_MEDAL_SIZE,
 ): Modifier =
     when (placement) {
-        HeroBadgePlacement.BottomBackdrop -> if (immersiveMode) {
+        HeroBadgePlacement.BottomBackdrop -> if (stackedRowBandTop != null) {
+            // Stacked rows: the glyph sits fully above the row band, so the row list (drawn after
+            // the hero) cannot cover it. Full width, so BottomCenter centres it on the screen.
+            Modifier
+                .align(Alignment.TopEnd)
+                .height(stackedRowBandTop)
+                .fillMaxWidth()
+                .padding(top = homeTvStackedMedalTopDp(stackedRowBandTop.value, medalDiameter.value).dp)
+        } else if (immersiveMode) {
+            // Full width: the badges are horizontally centred on the hero, as upstream draws them,
+            // rather than centred inside the right-hand backdrop region.
             Modifier
                 .align(Alignment.TopEnd)
                 .height(immersiveBackdropHeight)
-                .fillMaxWidth(HERO_BACKDROP_WIDTH_FRACTION)
+                .fillMaxWidth()
                 .padding(bottom = HERO_DISCOVERY_MEDAL_EDGE_PADDING)
         } else {
-            // Constrain to the same right-side backdrop region as immersive mode so the
-            // BottomCenter content alignment centers the badges under the backdrop rather
-            // than across the full hero width (which pulls them too far left).
             Modifier
                 .align(Alignment.BottomEnd)
-                .fillMaxWidth(HERO_BACKDROP_WIDTH_FRACTION)
+                .fillMaxWidth()
                 .padding(bottom = HERO_DISCOVERY_MEDAL_EDGE_PADDING)
         }
 
@@ -4411,3 +4622,33 @@ private fun String.isUnavailableReleaseStatusLabel(): Boolean =
         status.equals("Cinema", ignoreCase = true) || status.equals("Production", ignoreCase = true)
     }
 
+
+/**
+ * Scales the hero's text styles for Linux TV Mode's stacked rows: the synopsis (bodyLarge), the
+ * metadata line's genre parts (titleMedium) and its age-rating badge (labelMedium), and the footer
+ * (labelLarge). A null [scale] is a no-op, so every other layout composes exactly as before.
+ */
+@Composable
+private fun HeroTextScale(scale: Float?, content: @Composable () -> Unit) {
+    if (scale == null) {
+        content()
+        return
+    }
+    val base = MaterialTheme.typography
+    fun TextStyle.scaled(): TextStyle = copy(
+        fontSize = fontSize * scale,
+        lineHeight = if (lineHeight.isSpecified) lineHeight * scale else lineHeight,
+    )
+    MaterialTheme(
+        colorScheme = MaterialTheme.colorScheme,
+        shapes = MaterialTheme.shapes,
+        typography = base.copy(
+            bodyLarge = base.bodyLarge.scaled(),
+            titleMedium = base.titleMedium.scaled(),
+            // The age-rating badge's text, drawn inside the metadata line above the synopsis.
+            labelMedium = base.labelMedium.scaled(),
+            labelLarge = base.labelLarge.scaled(),
+        ),
+        content = content,
+    )
+}
