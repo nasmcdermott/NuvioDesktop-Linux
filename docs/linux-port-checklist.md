@@ -47,7 +47,7 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - [x] Settings — `3d47179b`
 - [x] Music / MPRIS UI — `fbf5ba66` (MPRIS files are in `dabbe260`)
 - [x] Backup / Google Drive — ported as a settings dependency (`3d47179b`)
-- [ ] Other app features
+- [x] Other app features — `deacfdc9`
 - [ ] Tests (ported with each slice)
 - [ ] Remove patch files and document the port
 
