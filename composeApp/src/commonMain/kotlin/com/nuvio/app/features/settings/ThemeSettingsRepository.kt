@@ -33,6 +33,17 @@ data class CustomThemeSettings(
 const val DEFAULT_APP_FONT_SCALE_PERCENT = 100
 val APP_FONT_SCALE_PERCENT_RANGE = 70..130
 
+/** The appearance choice: normal, the existing AMOLED look, or complete black. */
+enum class AmoledAppearance { Off, Amoled, Black }
+
+/**
+ * Reads the saved selector, or migrates the old boolean when the selector predates it. The old
+ * true keeps the existing AMOLED look (never the new Black); false or absent is Off.
+ */
+internal fun migratedAmoledMode(savedMode: String?, oldEnabled: Boolean?): AmoledAppearance =
+    savedMode?.let { raw -> AmoledAppearance.entries.firstOrNull { it.name == raw } }
+        ?: if (oldEnabled == true) AmoledAppearance.Amoled else AmoledAppearance.Off
+
 object ThemeSettingsRepository {
     private val _selectedTheme = MutableStateFlow(AppTheme.OCEAN)
     val selectedTheme: StateFlow<AppTheme> = _selectedTheme.asStateFlow()
@@ -43,6 +54,10 @@ object ThemeSettingsRepository {
     private val _accentGradientDirection = MutableStateFlow(AccentGradientDirection.Default)
     val accentGradientDirection: StateFlow<AccentGradientDirection> = _accentGradientDirection.asStateFlow()
 
+    private val _amoledMode = MutableStateFlow(AmoledAppearance.Off)
+    val amoledMode: StateFlow<AmoledAppearance> = _amoledMode.asStateFlow()
+
+    /** True for AMOLED and Black; kept for the theme/sync call sites that only need "dark". */
     private val _amoledEnabled = MutableStateFlow(false)
     val amoledEnabled: StateFlow<Boolean> = _amoledEnabled.asStateFlow()
 
@@ -58,6 +73,10 @@ object ThemeSettingsRepository {
 
     private val _wasdNavigationEnabled = MutableStateFlow(false)
     val wasdNavigationEnabled: StateFlow<Boolean> = _wasdNavigationEnabled.asStateFlow()
+
+    /** Five rapid Escape presses return to Home. OFF by default; a safety net, not a control. */
+    private val _escapeFailsafeEnabled = MutableStateFlow(false)
+    val escapeFailsafeEnabled: StateFlow<Boolean> = _escapeFailsafeEnabled.asStateFlow()
 
     private val _holdToSelectEnabled = MutableStateFlow(true)
     val holdToSelectEnabled: StateFlow<Boolean> = _holdToSelectEnabled.asStateFlow()
@@ -111,9 +130,11 @@ object ThemeSettingsRepository {
         _customTheme.value = CustomThemeSettings()
         _accentGradientDirection.value = AccentGradientDirection.Default
         _amoledEnabled.value = false
+        _amoledMode.value = AmoledAppearance.Off
         _liquidGlassNativeTabBarEnabled.value = false
         _desktopColumnGuidesVisible.value = false
         _desktopSettingsFullWidth.value = false
+        _escapeFailsafeEnabled.value = false
         _wasdNavigationEnabled.value = false
         WasdNavigation.enabled = false
         _holdToSelectEnabled.value = true
@@ -167,12 +188,18 @@ object ThemeSettingsRepository {
         NativeTabBridge.publishAccentColor(theme.nativeTabAccentHex(_customTheme.value))
         _accentGradientDirection.value =
             AccentGradientDirection.fromStorageOrDefault(ThemeSettingsStorage.loadAccentGradientDirection())
-        _amoledEnabled.value = ThemeSettingsStorage.loadAmoledEnabled() ?: false
+        val savedMode = migratedAmoledMode(
+            ThemeSettingsStorage.loadAmoledMode(),
+            ThemeSettingsStorage.loadAmoledEnabled(),
+        )
+        _amoledMode.value = savedMode
+        _amoledEnabled.value = savedMode != AmoledAppearance.Off
         val liquidGlassEnabled = ThemeSettingsStorage.loadLiquidGlassNativeTabBarEnabled() ?: false
         _liquidGlassNativeTabBarEnabled.value = liquidGlassEnabled
         NativeTabBridge.publishLiquidGlassEnabled(liquidGlassEnabled)
         _desktopColumnGuidesVisible.value = ThemeSettingsStorage.loadDesktopColumnGuidesVisible() ?: false
         _desktopSettingsFullWidth.value = ThemeSettingsStorage.loadDesktopSettingsFullWidth() ?: false
+        _escapeFailsafeEnabled.value = ThemeSettingsStorage.loadEscapeFailsafeEnabled() ?: false
         val wasdEnabled = ThemeSettingsStorage.loadWasdNavigationEnabled() ?: false
         _wasdNavigationEnabled.value = wasdEnabled
         WasdNavigation.enabled = wasdEnabled
@@ -275,10 +302,17 @@ object ThemeSettingsRepository {
     }
 
     fun setAmoled(enabled: Boolean) {
+        setAmoledMode(if (enabled) AmoledAppearance.Amoled else AmoledAppearance.Off)
+    }
+
+    fun setAmoledMode(mode: AmoledAppearance) {
         ensureLoaded()
-        if (_amoledEnabled.value == enabled) return
-        _amoledEnabled.value = enabled
-        ThemeSettingsStorage.saveAmoledEnabled(enabled)
+        if (_amoledMode.value == mode) return
+        _amoledMode.value = mode
+        _amoledEnabled.value = mode != AmoledAppearance.Off
+        ThemeSettingsStorage.saveAmoledMode(mode.name)
+        // Keep the old boolean in step for sync/profile readers and a downgrade.
+        ThemeSettingsStorage.saveAmoledEnabled(mode != AmoledAppearance.Off)
     }
 
     fun setLiquidGlassNativeTabBar(enabled: Boolean) {
@@ -294,6 +328,13 @@ object ThemeSettingsRepository {
         if (_desktopColumnGuidesVisible.value == visible) return
         _desktopColumnGuidesVisible.value = visible
         ThemeSettingsStorage.saveDesktopColumnGuidesVisible(visible)
+    }
+
+    fun setEscapeFailsafeEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (_escapeFailsafeEnabled.value == enabled) return
+        _escapeFailsafeEnabled.value = enabled
+        ThemeSettingsStorage.saveEscapeFailsafeEnabled(enabled)
     }
 
     fun setDesktopSettingsFullWidth(enabled: Boolean) {
