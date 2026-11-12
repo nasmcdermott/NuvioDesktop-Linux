@@ -1246,6 +1246,18 @@ tasks.withType<Jar>().configureEach {
             into("native/macos")
         }
     }
+    if (isLinuxHost && name == "desktopJar") {
+        // The Linux bridge carries the gamepad JNI entry points as well as the player's, so a jar
+        // built without it silently loses controller support: the app starts, logs
+        // "bridge=unavailable" and reports no controllers, with nothing failing. `build/` is
+        // gitignored, so a clean checkout or a `clean` had no way to get it back — the bridge was
+        // only ever built by an explicit `-Pnuvio.linux.nativeSmokeTest=true` opt-in.
+        dependsOn(buildLinuxPlayerBridge)
+        from(linuxPlayerBridgeBuildDir) {
+            include("libplayer_bridge.so", "libquickjs.so")
+            into("native/linux")
+        }
+    }
     if (isWindowsHost && name == "desktopJar") {
         dependsOn(
             buildWindowsPlayerBridge,
@@ -2344,6 +2356,12 @@ val nativeJniSources = fileTree("src/desktopMain/native") {
 }
 // The Linux native-image tasks (linuxNativeCompile, createLinuxNativeDistributable, ...).
 apply(from = "native-image-linux.gradle.kts")
+
+// The Linux development AppImage tasks (packageReleaseAppImage, packageAppImage).
+apply(from = "appimage-linux.gradle.kts")
+
+// The Linux native player runtime that a jpackage app image must carry in lib/native.
+apply(from = "linux-native-runtime.gradle.kts")
 
 /** One `reflection` entry of a reachability-metadata.json. */
 class NativeMetadataEntry(val type: String) {
