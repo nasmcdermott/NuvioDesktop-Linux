@@ -40,7 +40,7 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 
 - [x] Linux input / gamepad / media keys / OSK integration — `dabbe260`
 - [x] Linux player / native bridge / HUD — `6e677db4`
-- [ ] Build / packaging / native runtime
+- [x] Build / packaging / native runtime — `063326ed` (scripts only; no packages produced)
 - [x] Navigation / focus / shared UI — `afc1a07d`
 - [x] Auth / login / QR — `f60632ba`
 - [x] Home / TV rows / navbar — `5eb00420`
@@ -50,6 +50,10 @@ These are the commits on `feature/linux-1.36-goals` after the 1.27.0 snapshot. E
 - [x] Other app features — `deacfdc9`
 - [ ] Tests (ported with each slice)
 - [ ] Remove patch files and document the port
+
+## Known remaining gap
+
+- The YouTube mini-player wiring in `App.kt` is not ported. The `youTubeMiniTopChromePadding` helper and its test are present, but the corner-page call site is not.
 
 ## Local-only file counts from the audit
 
