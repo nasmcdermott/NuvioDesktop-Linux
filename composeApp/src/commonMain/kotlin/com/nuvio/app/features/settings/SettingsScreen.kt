@@ -2368,7 +2368,7 @@ private fun SettingsPage.desktopSidebarPage(): SettingsPage = when (this) {
     else -> SettingsPage.Root
 }
 
-private fun SettingsPage.desktopBackPage(): SettingsPage? = when (this) {
+internal fun SettingsPage.desktopBackPage(): SettingsPage? = when (this) {
     SettingsPage.StreamScoring -> SettingsPage.Streams
     SettingsPage.TmdbEnrichment,
     SettingsPage.MdbListRatings,
