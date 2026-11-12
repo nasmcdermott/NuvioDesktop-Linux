@@ -646,6 +646,7 @@ fun AuthScreen(
                     ServerConnectionController.resetDiscovery()
                     showServerDialog = true
                 },
+                onMenuFocused = { userInteractedWithAuth = true },
                 modifier = Modifier
                     .align(Alignment.TopStart)
                     .padding(start = 8.dp, top = statusBarTop + 4.dp),

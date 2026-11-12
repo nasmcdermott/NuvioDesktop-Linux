@@ -34,6 +34,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
@@ -69,6 +70,7 @@ internal fun ServerConnectionMenu(
     onUseOfficial: () -> Unit,
     onConnectCustom: () -> Unit,
     modifier: Modifier = Modifier,
+    onMenuFocused: () -> Unit = {},
 ) {
     var expanded by remember { mutableStateOf(false) }
     // Escape, the pad's Back button and Start all raise this menu (see AuthMenuRequest): it holds
@@ -110,6 +112,7 @@ internal fun ServerConnectionMenu(
             // did nothing. This wires focus and activation to the same node.
             modifier = Modifier
                 .testTag(AuthServerMenuButtonTag)
+                .onFocusChanged { if (it.isFocused) onMenuFocused() }
                 .selectWithKeyboardOrPointer(
                     enabled = true,
                     interactionSource = menuInteraction,
