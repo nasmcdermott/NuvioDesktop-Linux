@@ -63,6 +63,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.layout.layout
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.key.Key
@@ -202,6 +203,9 @@ fun MusicPlayerHost(
     val big = videoVisible && view == MusicVideoView.Fullscreen
     var hostOrigin by remember { mutableStateOf(Offset.Zero) }
     val keys = remember { FocusRequester() }
+    // Whether anything in the player layer holds the keys. Back/Escape belongs to the player only
+    // then; otherwise the page's own Back handling runs.
+    var hostHasFocus by remember { mutableStateOf(false) }
     // The player shortcut reads the focused control through the window's focus manager (see MusicKeyboard).
     val windowFocus = androidx.compose.ui.platform.LocalFocusManager.current
     androidx.compose.runtime.SideEffect { MusicKeyboard.focusManager = windowFocus }
@@ -221,11 +225,12 @@ fun MusicPlayerHost(
                 },
             )
             .onGloballyPositioned { hostOrigin = it.positionInRoot() }
+            .onFocusChanged { hostHasFocus = it.hasFocus }
             // The bar, dock or card is reached with the arrows from the page; the big video's strip takes focus itself.
             .musicKeyboardRoot(takeFocus = false, isPlayer = true)
             .focusRequester(keys)
             .onPreviewKeyEvent { event ->
-                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                if (event.type != KeyEventType.KeyDown || !hostHasFocus) return@onPreviewKeyEvent false
                 // Back out of the bar, dock or card: Escape, Backspace or the Back shortcut (a pad's B) hands focus to
                 // the page again. Only the player shortcut did before, so B and Escape left focus stuck in the player
                 // until the mouse was used (2026-11-13).
@@ -236,13 +241,36 @@ fun MusicPlayerHost(
                         MusicKeyboard.playerHasFocus() && MusicKeyboard.togglePlayerFocus()
                 }
                 when (event.key) {
-                    Key.Escape -> {
-                        MusicPlayback.setVideoView(MusicVideoView.Bar)
-                        true
+                    Key.Escape -> when {
+                        // Fullscreen video first, then the Now Playing view, then the player itself.
+                        big -> {
+                            MusicPlayback.setVideoView(MusicVideoView.Bar)
+                            true
+                        }
+                        nowPlayingOpen -> {
+                            MusicPlayback.nowPlayingOpen.value = false
+                            if (!com.nuvio.app.core.ui.RootNavFocus.enterSidebar()) {
+                                com.nuvio.app.core.ui.RootNavFocus.enterTopBar()
+                            }
+                            true
+                        }
+                        player.state.value.isActive -> {
+                            // Back leaves the player layer, not the song: playback carries on in
+                            // the bar/dock/corner card while the rest of the app gets the keys.
+                            if (!com.nuvio.app.core.ui.RootNavFocus.enterSidebar()) {
+                                com.nuvio.app.core.ui.RootNavFocus.enterTopBar()
+                            }
+                            true
+                        }
+                        else -> false
                     }
                     Key.Spacebar -> {
-                        player.togglePlayback()
-                        true
+                        if (big) {
+                            player.togglePlayback()
+                            true
+                        } else {
+                            false
+                        }
                     }
                     else -> false
                 }
@@ -399,6 +427,7 @@ fun MusicPlayerHost(
                     // the video shows, so a second button doing the same was just noise.
                     onExpandVideo = if (collapsed && realVideo && !inline) ({ MusicPlayback.showVideo() }) else null,
                     opensDown = dockOpensDown,
+                    isPlayerStyle = docked,
                 )
             }
         }
