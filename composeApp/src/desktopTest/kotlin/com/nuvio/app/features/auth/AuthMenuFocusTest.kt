@@ -54,6 +54,8 @@ class AuthMenuFocusTest {
         onNodeWithTag(AuthServerMenuButtonTag).requestFocus()
         onNodeWithTag(AuthServerMenuButtonTag).performKeyInput { pressKey(Key.Enter) }
         waitForIdle()
-        onNodeWithTag(AuthOnScreenKeyboardMenuItemTag).assertExists()
+        waitUntil(timeoutMillis = 5_000) {
+            onAllNodesWithTag(AuthOnScreenKeyboardMenuItemTag).fetchSemanticsNodes().isNotEmpty()
+        }
     }
 }

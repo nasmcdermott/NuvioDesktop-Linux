@@ -3281,7 +3281,7 @@ private fun DesktopSettingsTopBar(
                     // edge. Any other key drops the flag so a stale one cannot move the entry.
                     .onKeyEvent { event ->
                         if (event.type == KeyEventType.KeyDown) {
-                            enterTabRowFromLeft = event.key == Key.DirectionRight
+                            enterTabRowFromLeft = event.navigationKey() == Key.DirectionRight
                         }
                         false
                     },
