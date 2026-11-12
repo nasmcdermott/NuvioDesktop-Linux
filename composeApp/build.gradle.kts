@@ -1975,6 +1975,8 @@ kotlin {
             implementation(libs.supabase.functions)
             implementation(libs.supabase.realtime)
             implementation(libs.reorderable)
+            // QR pairing: symbols are generated as a module grid, drawn by the Compose canvas.
+            implementation(libs.zxing.core)
         }
         commonTest.dependencies {
             implementation(libs.kotlin.test)
