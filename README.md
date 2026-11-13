@@ -28,6 +28,9 @@ redistribution remains blocked by the documented source/rights/availability revi
 
 # Home Theatre features
 
+* Changed input handling and app navigation for out the box experience with remote/keyboard/gamepad
+* QR login added
+* Tweaked hero UI, player UI
 * Mouse, keyboard or controller friendly TV Mode with full-screen navigation, adaptive hero, row-jump navigation, cast and award information. This applies across all panels, not just home.
 * Game Mode for browsing and launching your game library alongside your media.
 * IPTV from your own provider (Xtream Codes, Stalker portal or M3U) with a programme guide, favourites and an in-player channel switcher, based on Slokker's GoatTV (used with Permission).
