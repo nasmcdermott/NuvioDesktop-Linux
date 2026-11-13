@@ -4036,6 +4036,8 @@
     <string name="setup_wizard_theme_title">Theme</string>
     <string name="setup_wizard_theme_subtitle">The accent colour used across the app, and where the navigation sits.</string>
     <string name="setup_wizard_theme_accent">Accent colour</string>
+    <string name="setup_wizard_display">Display</string>
+    <string name="setup_wizard_display_scale_description">Resizes the whole app, text and controls together. 0% is the default; each step is 5%.</string>
     <string name="setup_wizard_trailers_subtitle">What happens when a title in the hero has a trailer.</string>
     <string name="setup_wizard_trailers_title">Trailers</string>
     <string name="setup_wizard_trailers_area">Play trailers in</string>
