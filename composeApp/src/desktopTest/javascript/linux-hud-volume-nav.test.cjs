@@ -1,5 +1,7 @@
-// Volume slider focus on Linux: Up/Down change volume while the slider holds nav focus, Left/Right
-// still move between controls, and the "Player volume control" setting (volume-control-hidden)
+// Volume slider focus on Linux: Enter selects the slider into a four-arrow volume mode (nav state 4,
+// LinuxHudNavState.VOLUME_FOCUSED) in which Up/Right raise and Down/Left lower the volume while the
+// slider keeps focus, and Escape leaves that mode. Merely focused it is an ordinary control, so
+// Left/Right move between controls. The "Player volume control" setting (volume-control-hidden)
 // takes the slider out of the nav order. Runs the real linux-hud-nav block and chrome timer from
 // controls.js in a vm sandbox, with a fake clock and fake controls; no browser/window.
 const assert = require('node:assert/strict');
@@ -140,9 +142,25 @@ function load(options = {}) {
 const focusedId = nav => (nav.focused() ? nav.focused().id : null);
 const sentOf = (sent, type) => sent.filter(([t]) => t === type);
 
-test('Up on the focused volume slider raises volume one step and keeps focus on the slider', () => {
-  const { ctx, sent, nav } = load();
+// Reaching the slider is ordinary Left/Right navigation; the volume mode itself is entered with Enter.
+const focusVolumeSlider = nav => {
   while (focusedId(nav) !== 'playerVolumeSlider') nav.handleHudNavKey('ArrowRight');
+};
+
+test('Enter on the focused volume slider selects it into the volume mode', () => {
+  const { ctx, nav } = load();
+  focusVolumeSlider(nav);
+  assert.equal(ctx.__nav.hudNavStateValue(), 3);
+  nav.handleHudNavKey('Enter');
+  // 4 is LinuxHudNavState.VOLUME_FOCUSED: Kotlin forwards the arrows and Escape in this state only.
+  assert.equal(ctx.__nav.hudNavStateValue(), 4);
+  assert.equal(focusedId(nav), 'playerVolumeSlider');
+});
+
+test('selected, Up raises volume one step and keeps focus on the slider', () => {
+  const { ctx, sent, nav } = load();
+  focusVolumeSlider(nav);
+  nav.handleHudNavKey('Enter');
   sent.length = 0;
   nav.handleHudNavKey('ArrowUp');
   assert.equal(ctx.__volume.get(), 105);
@@ -151,9 +169,10 @@ test('Up on the focused volume slider raises volume one step and keeps focus on 
   assert.deepEqual(sentOf(sent, 'keyboardSeekForward'), []);
 });
 
-test('Down on the focused volume slider lowers volume one step and keeps focus', () => {
+test('selected, Down lowers volume one step and keeps focus', () => {
   const { ctx, sent, nav } = load();
-  while (focusedId(nav) !== 'playerVolumeSlider') nav.handleHudNavKey('ArrowRight');
+  focusVolumeSlider(nav);
+  nav.handleHudNavKey('Enter');
   sent.length = 0;
   nav.handleHudNavKey('ArrowDown');
   assert.equal(ctx.__volume.get(), 95);
@@ -161,9 +180,10 @@ test('Down on the focused volume slider lowers volume one step and keeps focus',
   assert.deepEqual(sentOf(sent, 'volumeDelta'), [['volumeDelta', -0.05]]);
 });
 
-test('volume clamps at 0 and 200 without leaving the slider', () => {
+test('volume clamps at 0 and 200 in the volume mode without leaving the slider', () => {
   const { ctx, nav } = load();
-  while (focusedId(nav) !== 'playerVolumeSlider') nav.handleHudNavKey('ArrowRight');
+  focusVolumeSlider(nav);
+  nav.handleHudNavKey('Enter');
   ctx.__volume.set(0);
   nav.handleHudNavKey('ArrowDown');
   assert.equal(ctx.__volume.get(), 0);
@@ -171,6 +191,19 @@ test('volume clamps at 0 and 200 without leaving the slider', () => {
   nav.handleHudNavKey('ArrowUp');
   assert.equal(ctx.__volume.get(), 200);
   assert.equal(focusedId(nav), 'playerVolumeSlider');
+  assert.equal(ctx.__nav.hudNavStateValue(), 4);
+});
+
+test('Escape leaves the volume mode so the arrows navigate again', () => {
+  const { ctx, nav } = load();
+  focusVolumeSlider(nav);
+  nav.handleHudNavKey('Enter');
+  const before = ctx.__volume.get();
+  nav.handleHudNavKey('Escape');
+  assert.equal(ctx.__nav.hudNavStateValue(), 3);
+  nav.handleHudNavKey('ArrowUp');     // a plain arrow again: row 1, the seek bar
+  assert.equal(focusedId(nav), 'seek');
+  assert.equal(ctx.__volume.get(), before);
 });
 
 test('Left and Right on the volume slider still move focus between controls', () => {
