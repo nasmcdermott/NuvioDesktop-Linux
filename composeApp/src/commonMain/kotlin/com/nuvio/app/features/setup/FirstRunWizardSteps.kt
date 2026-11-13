@@ -13,6 +13,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.features.settings.platformOffersInterfaceRenderer
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.features.settings.AmoledAppearance
 import com.nuvio.app.core.ui.BalancedPosterCardWidthDp
 import com.nuvio.app.core.ui.ComfortPosterCardWidthDp
 import com.nuvio.app.core.ui.CompactPosterCardWidthDp
@@ -34,6 +35,11 @@ import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
 import kotlin.math.abs
 import kotlin.math.roundToInt
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.settings_appearance_amoled_black
+import nuvio.composeapp.generated.resources.settings_appearance_amoled_description
+import nuvio.composeapp.generated.resources.settings_appearance_amoled_mode_amoled
+import nuvio.composeapp.generated.resources.settings_appearance_amoled_mode_black
+import nuvio.composeapp.generated.resources.settings_appearance_amoled_off
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_navigation
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_top_bar_always_visible
 import nuvio.composeapp.generated.resources.settings_appearance_desktop_top_bar_always_visible_description
@@ -453,6 +459,27 @@ private fun ThemeStep(draft: FirstRunWizardDraft, onDraftChange: DraftChange, fi
         fontWeight = FontWeight.Medium,
         modifier = Modifier.padding(horizontal = NuvioTokens.Space.s12),
     )
+
+    // The same three choices Settings > Appearance offers, applied live: a pure-black background is
+    // what an OLED panel wants, and it is worth choosing before the first screen rather than hunting
+    // for it afterwards.
+    WizardSectionLabel(stringResource(Res.string.settings_appearance_amoled_black))
+    AmoledAppearance.entries.forEach { mode ->
+        WizardOptionRow(
+            label = when (mode) {
+                AmoledAppearance.Off -> stringResource(Res.string.settings_appearance_amoled_off)
+                AmoledAppearance.Amoled -> stringResource(Res.string.settings_appearance_amoled_mode_amoled)
+                AmoledAppearance.Black -> stringResource(Res.string.settings_appearance_amoled_mode_black)
+            },
+            description = if (mode == AmoledAppearance.Black) {
+                stringResource(Res.string.settings_appearance_amoled_description)
+            } else {
+                null
+            },
+            selected = draft.amoledMode == mode,
+            onClick = { onDraftChange { it.copy(amoledMode = mode) } },
+        )
+    }
 
     WizardSectionLabel(stringResource(Res.string.settings_appearance_desktop_navigation))
     DesktopNavigationLayout.entries.forEach { layout ->

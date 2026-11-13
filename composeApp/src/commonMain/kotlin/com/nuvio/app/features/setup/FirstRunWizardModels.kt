@@ -1,6 +1,7 @@
 package com.nuvio.app.features.setup
 
 import com.nuvio.app.core.ui.AppTheme
+import com.nuvio.app.features.settings.AmoledAppearance
 import com.nuvio.app.core.ui.DefaultPosterCardWidthDp
 import com.nuvio.app.core.ui.PosterHighlightMode
 import com.nuvio.app.features.home.HomeCatalogSettingsUiState
@@ -60,6 +61,8 @@ internal data class FirstRunWizardDraft(
     val separateNextUpRow: Boolean = true,
     val separateUpcomingRow: Boolean = true,
     val theme: AppTheme = AppTheme.OCEAN,
+    /** Light, the existing AMOLED look, or complete black; the same choice Settings > Appearance offers. */
+    val amoledMode: AmoledAppearance = AmoledAppearance.Off,
     val navigationLayout: DesktopNavigationLayout = DesktopNavigationLayout.Default,
     val topBarAlwaysVisible: Boolean = false,
     val tmdbApiKey: String = "",
