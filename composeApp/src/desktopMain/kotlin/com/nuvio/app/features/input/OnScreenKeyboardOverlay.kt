@@ -74,6 +74,7 @@ import com.nuvio.app.core.ui.nuvioBackdropBrush
 import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.TextInputFocusTracker
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.features.settings.ThemeSettingsRepository
 import java.awt.Cursor
 import java.awt.KeyEventDispatcher
 import java.awt.KeyboardFocusManager
@@ -96,7 +97,8 @@ import kotlinx.coroutines.flow.combine
  * the topmost layer is not an outside click for anything beneath it.
  *
  * The panel is laid out once at full size and scaled as a whole (a smaller [Density]), so keys,
- * labels and gaps shrink together on a small window or a small floating panel.
+ * labels and gaps shrink together on a small window or a small floating panel — and it applies the
+ * App UI scale slider itself, since it is drawn outside the density scaler that scales the app.
  */
 @Composable
 internal fun OnScreenKeyboardOverlay() {
@@ -168,18 +170,30 @@ internal fun OnScreenKeyboardOverlay() {
     transition.targetState = visible
     if (!transition.currentState && !transition.targetState) return
     val placement by OskPlacement.state.collectAsState()
+    // The panel sits outside the App's density scaler (see Main.kt), so it follows the App UI scale
+    // slider by applying the same multiplier itself: +25% grows the keys with the rest of the app.
+    val appUiScalePercent by remember {
+        ThemeSettingsRepository.ensureLoaded()
+        ThemeSettingsRepository.desktopAppUiScalePercent
+    }.collectAsState()
+    val appUiScale = oskAppUiScale(appUiScalePercent)
     // The popup positions within its parent, so give it the whole window to sit in.
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (placement.floating) {
-            FloatingKeyboard(transition, placement, maxWidth, maxHeight)
+            FloatingKeyboard(transition, placement, maxWidth, maxHeight, appUiScale)
         } else {
-            DockedKeyboard(transition, maxWidth, maxHeight)
+            DockedKeyboard(transition, maxWidth, maxHeight, appUiScale)
         }
     }
 }
 
 @Composable
-private fun DockedKeyboard(transition: MutableTransitionState<Boolean>, windowWidth: Dp, windowHeight: Dp) {
+private fun DockedKeyboard(
+    transition: MutableTransitionState<Boolean>,
+    windowWidth: Dp,
+    windowHeight: Dp,
+    appUiScale: Float,
+) {
     Popup(
         alignment = Alignment.BottomCenter,
         properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
@@ -190,7 +204,7 @@ private fun DockedKeyboard(transition: MutableTransitionState<Boolean>, windowWi
                 enter = slideInVertically { it },
                 exit = slideOutVertically { it },
             ) {
-                ScaledDensity(dockedKeyboardScale(windowWidth, windowHeight)) {
+                ScaledDensity(dockedKeyboardScale(windowWidth, windowHeight) * appUiScale) {
                     OnScreenKeyboardPanel(
                         shape = RoundedCornerShape(topStart = 18.dp, topEnd = 18.dp),
                         modifier = Modifier.fillMaxWidth(),
@@ -222,10 +236,14 @@ private fun FloatingKeyboard(
     placement: OskPlacementState,
     windowWidth: Dp,
     windowHeight: Dp,
+    appUiScale: Float,
 ) {
     val density = LocalDensity.current
     val windowWidthPx = with(density) { windowWidth.toPx() }
     val windowHeightPx = with(density) { windowHeight.toPx() }
+    // Pixels per width-dp at the user's App UI scale: the stored width stays in the same units at
+    // every scale, so changing the slider grows the panel instead of rewriting its saved size.
+    val panelDensity = density.density * appUiScale
 
     // Live while dragging; written to OskPlacement when a drag ends, not on every pointer move.
     var xFraction by remember { mutableFloatStateOf(placement.xFraction) }
@@ -233,11 +251,12 @@ private fun FloatingKeyboard(
     var widthDp by remember { mutableFloatStateOf(placement.widthDp) }
     var panelHeightPx by remember { mutableIntStateOf(0) }
 
-    // Never wider than the window, so a panel sized on a big monitor still fits a small one.
-    val maxWidthDp = (windowWidth.value - FloatingWindowMarginDp)
+    // Never wider than the window, so a panel sized on a big monitor still fits a small one. The
+    // fit is in scaled pixels, so a bigger UI scale leaves a panel that still fits the window.
+    val maxWidthDp = ((windowWidth.value - FloatingWindowMarginDp) / appUiScale)
         .coerceIn(OskPlacement.MIN_FLOATING_WIDTH_DP, OskPlacement.MAX_FLOATING_WIDTH_DP)
     val shownWidthDp = widthDp.coerceIn(OskPlacement.MIN_FLOATING_WIDTH_DP, maxWidthDp)
-    val panelWidthPx = shownWidthDp * density.density
+    val panelWidthPx = shownWidthDp * panelDensity
     val freeX = (windowWidthPx - panelWidthPx).coerceAtLeast(0f)
     val freeY = (windowHeightPx - panelHeightPx).coerceAtLeast(0f)
     val persist = { OskPlacement.setFloatingBounds(xFraction, yFraction, shownWidthDp) }
@@ -248,7 +267,7 @@ private fun FloatingKeyboard(
         properties = PopupProperties(focusable = false, dismissOnClickOutside = false),
     ) {
         AnimatedVisibility(visibleState = transition, enter = fadeIn(), exit = fadeOut()) {
-            ScaledDensity(shownWidthDp / BasePanelWidth.value) {
+            ScaledDensity(shownWidthDp / BasePanelWidth.value * appUiScale) {
                 OnScreenKeyboardPanel(
                     shape = RoundedCornerShape(18.dp),
                     modifier = Modifier
@@ -295,9 +314,9 @@ private fun FloatingKeyboard(
                                         val top = yFraction * freeY
                                         val aspect = if (panelHeightPx > 0) panelWidthPx / panelHeightPx else 2.5f
                                         val grownPx = (delta.x + delta.y * aspect) / 2f
-                                        val newWidthDp = ((panelWidthPx + grownPx) / density.density)
+                                        val newWidthDp = ((panelWidthPx + grownPx) / panelDensity)
                                             .coerceIn(OskPlacement.MIN_FLOATING_WIDTH_DP, maxWidthDp)
-                                        val newWidthPx = newWidthDp * density.density
+                                        val newWidthPx = newWidthDp * panelDensity
                                         val newHeightPx = panelHeightPx * newWidthPx / panelWidthPx
                                         widthDp = newWidthDp
                                         val newFreeX = windowWidthPx - newWidthPx
@@ -333,6 +352,13 @@ private fun dockedKeyboardScale(windowWidth: Dp, windowHeight: Dp): Float =
         windowHeight.value * DockedMaxHeightFraction / BasePanelHeightDp,
         windowWidth.value / BasePanelWidth.value,
     ).coerceAtLeast(MinDockedScale)
+
+/**
+ * The App UI scale slider (Settings > Appearance) as a multiplier: 1.0 at 0%, 1.5 at +50%, 0.5 at
+ * -50%. The keyboard is hosted beside the app rather than inside its density scaler, so it applies
+ * the slider itself and its keys grow and shrink with the rest of the UI.
+ */
+internal fun oskAppUiScale(percent: Int): Float = 1f + percent.coerceIn(-50, 50) / 100f
 
 @Composable
 private fun ScaledDensity(scale: Float, content: @Composable () -> Unit) {
