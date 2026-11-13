@@ -63,6 +63,8 @@ internal data class FirstRunWizardDraft(
     val theme: AppTheme = AppTheme.OCEAN,
     /** Light, the existing AMOLED look, or complete black; the same choice Settings > Appearance offers. */
     val amoledMode: AmoledAppearance = AmoledAppearance.Off,
+    /** How much the whole app is scaled, in percent: Settings > Appearance's App UI Scale. */
+    val uiScalePercent: Int = 0,
     val navigationLayout: DesktopNavigationLayout = DesktopNavigationLayout.Default,
     val topBarAlwaysVisible: Boolean = false,
     val tmdbApiKey: String = "",
