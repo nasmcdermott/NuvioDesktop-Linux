@@ -50,6 +50,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.text.TextRange
 import androidx.compose.ui.text.input.TextFieldValue
 import com.nuvio.app.core.ui.arrowFocusDirection
+import com.nuvio.app.core.ui.navigationKey
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.input.ImeAction
@@ -243,7 +244,7 @@ private fun YouTubeBarSearchField(fieldFocus: FocusRequester, swapFocus: FocusRe
                         else -> Unit
                     }
                 }
-                when (event.key) {
+                when (event.navigationKey()) {
                     // Left at the start of the text (nothing to move past) goes on to the swap button.
                     Key.DirectionLeft -> if (shown.selection.collapsed && shown.selection.start == 0) {
                         if (down) runCatching { swapFocus.requestFocus() }
@@ -264,9 +265,15 @@ private fun YouTubeBarSearchField(fieldFocus: FocusRequester, swapFocus: FocusRe
                         false
                     }
                     // Escape lets go of the box for the page under it; both halves are eaten so the
-                    // screen's own Escape (back) doesn't fire on the same press.
+                    // screen's own Escape (back) doesn't fire on the same press. An empty box has
+                    // nothing left to let go of, so that press is the navigation bar's: a focused
+                    // text field is what the tab host's hand-off stands aside for, so ask here.
                     Key.Escape -> {
-                        if (!down && !toResults()) focusManager.clearFocus()
+                        if (!down && !toResults()) {
+                            // An empty box has nothing left to close, so the bar is next; the
+                            // top-bar variant matters when the sidebar is not drawn.
+                            com.nuvio.app.core.ui.dismissToBarOr { focusManager.clearFocus() }
+                        }
                         true
                     }
                     else -> false
