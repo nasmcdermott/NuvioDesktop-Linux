@@ -439,6 +439,7 @@ fun NuvioInputField(
     modifier: Modifier = Modifier,
     readOnly: Boolean = false,
     trailingContent: (@Composable (() -> Unit))? = null,
+    focusRequester: androidx.compose.ui.focus.FocusRequester? = null,
 ) {
     NuvioTextField(
         value = value,
@@ -448,6 +449,7 @@ fun NuvioInputField(
         readOnly = readOnly,
         textStyle = MaterialTheme.typography.bodyLarge,
         trailingContent = trailingContent?.let { content -> { content() } },
+        focusRequester = focusRequester,
     )
 }
 
