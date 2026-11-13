@@ -31,7 +31,6 @@ import com.nuvio.app.core.auth.AuthState
 import com.nuvio.app.core.auth.ReauthenticationTrigger
 import com.nuvio.app.core.sync.ProfileSettingsSync
 import com.nuvio.app.core.sync.SynchronizationPreferencesRepository
-import com.nuvio.app.core.ui.NuvioActionLabel
 import com.nuvio.app.core.ui.NuvioPrimaryButton
 import com.nuvio.app.features.setup.FirstRunWizardController
 import com.nuvio.app.core.ui.NuvioStatusModal
@@ -188,25 +187,12 @@ private fun AccountSettingsBody(
             }
         }
 
-        // Sign out / sign in lives on the far right of the section heading, where the other pages
-        // keep their heading-level action, rather than as a full-width button under the card.
+        // Sign out / sign in is a row of the account group below, not an action beside this
+        // heading: the heading collapses the group when clicked, so an action label there doubled
+        // as the collapse target and the wrong one of the two could fire.
         SettingsSection(
             title = stringResource(Res.string.compose_settings_page_account),
             isTablet = isTablet,
-            actions = {
-                if (authState is AuthState.Authenticated) {
-                    NuvioActionLabel(
-                        text = stringResource(Res.string.settings_account_sign_out),
-                        modifier = Modifier.settingsScrollAnchor(SettingsScrollAnchor.searchKey("account-sign-out")),
-                        onClick = { showSignOutConfirm = true },
-                    )
-                } else {
-                    NuvioActionLabel(
-                        text = stringResource(Res.string.compose_auth_sign_in),
-                        onClick = { ReauthenticationTrigger.trigger() },
-                    )
-                }
-            },
         ) {
             SettingsGroup(
                 isTablet = isTablet,
@@ -252,6 +238,28 @@ private fun AccountSettingsBody(
                             isTablet = isTablet,
                         )
                     }
+                }
+                SettingsGroupDivider(isTablet = isTablet)
+                if (authState is AuthState.Authenticated) {
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.settings_account_sign_out),
+                        description = "",
+                        isTablet = isTablet,
+                        modifier = Modifier.settingsScrollAnchor(
+                            SettingsScrollAnchor.searchKey("account-sign-out"),
+                        ),
+                        onClick = { showSignOutConfirm = true },
+                    )
+                } else {
+                    SettingsNavigationRow(
+                        title = stringResource(Res.string.compose_auth_sign_in),
+                        description = "",
+                        isTablet = isTablet,
+                        modifier = Modifier.settingsScrollAnchor(
+                            SettingsScrollAnchor.searchKey("account-sign-out"),
+                        ),
+                        onClick = { ReauthenticationTrigger.trigger() },
+                    )
                 }
             }
         }
