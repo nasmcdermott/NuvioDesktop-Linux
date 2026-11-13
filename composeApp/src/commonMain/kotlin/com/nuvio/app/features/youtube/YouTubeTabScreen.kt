@@ -86,6 +86,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.OutlinedButton
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -265,6 +266,10 @@ fun YouTubeTabScreen(
         if (allHidden && feed.continuation != null && !feed.loading && feed.error == null) YouTubeFeedRepository.loadMore(kind)
     }
     // The box's text lives with the top bar's box, which shows it while the bar hosts the search.
+    DisposableEffect(Unit) {
+        YouTubeTopBarSearch.active = true
+        onDispose { YouTubeTopBarSearch.active = false }
+    }
     val searchBox = YouTubeTopBarSearch
     var focusResultsPending by remember { mutableStateOf(false) }
     fun submitSearch() {

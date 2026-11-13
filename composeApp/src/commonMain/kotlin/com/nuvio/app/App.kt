@@ -24,6 +24,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.ExperimentalSharedTransitionApi
 import androidx.compose.animation.SharedTransitionLayout
 import androidx.compose.animation.core.animateDpAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.animation.core.tween
 import androidx.compose.animation.EnterTransition
@@ -35,6 +36,7 @@ import androidx.compose.animation.togetherWith
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.Image
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -123,13 +125,17 @@ import androidx.compose.runtime.getValue
 import com.nuvio.app.features.music.MusicRootHosts
 import com.nuvio.app.features.music.isMusicFullBleedPage
 import com.nuvio.app.features.music.musicRoutes
+import com.nuvio.app.features.music.MusicKeyboard
+import com.nuvio.app.features.music.coverUrl
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.draw.alpha
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.hapticfeedback.HapticFeedbackType
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.Modifier
@@ -185,6 +191,7 @@ import com.nuvio.app.core.ui.PosterZoomAnchor
 import com.nuvio.app.core.ui.PosterZoomAnchorHolder
 import com.nuvio.app.core.ui.NuvioStatusModal
 import com.nuvio.app.core.ui.DesktopNavigationGestureBridge
+import com.nuvio.app.features.settings.SettingsBackBridge
 import com.nuvio.app.core.ui.DesktopBackRequestSource
 import androidx.compose.runtime.rememberUpdatedState
 import com.nuvio.app.core.ui.PosterZoomOverlayCoordinator
@@ -212,6 +219,18 @@ import com.nuvio.app.core.ui.NativeTabBridge
 import com.nuvio.app.core.ui.isLiquidGlassNativeTabBarSupported
 import com.nuvio.app.core.ui.localizedContinueWatchingSubtitle
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.RootNavFocus
+import com.nuvio.app.core.ui.SidebarLeaveRestoresContent
+import com.nuvio.app.core.ui.TopBarLeaveRestoresContent
+import com.nuvio.app.core.ui.topBarKeyNavigation
+import com.nuvio.app.core.ui.sidebarKeyNavigation
+import com.nuvio.app.core.ui.sidebarRowCount
+import com.nuvio.app.core.ui.sidebarVoiceRowIndex
+import com.nuvio.app.core.ui.sidebarMusicRowIndex
+import com.nuvio.app.core.ui.clampSidebarIndex
+import com.nuvio.app.core.ui.navigationKey
+import com.nuvio.app.core.ui.tabSidebarHandoff
+import com.nuvio.app.core.ui.TabBackInterceptor
 import dev.chrisbanes.haze.hazeSource
 import dev.chrisbanes.haze.rememberHazeState
 import com.nuvio.app.features.discover.DiscoverRecommendationsRepository
@@ -690,6 +709,13 @@ internal fun rootTabHistoryAfterNavigation(
 
 // The sidebar's nav glyphs sit alone in a wide rail rather than in a dense pill, so they carry
 // 15% more than the standard 20.dp icon step to stop them reading as undersized.
+/**
+ * Whether the desktop sidebar currently holds the arrow keys. The selected row keeps a small zoom
+ * while nothing in the sidebar is focused, so the current page still reads as chosen after the
+ * user moves into the page content.
+ */
+private val LocalDesktopSidebarFocused = androidx.compose.runtime.staticCompositionLocalOf { false }
+
 private val DesktopSidebarIconSize = 23.dp
 private val DesktopSidebarCollapsedWidth = 76.dp
 private val DesktopSidebarExpandedContentWidth = 144.dp
@@ -1075,7 +1101,8 @@ fun App() {
         ThemeSettingsRepository.selectedTheme
     }.collectAsStateWithLifecycle()
     val customTheme by remember { ThemeSettingsRepository.customTheme }.collectAsStateWithLifecycle()
-    val amoledEnabled by remember { ThemeSettingsRepository.amoledEnabled }.collectAsStateWithLifecycle()
+    val amoledMode by remember { ThemeSettingsRepository.amoledMode }.collectAsStateWithLifecycle()
+    val amoledEnabled = amoledMode != com.nuvio.app.features.settings.AmoledAppearance.Off
     val desktopAppUiScalePercent by remember {
         ThemeSettingsRepository.desktopAppUiScalePercent
     }.collectAsStateWithLifecycle()
@@ -1088,6 +1115,7 @@ fun App() {
         appTheme = selectedTheme,
         customThemePalette = customTheme.palette,
         amoled = amoledEnabled,
+        pureBlackBackground = amoledMode == com.nuvio.app.features.settings.AmoledAppearance.Black,
         accentGradientDirection = accentGradientDirection,
         appFontFamilyName = appFontFamily,
         appFontScale = appFontScalePercent / 100f,
@@ -1441,7 +1469,18 @@ private fun MainAppContent(
         LaunchedEffect(selectedTab) {
             if (selectedTab != AppScreenTab.Music && selectedTab != AppScreenTab.YouTube) lastTabBeforeMusic = selectedTab
         }
+        // The tab Settings was opened from, so Back from its root returns there rather than always
+        // to Home. Recorded here rather than in rootTabBackStack because most ways into Settings
+        // (the Library shortcut, deep links, the keyboard-shortcut button) set the tab directly.
+        var tabBeforeSettings by rememberSaveable { mutableStateOf(AppScreenTab.Home) }
+        LaunchedEffect(selectedTab) {
+            if (selectedTab != AppScreenTab.Settings) tabBeforeSettings = selectedTab
+        }
         var rootTabBackStack by remember { mutableStateOf<List<AppScreenTab>>(emptyList()) }
+        // Optional safety net: five rapid Escape presses leave every nested screen and go Home.
+        val escapeFailsafeEnabled by ThemeSettingsRepository.escapeFailsafeEnabled.collectAsStateWithLifecycle()
+        var escapeFailsafePresses by remember { mutableStateOf(0) }
+        var escapeFailsafeWindowStart by remember { mutableStateOf(0L) }
         var searchFocusRequestCount by remember { mutableStateOf(0) }
         var navigateToContentCount by remember { mutableStateOf(0) }
         var searchQuery by rememberSaveable { mutableStateOf("") }
@@ -1553,6 +1592,12 @@ private fun MainAppContent(
             }
         }
         val browsePipActive by com.nuvio.app.features.player.PlayerBrowsePip.active.collectAsStateWithLifecycle()
+        // Entering the corner box is a handoff to the app: the player must not keep the window's keys.
+        LaunchedEffect(browsePipActive) {
+            if (browsePipActive) {
+                if (!RootNavFocus.enterSidebar()) RootNavFocus.enterTopBar()
+            }
+        }
         BindDiscordBrowsingPresence(
             currentBackStackEntry = currentBackStackEntry,
             selectedTab = selectedTab,
@@ -1590,10 +1635,15 @@ private fun MainAppContent(
         }
         LaunchedEffect(navController, selectedTab, rootTabBackStack, searchOverlayActive) {
             DesktopNavigationGestureBridge.backRequests.collect { source ->
-                // Back leaves game mode rather than navigating the app hidden behind it. Read
-                // straight off the flow: this collector is not re-keyed on the toggle.
+                // Back leaves game mode rather than navigating the app hidden behind it — unless a
+                // navigation bar is drawn over the library, in which case it takes the keys first
+                // (Back there gives the bar the focus and leaves the library open).
                 if (GameModeController.active.value) {
-                    GameModeController.setActive(false)
+                    if (!com.nuvio.app.core.ui.RootNavFocus.enterSidebar() &&
+                        !com.nuvio.app.core.ui.RootNavFocus.enterTopBar()
+                    ) {
+                        GameModeController.setActive(false)
+                    }
                     return@collect
                 }
                 // fork:youtube-mini-player - over the tab the mini player draws, Back steps back inside the
@@ -1648,6 +1698,17 @@ private fun MainAppContent(
                         }
                         // fork:music - a page open inside the tab (the Music ladder) closes before the tab is left.
                         com.nuvio.app.core.ui.TabBackInterceptor.handle() -> Unit
+                        // Music: Back gives the keys to the top/side bar before leaving the tab.
+                        selectedTab == AppScreenTab.Music &&
+                            (com.nuvio.app.core.ui.RootNavFocus.enterSidebar() ||
+                                com.nuvio.app.core.ui.RootNavFocus.enterFloatingTopBar()) -> Unit
+                        // Settings goes up a level first, then back to the tab it was opened from.
+                        // Its own history is not used, so Back never lands on some older tab.
+                        selectedTab == AppScreenTab.Settings && SettingsBackBridge.handle() -> Unit
+                        selectedTab == AppScreenTab.Settings -> {
+                            rootTabBackStack = emptyList()
+                            selectedTab = tabBeforeSettings
+                        }
                         rootTabBackStack.isNotEmpty() -> {
                             val target = rootTabBackStack.last()
                             rootTabBackStack = rootTabBackStack.dropLast(1)
@@ -1762,6 +1823,16 @@ private fun MainAppContent(
         if (tab != AppScreenTab.Search) {
             searchOverlayActive = false
         }
+        // fork:games-nav - the game library is drawn over the tab content, so choosing a page has
+        // to close it: the click reached the bar and the tab did change, but the library stayed on
+        // top of the new page with no way back to it. When the page is a different one it composes
+        // fresh and takes its own focus, so the exit must not hand the keys to the page underneath
+        // (see the game-mode LaunchedEffect); on the same page, that hand-off is exactly what is
+        // needed, since the library's focus node is gone with it.
+        if (GameModeController.active.value) {
+            if (tab != selectedTab) RootNavFocus.handoffPending = true
+            GameModeController.setActive(false)
+        }
         if (selectedTab != tab) {
             rootTabBackStack = rootTabHistoryAfterNavigation(
                 history = rootTabBackStack,
@@ -1855,15 +1926,10 @@ private fun MainAppContent(
     // Through latestRootTabClick, so a tab switched on after launch is not refused by a stale check.
     LaunchedEffect(Unit) {
         com.nuvio.app.features.navbar.NavBarNavigation.requests.collect { entry ->
-            when (entry) {
-                com.nuvio.app.features.navbar.NavBarEntry.Home -> latestRootTabClick.value(AppScreenTab.Home)
-                com.nuvio.app.features.navbar.NavBarEntry.Search -> latestRootTabClick.value(AppScreenTab.Search)
-                com.nuvio.app.features.navbar.NavBarEntry.Discover -> latestRootTabClick.value(AppScreenTab.Discover)
-                com.nuvio.app.features.navbar.NavBarEntry.Library -> latestRootTabClick.value(AppScreenTab.Library)
-                com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> latestRootTabClick.value(AppScreenTab.LiveTv)
-                com.nuvio.app.features.navbar.NavBarEntry.YouTube -> latestRootTabClick.value(AppScreenTab.YouTube)
-                com.nuvio.app.features.navbar.NavBarEntry.Music -> latestRootTabClick.value(AppScreenTab.Music)
-                com.nuvio.app.features.navbar.NavBarEntry.Games -> com.nuvio.app.features.games.GameModeController.setActive(true)
+            if (entry == com.nuvio.app.features.navbar.NavBarEntry.Games) {
+                com.nuvio.app.features.games.GameModeController.setActive(true)
+            } else {
+                navBarTab(entry)?.let { latestRootTabClick.value(it) }
             }
         }
     }
@@ -1887,6 +1953,40 @@ private fun MainAppContent(
                 // Set only while a source list is drawn (the picker panel, or the full sources screen).
                 sourcesShown = com.nuvio.app.features.voice.VoiceScreenTargets.sources != null,
             )
+            // A search spoken with no named scope stays on the screen it was said on: Settings
+            // searches Settings, Live TV filters channels, Music and YouTube search their own boxes.
+            // Only screens without their own search open the Search tab.
+            fun searchOnScreen(query: String?): Boolean {
+                if (navController.currentDestination?.hasRoute<TabsRoute>() != true) return false
+                if (GameModeController.active.value) return false
+                return when (selectedTab) {
+                    AppScreenTab.Settings -> {
+                        com.nuvio.app.features.settings.SettingsTopBarSearch.searchFor(query)
+                        true
+                    }
+                    AppScreenTab.LiveTv -> {
+                        com.nuvio.app.features.iptv.IptvSearchFocus.searchFor(query)
+                        true
+                    }
+                    AppScreenTab.Music -> {
+                        if (query.isNullOrBlank()) {
+                            com.nuvio.app.features.music.MusicTopBarSearch.requestFocus()
+                        } else {
+                            com.nuvio.app.features.music.MusicTopBarSearch.searchFor(query)
+                        }
+                        true
+                    }
+                    AppScreenTab.YouTube -> {
+                        if (query.isNullOrBlank()) {
+                            com.nuvio.app.features.youtube.YouTubeTopBarSearch.requestFocus()
+                        } else {
+                            com.nuvio.app.features.youtube.YouTubeTopBarSearch.searchFor(query)
+                        }
+                        true
+                    }
+                    else -> false
+                }
+            }
             fun showTabs() {
                 if (navController.currentDestination?.hasRoute<TabsRoute>() != true) {
                     navController.navigate(TabsRoute) {
@@ -1915,9 +2015,11 @@ private fun MainAppContent(
                 )
                 com.nuvio.app.features.voice.VoiceAction.OpenCalendar -> navController.navigateIfResumed(CalendarRoute)
                 is com.nuvio.app.features.voice.VoiceAction.SearchVideos -> {
-                    showTabs()
-                    searchQuery = action.query
-                    latestSubmitSearch.value(action.query, action.confidentQuery)
+                    if (!searchOnScreen(action.query)) {
+                        showTabs()
+                        searchQuery = action.query
+                        latestSubmitSearch.value(action.query, action.confidentQuery)
+                    }
                 }
                 is com.nuvio.app.features.voice.VoiceAction.SearchYouTube -> {
                     openTab(AppScreenTab.YouTube)
@@ -1937,8 +2039,11 @@ private fun MainAppContent(
                         com.nuvio.app.features.music.MusicTopBarSearch.requestFocus()
                     }
                     else -> {
-                        showTabs()
-                        latestRootTabClick.value(AppScreenTab.Search)
+                        // No named scope: focus the search box of the screen the words were said on.
+                        if (!searchOnScreen(null)) {
+                            showTabs()
+                            latestRootTabClick.value(AppScreenTab.Search)
+                        }
                     }
                 }
                 is com.nuvio.app.features.voice.VoiceAction.Player -> {
@@ -2006,19 +2111,27 @@ private fun MainAppContent(
     LaunchedEffect(navController) {
         AppShortcutBridge.events.collect { action ->
             if (navController.currentDestination?.hasRoute<PlayerRoute>() == true) return@collect
-            // fork:music - on the Music tab the search key goes to the Music search box, not the video search.
-            if (action == AppShortcutAction.OpenSearch && selectedTab == AppScreenTab.Music &&
+            // Game mode owns its own search; the app behind it must not answer the same key.
+            if (action == AppShortcutAction.OpenSearch && GameModeController.active.value) return@collect
+            // The remote's Search key belongs to the screen in front of it. Each screen only
+            // accepts the request while its own search box is composed, so a request can never
+            // be replayed later on a screen that is not showing (the old cause of the key
+            // sometimes landing in Music, Games or Home).
+            if (action == AppShortcutAction.OpenSearch &&
                 navController.currentDestination?.hasRoute<TabsRoute>() == true
             ) {
-                com.nuvio.app.features.music.MusicTopBarSearch.requestFocus()
-                return@collect
-            }
-            // fork:youtube-mode - and on the YouTube tab, to its search box.
-            if (action == AppShortcutAction.OpenSearch && selectedTab == AppScreenTab.YouTube &&
-                navController.currentDestination?.hasRoute<TabsRoute>() == true
-            ) {
-                com.nuvio.app.features.youtube.YouTubeTopBarSearch.requestFocus()
-                return@collect
+                val handled = when (selectedTab) {
+                    AppScreenTab.Settings ->
+                        com.nuvio.app.features.settings.SettingsTopBarSearch.requestFocus()
+                    AppScreenTab.LiveTv ->
+                        com.nuvio.app.features.iptv.IptvSearchFocus.requestFocus()
+                    AppScreenTab.Music ->
+                        com.nuvio.app.features.music.MusicTopBarSearch.requestFocus()
+                    AppScreenTab.YouTube ->
+                        com.nuvio.app.features.youtube.YouTubeTopBarSearch.requestFocus()
+                    else -> false
+                }
+                if (handled) return@collect
             }
             when (action) {
                 AppShortcutAction.OpenMusic -> {
@@ -2138,11 +2251,13 @@ private fun MainAppContent(
     // when that focusable is removed on exit: with no focused node, key events never reach the
     // window-level shortcut handler, so G (and every other global shortcut) is dead until
     // something focusable is clicked. Hand focus back to the tab content the way a returning
-    // route does.
+    // route does. Unless the exit was itself a hand-off to the navigation bar (Dismiss or Left in
+    // game mode), which is where the focus is going: handing it to the content would take it back.
     var gameModeWasActive by remember { mutableStateOf(gameModeActive) }
     LaunchedEffect(gameModeActive) {
         if (gameModeWasActive && !gameModeActive) {
-            navigateToContentCount++
+            if (RootNavFocus.handoffPending) RootNavFocus.handoffPending = false
+            else navigateToContentCount++
         }
         gameModeWasActive = gameModeActive
     }
@@ -3366,6 +3481,36 @@ private fun MainAppContent(
                     popExitTransition = { if (isIos) fadeOut(animationSpec = tween(700)) else ExitTransition.None },
                     modifier = Modifier
                         .fillMaxSize()
+                        // Five Escape key-downs inside ~1.5 s are a way out of any stack, for a
+                        // remote that has no reliable Back. Off by default; one or two presses
+                        // pass through untouched, and any other key resets the count.
+                        .onPreviewKeyEvent { event ->
+                            if (!escapeFailsafeEnabled) return@onPreviewKeyEvent false
+                            if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            if (event.navigationKey() != Key.Escape) {
+                                escapeFailsafePresses = 0
+                                escapeFailsafeWindowStart = 0L
+                                return@onPreviewKeyEvent false
+                            }
+                            val now = System.currentTimeMillis()
+                            if (escapeFailsafePresses == 0 || now - escapeFailsafeWindowStart > 1_500L) {
+                                escapeFailsafePresses = 1
+                                escapeFailsafeWindowStart = now
+                            } else {
+                                escapeFailsafePresses += 1
+                            }
+                            if (escapeFailsafePresses >= 5) {
+                                escapeFailsafePresses = 0
+                                escapeFailsafeWindowStart = 0L
+                                rootTabBackStack = emptyList()
+                                tabBeforeSettings = AppScreenTab.Home
+                                selectedTab = AppScreenTab.Home
+                                runCatching { navController.popBackStack(TabsRoute, inclusive = false) }
+                                true
+                            } else {
+                                false
+                            }
+                        }
                         .padding(bottom = if (musicPageTakesInset) 0.dp else musicBarInset) // fork:music
                         // Right-click on empty space in a pushed screen (anything with a back arrow)
                         // acts as Back — the same request the mouse Back button sends. Posters and
@@ -4226,11 +4371,24 @@ private fun MainAppContent(
                                     desktopNavigationLayout == DesktopNavigationLayout.Sidebar
                             val showDesktopSidebar = useDesktopSidebar && selectedTab != AppScreenTab.Settings
                             val useFloatingTopBar = isTabletLayout && !useNativeBottomTabs && !useDesktopSidebar
-                            val topChromePadding = if (useFloatingTopBar || selectedTab == AppScreenTab.Search) {
-                                val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
-                                max(statusBarPadding + 24.dp, 48.dp) + 64.dp
-                            } else {
-                                null
+                            val topChromePadding = when {
+                                // A hover-only top bar floats over the page. Reserving its row on
+                                // YouTube pushed the header down under an empty band; it keeps only
+                                // the page's normal top margin. The bar floats in both states, so an
+                                // always-drawn bar gets the same margin: turning it on must not move
+                                // the YouTube header down.
+                                useFloatingTopBar && selectedTab == AppScreenTab.YouTube ->
+                                    WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 16.dp
+                                // The music search sat a full bar row down; with a hover-only bar it
+                                // only needs to clear the bar itself.
+                                useFloatingTopBar && selectedTab == AppScreenTab.Music &&
+                                    !desktopTopBarAlwaysVisible ->
+                                    max(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 24.dp, 48.dp) + 24.dp
+                                useFloatingTopBar || selectedTab == AppScreenTab.Search -> {
+                                    val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                                    max(statusBarPadding + 24.dp, 48.dp) + 64.dp
+                                }
+                                else -> null
                             }
                             val tabsRouteActive = currentBackStackEntry?.destination?.hasRoute<TabsRoute>() == true
                             val onProfileSelected: (NuvioProfile) -> Unit = { profile ->
@@ -4306,6 +4464,10 @@ private fun MainAppContent(
                                                 .padding(innerPadding)
                                                 .padding(start = if (showDesktopSidebar) DesktopSidebarCollapsedWidth else 0.dp),
                                             selectedTab = selectedTab,
+                                            // Passed rather than read from RootNavFocus: see the
+                                            // hand-off above. Requires the desktop sidebar layout, so
+                                            // the floating bar and bottom tabs keep their arrows.
+                                            sidebarDrawn = showDesktopSidebar,
                                             topChromePadding = topChromePadding,
                                             searchFocusRequestCount = searchFocusRequestCount,
                                             navigateToContentCount = navigateToContentCount,
@@ -4520,6 +4682,24 @@ private fun MainAppContent(
                                         )
                                     }
 
+                                    // fork:games-nav - the game library over the tab content but
+                                    // under the chrome: the bar across the top is drawn after it,
+                                    // so Back, Left and Up can give it the keys while the library
+                                    // stays open behind it (see GameModeScreen's key handler).
+                                    // No zIndex: a non-zero one would lift this sibling above the
+                                    // bar, which draws in plain composition order.
+                                    if (gameModeActive) {
+                                        GameModeLayer(
+                                            modifier = Modifier,
+                                            onExit = { GameModeController.setActive(false) },
+                                            onOpenSettings = {
+                                                GameModeController.setActive(false)
+                                                requestedSettingsPageName = "Games"
+                                                handleRootTabClick(AppScreenTab.Settings)
+                                            },
+                                        )
+                                    }
+
                                     if (showDesktopSidebar) {
                                         DesktopHoverSidebar(
                                             selectedTab = selectedTab,
@@ -4550,7 +4730,7 @@ private fun MainAppContent(
                                             onAddProfileRequested = onSwitchProfile,
                                             // TV mode docks the source picker into the home hero, right where
                                             // the bar sits; the bar has nothing to offer there, pinned or not.
-                                            hidden = homeHeroPickerDocked && !searchOverlayActive,
+                                            hidden = selectedTab == AppScreenTab.Home && homeHeroPickerDocked && !searchOverlayActive,
                                             // Pinning the bar is a content-screen preference: Settings
                                             // draws its own chrome, so it keeps the fade regardless.
                                             dimUntilHovered = (
@@ -6030,37 +6210,50 @@ private fun MainAppContent(
             )
 
             // Game mode sits on top of a still-composed app rather than replacing it, so toggling
-            // back lands on exactly the row and scroll position the user left. The wrapper is a
-            // pointer-input node covering the whole window: without it, clicks and wheel events
-            // over empty areas of the game library would fall through to the screen underneath.
-            if (gameModeActive) {
-                Box(
-                    modifier = Modifier
-                        .fillMaxSize()
-                        .zIndex(40f)
-                        .clickable(
-                            interactionSource = remember { MutableInteractionSource() },
-                            indication = null,
-                            onClick = {},
-                        ),
-                ) {
-                    GameModeScreen(
-                        onExit = { GameModeController.setActive(false) },
-                        onOpenSettings = {
-                            GameModeController.setActive(false)
-                            requestedSettingsPageName = "Games"
-                            // The app behind game mode may be parked on a details route, so the
-                            // tab host has to be brought forward before selecting a tab in it.
-                            navController.navigate(TabsRoute) {
-                                popUpTo<TabsRoute> { inclusive = false }
-                                launchSingleTop = true
-                            }
-                            handleRootTabClick(AppScreenTab.Settings)
-                        },
-                    )
-                }
+            // back lands on exactly the row and scroll position the user left. Over the tab host
+            // the game library is drawn inside that host instead (under the navigation chrome), so
+            // Back can hand the keys to the bar without leaving it; this whole-window layer is
+            // only for the rest of the app (game mode toggled over the player or a details page),
+            // where no bar of the host is on screen.
+            if (gameModeActive && navController.currentDestination?.hasRoute<TabsRoute>() != true) {
+                GameModeLayer(
+                    modifier = Modifier.fillMaxSize().zIndex(40f),
+                    onExit = { GameModeController.setActive(false) },
+                    onOpenSettings = {
+                        GameModeController.setActive(false)
+                        requestedSettingsPageName = "Games"
+                        // The app behind game mode may be parked on a details route, so the
+                        // tab host has to be brought forward before selecting a tab in it.
+                        navController.navigate(TabsRoute) {
+                            popUpTo<TabsRoute> { inclusive = false }
+                            launchSingleTop = true
+                        }
+                        handleRootTabClick(AppScreenTab.Settings)
+                    },
+                )
             }
         }
+}
+
+@Composable
+private fun GameModeLayer(
+    modifier: Modifier,
+    onExit: () -> Unit,
+    onOpenSettings: () -> Unit,
+) {
+    // A pointer-input node covering the whole layer: without it, clicks and wheel events over
+    // empty areas of the game library would fall through to the screen underneath.
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            .clickable(
+                interactionSource = remember { MutableInteractionSource() },
+                indication = null,
+                onClick = {},
+            ),
+    ) {
+        GameModeScreen(onExit = onExit, onOpenSettings = onOpenSettings)
+    }
 }
 
 @Composable
@@ -6283,6 +6476,8 @@ private inline fun <reified T : Any> NavBackStackEntry.routeOrNull(): T? =
 @Composable
 private fun AppTabHost(
     selectedTab: AppScreenTab,
+    /** Whether the desktop sidebar is on screen beside this host; the keys fall back to it. */
+    sidebarDrawn: Boolean = false,
     modifier: Modifier = Modifier,
     topChromePadding: Dp? = null,
     searchFocusRequestCount: Int = 0,
@@ -6355,7 +6550,30 @@ private fun AppTabHost(
     // than start one. Held here because the poster grid is shared by Home, Search and Library.
     var cloudFileChooserTarget by remember { mutableStateOf<CloudLibraryItem?>(null) }
 
-    Box(modifier = modifier.fillMaxSize()) {
+    Box(
+        modifier = modifier
+            .fillMaxSize()
+            // Keyboard and pad: the tab screen has first refusal on every key, and whatever it has no
+            // use for falls through to the app's navigation bar. Home is outside this: its rows and
+            // hero own Escape and Left at their first card themselves, so handling those here too
+            // would fire twice and defeat "Escape goes windowed first".
+            .tabSidebarHandoff(
+                homeSelected = { selectedTab == AppScreenTab.Home },
+                // NOT RootNavFocus.sidebarAvailable: the sidebar is drawn a level down, so its
+                // DisposableEffect runs after the first composition here and one tab switch would
+                // otherwise gate the whole handler off with a stale false. Read the same conditions
+                // the sidebar is drawn on instead.
+                sidebarAvailable = { sidebarDrawn },
+                // The bar across the top is drawn a level down too, so the flag it sets is the one
+                // thing this handler can read: a bar with no tab of its own (Settings) is not
+                // described by sidebarDrawn. Either bar answers Up; only the floating one answers
+                // Back (see enterFloatingTopBar).
+                topBarAvailable = { com.nuvio.app.core.ui.RootNavFocus.anyTopBarDrawn },
+                // A tab does not consume Back today; the claim is checked anyway so one that starts
+                // to (a ladder over its own page, like Music's) closes a level before the bar shows.
+                onBack = { TabBackInterceptor.handle() },
+            ),
+    ) {
         val settingsSelected = selectedTab == AppScreenTab.Settings
         // Live TV is its own screen, built and disposed like Settings, with HomeScreen kept behind it.
         val liveTvSelected = selectedTab == AppScreenTab.LiveTv
@@ -6602,15 +6820,108 @@ private fun DesktopHoverSidebar(
     val avatars by AvatarRepository.avatars.collectAsStateWithLifecycle()
     val activeProfile = profileState.activeProfile
     val activeProfileName = activeProfile?.name ?: stringResource(Res.string.compose_nav_profile)
-    val discoverTabVisible by remember {
-        ThemeSettingsRepository.desktopDiscoverTabVisible
-    }.collectAsStateWithLifecycle()
-    val liveTvTabVisible = com.nuvio.app.features.iptv.rememberLiveTvTabVisible()
+    // Loaded here rather than in the voice row itself: the row below is drawn from its readiness, so
+    // the call that loads it cannot live behind that same readiness check.
+    LaunchedEffect(Unit) {
+        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
+            com.nuvio.app.features.voice.VoiceControlRepository.ensureLoaded()
+        }
+    }
+    val voiceUiState by com.nuvio.app.features.voice.VoiceControlRepository.uiState
+        .collectAsStateWithLifecycle()
     var profileStackVisible by remember { mutableStateOf(false) }
     val profileTopPadding = statusBarPadding + 18.dp
     fun selectTab(tab: AppScreenTab) {
         profileStackVisible = false
+        val reopening = tab == selectedTab
         onTabSelected(tab)
+        // The row of the page that is already open is the way back into that page: clicking it, or
+        // Select on it, hands the keyboard over instead of leaving it on the bar. Search is left
+        // out: its own handler puts the keyboard in its text field.
+        if (reopening && tab != AppScreenTab.Search) RootNavFocus.leaveSidebar()
+    }
+    // The rows the arrow keys walk, in the order the sidebar draws them: the entries from Settings >
+    // Appearance > Navigation order, then Settings, whose row is drawn after the loop, so it is the
+    // null row here, then the voice row while it is drawn. Games is a row but not a tab: Select opens
+    // game mode, as its own click does. One call feeds the keys and the draw loop below, so the two
+    // cannot list different rows. Which entries show is rememberNavBarEntries()' decision, not this
+    // composable's: it filters on the same switches (Discover, Live TV, YouTube, Music, Games).
+    val navEntries = com.nuvio.app.features.navbar.rememberNavBarEntries()
+    val navRows: List<com.nuvio.app.features.navbar.NavBarEntry?> = navEntries + listOf(null)
+    val voiceInNav by remember { com.nuvio.app.features.navbar.NavBarLayoutRepository.voiceInNav }
+        .collectAsStateWithLifecycle()
+    // Upstream always draws the microphone below Settings; the switch in Navigation order hides it.
+    val voiceRowShown = voiceInNav
+    val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
+    val musicRowShown = musicState.isActive
+    // sidebarRowCount/sidebarVoiceRowIndex count the nav entries themselves and add Settings (and
+    // the optional voice and now-playing rows) on top; navRows.size already includes the Settings
+    // slot, so passing it double-counts Settings and leaves a phantom row for Down to walk into.
+    val navRowCount = sidebarRowCount(navEntries.size, voiceRowShown, musicRowShown)
+    val musicRowIndex = sidebarMusicRowIndex(navEntries.size, voiceRowShown, musicRowShown)
+    val latestNavRows by rememberUpdatedState(navRows)
+    val latestNavRowCount by rememberUpdatedState(navRowCount)
+    fun navTabOf(entry: com.nuvio.app.features.navbar.NavBarEntry?): AppScreenTab? = navBarTab(entry)
+    val navFocusRequester = remember { FocusRequester() }
+    var navHasFocus by remember { mutableStateOf(false) }
+    var navFocusIndex by remember { mutableIntStateOf(0) }
+    val latestSelectedTab by rememberUpdatedState(selectedTab)
+    val focusManager = LocalFocusManager.current
+    DisposableEffect(Unit) {
+        RootNavFocus.sidebarAvailable = true
+        onDispose { RootNavFocus.sidebarAvailable = false }
+    }
+    // The page gives up its keys here, and Back, Dismiss, Right or selecting the row of the page that
+    // is already open give them back: the control the page had is remembered first, so stepping out
+    // of a row lands back on that row instead of nowhere.
+    SidebarLeaveRestoresContent(
+        sidebarHasFocus = { navHasFocus },
+        pageOwner = { latestSelectedTab },
+    )
+    LaunchedEffect(navFocusRequester) {
+        RootNavFocus.enterRequests.collect {
+            navFocusIndex = latestNavRows
+                .indexOfFirst { navTabOf(it) == latestSelectedTab }
+                .coerceAtLeast(0)
+            if (!navHasFocus) {
+                // The mini player is not the page: stepping off the bar must land in the content,
+                // not jump straight back to the player at the bottom.
+                if (MusicKeyboard.playerHasFocus()) RootNavFocus.forgetContentFocus()
+                else RootNavFocus.rememberContentFocus(latestSelectedTab, focusManager)
+            }
+            runCatching { navFocusRequester.requestFocus() }
+        }
+    }
+    fun navFocused(entry: com.nuvio.app.features.navbar.NavBarEntry) =
+        navHasFocus && latestNavRows.getOrNull(navFocusIndex) == entry
+    // Hovering a row takes the keys, exactly as walking onto it with the D-pad does, so the zoom
+    // and the focus ring follow the pointer too.
+    fun focusSidebarRow(entry: com.nuvio.app.features.navbar.NavBarEntry?) {
+        val index = if (entry == null) latestNavRows.lastIndex else latestNavRows.indexOf(entry)
+        if (index < 0) return
+        navFocusIndex = index
+        runCatching { navFocusRequester.requestFocus() }
+    }
+    // The profile trigger sits above Home at index -1, so the arrow keys reach it like a tab.
+    val profileNavIndex = -1
+    val profileFocused = navHasFocus && navFocusIndex == profileNavIndex
+    // A switch turned off, or the voice row finishing its load, changes the rows under the cursor
+    // with the sidebar open. Up alone would not: it moves off the stale index and stays out of range.
+    LaunchedEffect(navRowCount) {
+        navFocusIndex = clampSidebarIndex(navFocusIndex, navRowCount, profileNavIndex)
+    }
+
+    // The profile stack owns the keys while it is open; when it closes (a profile chosen, Back or
+    // Dismiss, or focus moving away) the keys come back to the profile trigger that opened it.
+    var profileStackWasOpen by remember { mutableStateOf(false) }
+    LaunchedEffect(profileStackVisible) {
+        if (profileStackVisible) {
+            profileStackWasOpen = true
+        } else if (profileStackWasOpen) {
+            profileStackWasOpen = false
+            navFocusIndex = profileNavIndex
+            runCatching { navFocusRequester.requestFocus() }
+        }
     }
 
     Surface(
@@ -6621,8 +6932,53 @@ private fun DesktopHoverSidebar(
         color = tokens.colors.background,
         contentColor = tokens.colors.textPrimary,
     ) {
+        // The whole sidebar is the focus target, so the profile above the tabs and the tabs share one
+        // key list: Up from Home reaches the profile, and Down from the profile returns to Home.
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier
+                .fillMaxSize()
+                .focusRequester(navFocusRequester)
+                .onFocusChanged { navHasFocus = it.hasFocus }
+                .focusable()
+                .sidebarKeyNavigation(
+                    index = { navFocusIndex },
+                    count = { latestNavRowCount },
+                    onMove = { navFocusIndex = it },
+                    onActivate = {
+                        if (navFocusIndex == profileNavIndex) {
+                            profileStackVisible = !profileStackVisible
+                            return@sidebarKeyNavigation
+                        }
+                        // The voice row, drawn under Settings: the same thing its own click does.
+                        if (navFocusIndex == sidebarVoiceRowIndex(navEntries.size, voiceRowShown)) {
+                            com.nuvio.app.features.voice.VoiceControlRepository.toggleListening()
+                            return@sidebarKeyNavigation
+                        }
+                        // The album cover: show the mini player's controls without walking to the bottom bar.
+                        if (navFocusIndex == musicRowIndex) {
+                            com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
+                            return@sidebarKeyNavigation
+                        }
+                        if (navFocusIndex !in navRows.indices) return@sidebarKeyNavigation
+                        val tab = navTabOf(navRows[navFocusIndex])
+                        if (tab != null) {
+                            // Select on the row of the page already open steps back into that page,
+                            // and a different page takes the keys itself: selectTab does both, as the
+                            // row's own click does.
+                            selectTab(tab)
+                        } else {
+                            // Games: a row without a tab. The same thing its own click does. Game mode
+                            // takes the keys itself, so the page is not focused first.
+                            com.nuvio.app.features.games.GameModeController.setActive(true)
+                            RootNavFocus.leaveSidebar(restoreContent = false)
+                        }
+                    },
+                    onLeave = { RootNavFocus.leaveSidebar() },
+                    minIndex = profileNavIndex,
+                    // The profile stack owns the keys while it is open (it is drawn inside this
+                    // box); the sidebar's own list must not answer the same presses underneath it.
+                    enabled = !profileStackVisible,
+                ),
         ) {
             Box(
                 modifier = Modifier
@@ -6631,6 +6987,13 @@ private fun DesktopHoverSidebar(
                     .fillMaxWidth()
                     .height(52.dp)
                     .padding(horizontal = 10.dp, vertical = 4.dp)
+                    .then(
+                        if (profileFocused) {
+                            Modifier.border(2.dp, Color(0xFF9ECAFF).copy(alpha = .9f), RoundedCornerShape(8.dp))
+                        } else {
+                            Modifier
+                        },
+                    )
                     .clickable(
                         interactionSource = remember { MutableInteractionSource() },
                         indication = null,
@@ -6658,6 +7021,9 @@ private fun DesktopHoverSidebar(
                 )
             }
 
+            androidx.compose.runtime.CompositionLocalProvider(
+                LocalDesktopSidebarFocused provides navHasFocus,
+            ) {
             Column(
                 modifier = Modifier
                     .align(Alignment.Center)
@@ -6666,117 +7032,43 @@ private fun DesktopHoverSidebar(
             ) {
                 // In the order set under Settings > Appearance > Navigation order (NavBarLayout.kt);
                 // Settings always comes last.
-                com.nuvio.app.features.navbar.rememberNavBarEntries().forEach { entry ->
+                navEntries.forEach { entry ->
                     key(entry) {
-                        when (entry) {
-                            com.nuvio.app.features.navbar.NavBarEntry.Home -> DesktopSidebarItem(
-                                label = stringResource(Res.string.compose_nav_home),
-                                selected = selectedTab == AppScreenTab.Home,
-                                expanded = false,
-                                onClick = { selectTab(AppScreenTab.Home) },
-                            ) { color ->
-                                Icon(
-                                    imageVector = Icons.Filled.Home,
-                                    contentDescription = stringResource(Res.string.compose_nav_home),
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
-                            }
-                            com.nuvio.app.features.navbar.NavBarEntry.Search -> DesktopSidebarItem(
-                                label = stringResource(Res.string.compose_nav_search),
-                                selected = selectedTab == AppScreenTab.Search,
-                                expanded = false,
-                                onClick = { selectTab(AppScreenTab.Search) },
-                            ) { color ->
-                                Icon(
-                                    painter = painterResource(Res.drawable.sidebar_search),
-                                    contentDescription = stringResource(Res.string.compose_nav_search),
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
-                            }
-                            com.nuvio.app.features.navbar.NavBarEntry.Discover -> DesktopSidebarItem(
-                                label = stringResource(Res.string.compose_nav_discover),
-                                selected = selectedTab == AppScreenTab.Discover,
-                                expanded = false,
-                                onClick = { selectTab(AppScreenTab.Discover) },
-                            ) { color ->
-                                Icon(
-                                    imageVector = Icons.Rounded.Explore,
-                                    contentDescription = stringResource(Res.string.compose_nav_discover),
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
-                            }
-                            com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> DesktopSidebarItem(
-                                label = stringResource(Res.string.iptv_settings_page),
-                                selected = selectedTab == AppScreenTab.LiveTv,
-                                expanded = false,
-                                onClick = { selectTab(AppScreenTab.LiveTv) },
-                            ) { color ->
-                                Icon(
-                                    imageVector = Icons.Rounded.LiveTv,
-                                    contentDescription = stringResource(Res.string.iptv_settings_page),
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
-                            }
-                            com.nuvio.app.features.navbar.NavBarEntry.Library ->
-                                LibraryNavigationContextMenu(modifier = Modifier.fillMaxWidth()) { contextModifier ->
-                                    DesktopSidebarItem(
-                                        label = stringResource(Res.string.compose_nav_library),
-                                        selected = selectedTab == AppScreenTab.Library,
-                                        expanded = false,
-                                        onClick = { selectTab(AppScreenTab.Library) },
-                                        modifier = contextModifier,
-                                    ) { color ->
-                                        Icon(
-                                            painter = painterResource(Res.drawable.sidebar_library),
-                                            contentDescription = stringResource(Res.string.compose_nav_library),
-                                            modifier = Modifier.size(DesktopSidebarIconSize),
-                                            tint = color,
-                                        )
-                                    }
+                        // Glyph, label and selected state from the entry's descriptor
+                        // (NavBarDestination.kt); only opening the page and the Library quick menu
+                        // are the sidebar's own.
+                        val destination = entry.destination
+                        if (entry == com.nuvio.app.features.navbar.NavBarEntry.Library) {
+                            LibraryNavigationContextMenu(modifier = Modifier.fillMaxWidth()) { contextModifier ->
+                                DesktopSidebarItem(
+                                    label = destination.label.resolve(),
+                                    selected = entry.isDestinationSelected(selectedTab, searchActive = false),
+                                    focused = navFocused(entry),
+                                    onHoverFocus = { focusSidebarRow(entry) },
+                                    expanded = false,
+                                    onClick = { destination.tab?.let { selectTab(it) } },
+                                    modifier = contextModifier,
+                                ) { color ->
+                                    entry.DestinationIcon(Modifier.size(DesktopSidebarIconSize), color)
                                 }
-                            com.nuvio.app.features.navbar.NavBarEntry.YouTube -> DesktopSidebarItem( // fork:youtube-mode
-                                label = "YouTube",
-                                selected = selectedTab == AppScreenTab.YouTube,
-                                expanded = false,
-                                onClick = { selectTab(AppScreenTab.YouTube) },
-                            ) { color ->
-                                Icon(
-                                    imageVector = Icons.Rounded.SmartDisplay,
-                                    contentDescription = "YouTube",
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
                             }
-                            com.nuvio.app.features.navbar.NavBarEntry.Music -> DesktopSidebarItem( // fork:music
-                                label = "Music",
-                                selected = selectedTab == AppScreenTab.Music,
+                        } else {
+                            DesktopSidebarItem(
+                                label = destination.label.resolve(),
+                                selected = entry.isDestinationSelected(selectedTab, searchActive = false),
+                                focused = navFocused(entry),
+                                onHoverFocus = { focusSidebarRow(entry) },
                                 expanded = false,
-                                onClick = { selectTab(AppScreenTab.Music) },
+                                onClick = {
+                                    // Not a tab: game mode opens over the app (GameModeController).
+                                    if (entry == com.nuvio.app.features.navbar.NavBarEntry.Games) {
+                                        com.nuvio.app.features.games.GameModeController.setActive(true)
+                                    } else {
+                                        destination.tab?.let { selectTab(it) }
+                                    }
+                                },
                             ) { color ->
-                                Icon(
-                                    imageVector = Icons.Rounded.MusicNote,
-                                    contentDescription = "Music",
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
-                            }
-                            // Not a tab: game mode opens over the app (GameModeController).
-                            com.nuvio.app.features.navbar.NavBarEntry.Games -> DesktopSidebarItem(
-                                label = "Games",
-                                selected = false,
-                                expanded = false,
-                                onClick = { com.nuvio.app.features.games.GameModeController.setActive(true) },
-                            ) { color ->
-                                Icon(
-                                    imageVector = Icons.Rounded.SportsEsports,
-                                    contentDescription = "Games",
-                                    modifier = Modifier.size(DesktopSidebarIconSize),
-                                    tint = color,
-                                )
+                                entry.DestinationIcon(Modifier.size(DesktopSidebarIconSize), color)
                             }
                         }
                     }
@@ -6784,7 +7076,9 @@ private fun DesktopHoverSidebar(
                 DesktopSidebarItem(
                     label = stringResource(Res.string.compose_settings_page_root),
                     selected = selectedTab == AppScreenTab.Settings,
+                    focused = navHasFocus && navFocusIndex == navRows.lastIndex,
                     expanded = false,
+                    onHoverFocus = { focusSidebarRow(null) },
                     onClick = { selectTab(AppScreenTab.Settings) },
                 ) { color ->
                     Icon(
@@ -6794,33 +7088,77 @@ private fun DesktopHoverSidebar(
                         tint = color,
                     )
                 }
-                DesktopSidebarVoiceItem() // fork:voice-control
+                if (voiceRowShown) {
+                    // fork:voice-control - the row under Settings, so its index is navRows.size.
+                    DesktopSidebarVoiceItem(
+                        focused = navHasFocus && navFocusIndex == navRows.size,
+                        onHoverFocus = {
+                            navFocusIndex = navRows.size
+                            runCatching { navFocusRequester.requestFocus() }
+                        },
+                    )
+                }
+                if (musicRowShown) {
+                    DesktopSidebarMusicItem(
+                        focused = navHasFocus && navFocusIndex == musicRowIndex,
+                        onHoverFocus = {
+                            navFocusIndex = musicRowIndex
+                            runCatching { navFocusRequester.requestFocus() }
+                        },
+                        onClick = {
+                            com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
+                        },
+                    )
+                }
+                val youTubeBrowsing = com.nuvio.app.features.youtube.YouTubeWatchLayout.browsing.value
+                if (youTubeBrowsing) {
+                    DesktopSidebarItem(
+                        label = "YouTube mini-player",
+                        selected = false,
+                        focused = navHasFocus && navFocusIndex == (musicRowIndex + 1),
+                        expanded = false,
+                        onHoverFocus = {
+                            navFocusIndex = musicRowIndex + 1
+                            runCatching { navFocusRequester.requestFocus() }
+                        },
+                        onClick = {
+                            com.nuvio.app.features.youtube.YouTubeWatchLayout.stopBrowsing()
+                        },
+                    ) { color ->
+                        Icon(
+                            imageVector = Icons.Rounded.SmartDisplay,
+                            contentDescription = "YouTube mini-player",
+                            modifier = Modifier.size(DesktopSidebarIconSize),
+                            tint = color,
+                        )
+                    }
+                }
+            }
             }
         }
     }
 }
 
 /**
- * fork:voice-control - push-to-talk from the sidebar, under Settings. Only there while voice control
- * is on and has a model; lit while it listens. Its first composition is also what loads the voice
- * settings (off the UI thread), which loads the model for the voice key and the controller too.
+ * fork:voice-control - push-to-talk from the sidebar, under Settings. Drawn by the caller only while
+ * voice control is on with a model, which is also what gives it a row in the arrow keys' list; lit
+ * while it listens. The caller loads the voice settings (see DesktopHoverSidebar), so that the row
+ * can be drawn from its readiness without the load itself hiding behind that readiness.
  */
 @Composable
-private fun DesktopSidebarVoiceItem() {
-    LaunchedEffect(Unit) {
-        kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.Default) {
-            com.nuvio.app.features.voice.VoiceControlRepository.ensureLoaded()
-        }
-    }
-    val voice by com.nuvio.app.features.voice.VoiceControlRepository.uiState.collectAsStateWithLifecycle()
-    if (!voice.ready) return
+private fun DesktopSidebarVoiceItem(
+    focused: Boolean = false,
+    onHoverFocus: (() -> Unit)? = null,
+) {
     val session by com.nuvio.app.features.voice.VoiceControlRepository.session.collectAsStateWithLifecycle()
     val active = session is com.nuvio.app.features.voice.VoiceSessionState.Listening ||
         session is com.nuvio.app.features.voice.VoiceSessionState.Transcribing
     DesktopSidebarItem(
         label = "Voice command",
         selected = active,
+        focused = focused,
         expanded = false,
+        onHoverFocus = onHoverFocus,
         onClick = com.nuvio.app.features.voice.VoiceControlRepository::toggleListening,
     ) { color ->
         Icon(
@@ -6829,6 +7167,46 @@ private fun DesktopSidebarVoiceItem() {
             modifier = Modifier.size(DesktopSidebarIconSize),
             tint = color,
         )
+    }
+}
+
+/**
+ * The album cover as a navigation row while music is playing. Activating it (or hovering it) brings
+ * the mini player's controls into focus, so they no longer require walking down every page's rows.
+ */
+@Composable
+private fun DesktopSidebarMusicItem(
+    focused: Boolean,
+    onHoverFocus: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    val state by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
+    val cover = state.coverUrl
+    DesktopSidebarItem(
+        label = "Now playing",
+        selected = false,
+        focused = focused,
+        expanded = false,
+        onHoverFocus = onHoverFocus,
+        onClick = onClick,
+    ) { color ->
+        if (cover != null) {
+            com.nuvio.app.core.ui.NuvioAsyncImage(
+                model = cover,
+                contentDescription = "Now playing",
+                modifier = Modifier
+                    .size(DesktopSidebarIconSize)
+                    .clip(RoundedCornerShape(5.dp)),
+                contentScale = ContentScale.Crop,
+            )
+        } else {
+            Icon(
+                imageVector = Icons.Rounded.MusicNote,
+                contentDescription = "Now playing",
+                modifier = Modifier.size(DesktopSidebarIconSize),
+                tint = color,
+            )
+        }
     }
 }
 
@@ -6893,17 +7271,46 @@ private fun DesktopSidebarItem(
     expanded: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
+    focused: Boolean = false,
+    /** Hovering takes the keys too, so the ring and zoom follow the pointer. */
+    onHoverFocus: (() -> Unit)? = null,
     icon: @Composable (Color) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val hoverSource = remember { MutableInteractionSource() }
+    val hovered by hoverSource.collectIsHoveredAsState()
+    LaunchedEffect(hovered) { if (hovered) onHoverFocus?.invoke() }
     val contentColor = if (selected) tokens.colors.textPrimary else tokens.colors.textMuted
     val iconColor = if (selected) tokens.colors.onAccent else contentColor
+    // A subtle zoom while the row holds keyboard/D-pad focus, and a smaller resting zoom on the
+    // page that is open so it still reads as chosen when the keys are in the page content. The icon
+    // slot is fixed and the glyph is smaller than it, so the scale stays inside the slot: the
+    // column never shifts and neighbouring rows are never overlapped.
+    val sidebarFocused = LocalDesktopSidebarFocused.current
+    val iconFocusScale by animateFloatAsState(
+        targetValue = when {
+            focused || hovered -> 1.18f
+            selected && !sidebarFocused -> 1.10f
+            else -> 1f
+        },
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "sidebarIconFocusScale",
+    )
 
     Surface(
         modifier = modifier
             .fillMaxWidth()
             .height(52.dp)
             .padding(horizontal = 10.dp, vertical = 4.dp)
+            // The keyboard focus ring, when the sidebar's arrow-key navigation has this row.
+            .then(
+                if (focused) {
+                    Modifier.border(2.dp, tokens.colors.accent, RoundedCornerShape(16.dp))
+                } else {
+                    Modifier
+                },
+            )
+            .hoverable(hoverSource)
             .clickable(onClick = onClick),
         color = Color.Transparent,
         shape = RoundedCornerShape(16.dp),
@@ -6932,7 +7339,12 @@ private fun DesktopSidebarItem(
                     shape = RoundedCornerShape(14.dp),
                 ) {
                     Box(
-                        modifier = Modifier.fillMaxSize(),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .graphicsLayer {
+                                scaleX = iconFocusScale
+                                scaleY = iconFocusScale
+                            },
                         contentAlignment = Alignment.Center,
                     ) {
                         icon(iconColor)
@@ -6999,10 +7411,42 @@ private fun TabletFloatingTopBar(
     val musicTabVisible = com.nuvio.app.features.music.rememberMusicTabVisible() // fork:music
     val youTubeTabVisible = com.nuvio.app.features.youtube.rememberYouTubeTabVisible() // fork:youtube-mode
     val navEntries = com.nuvio.app.features.navbar.rememberNavBarEntries()
-    // One slot per entry plus the profile's, each a little narrower as the bar fills (navBarSlotWidth),
-    // so a bar with every entry on grows more slowly instead of running across the window.
-    val topBarSlots = navEntries.size + 1
+    // fork:music-navbar - the now-playing/album cover, a slot after Settings like the sidebar's row.
+    val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
+    val musicRowShown = musicState.isActive
+    // fork:youtube-mini-player - thumbnail icon for a YouTube video playing in the corner mini-player.
+    val youTubeBrowsing by com.nuvio.app.features.youtube.YouTubeWatchLayout.browsing.collectAsStateWithLifecycle()
+val youTubeMiniPlayerShown = youTubeBrowsing
+    // One slot per entry plus utility slots (music cover, profile, Settings),
+    // each a little narrower as the bar fills (navBarSlotWidth).
+    val youTubeMiniSlotIndex = navEntries.size
+    // fork:music-navbar - which slot is the album cover, the avatar and the gear, computed in one
+    // place (NavBarSlots.kt) so the draw loop and the keys cannot disagree about them.
+    val slots = com.nuvio.app.features.navbar.FloatingBarSlotLayout(
+        entryCount = navEntries.size,
+        musicShown = musicRowShown,
+    )
+    val musicSlotIndex = slots.musicIndex
+    val profileSlotIndex = slots.profileIndex
+    val settingsSlotIndex = slots.settingsIndex
+    val topBarSlots = slots.slotCount
     val topBarWidth = com.nuvio.app.features.navbar.navBarSlotWidth(topBarSlots) * topBarSlots
+    // Keyboard: the bar is the top edge of the page, the way the sidebar is its left one. Up at the
+    // top of a page hands the keys here; Left and Right walk the icons, Select opens the one under
+    // the cursor, and Down, Back or Dismiss give the keys back to the page. Only the row of icons
+    // takes keys: while the search, Music or YouTube box is up, that box owns them.
+    val barRowDrawn = !isSearchActive && !hidden
+    val barFocusRequester = remember { FocusRequester() }
+    var barHasFocus by remember { mutableStateOf(false) }
+    var barIndex by remember { mutableIntStateOf(topBarSlots - 1) }
+    // The slot set changes under a focused bar when the music stops (its slot goes) or the user
+    // hides an entry: keep the cursor on a slot that is still drawn, so Select never lands on a
+    // stale index that no icon owns.
+    LaunchedEffect(topBarSlots) {
+        if (barIndex > topBarSlots - 1) barIndex = topBarSlots - 1
+    }
+    val latestSelectedTab by rememberUpdatedState(selectedTab)
+    val latestEntries by rememberUpdatedState(navEntries)
     // Right-clicking the Library quadrant hangs its quick-access menu off the bar the same way the
     // discover picker does. Only the nav row can open it, so entering search closes it.
     var libraryMenuVisible by remember(isSearchActive) { mutableStateOf(false) }
@@ -7011,13 +7455,80 @@ private fun TabletFloatingTopBar(
         // it and the menu is left floating over nothing.
         targetValue = when {
             hidden -> 0f
-            dimUntilHovered && !isSearchActive && !musicBarActive && !youTubeBarActive && !activationZoneHovered && !libraryMenuVisible -> 0f // fork:music-navbar
+            // The keys are on the bar: it stays lit while they are, however the pointer moves.
+            dimUntilHovered && !barHasFocus && !isSearchActive && !activationZoneHovered && !libraryMenuVisible -> 0f // fork:music-navbar
             else -> 1f
         },
         animationSpec = tween(durationMillis = 200),
     )
     // Faded out it would still take clicks meant for whatever is underneath.
     if (hidden && barAlpha == 0f) return
+
+    // Read a level up, by the tab host's key hand-off: Up only leaves the page for a bar that is
+    // really drawn, so a page whose top is the top of the window keeps its Up.
+    DisposableEffect(barRowDrawn) {
+        RootNavFocus.topBarAvailable = barRowDrawn
+        onDispose { RootNavFocus.topBarAvailable = false }
+    }
+    // Down, Back, Dismiss, or selecting the icon of the page already open: the keys go back to the
+    // control the page had when the bar took them, so stepping out of a row lands back on that row.
+    TopBarLeaveRestoresContent(
+        topBarHasFocus = { barHasFocus },
+        pageOwner = { latestSelectedTab },
+    )
+    LaunchedEffect(barFocusRequester) {
+        RootNavFocus.topBarEnterRequests.collect {
+            barIndex = navEntrySlot(latestEntries, latestSelectedTab)
+            if (!barHasFocus) {
+                if (MusicKeyboard.playerHasFocus()) RootNavFocus.forgetContentFocus()
+                else RootNavFocus.rememberContentFocus(latestSelectedTab, focusManager)
+            }
+            runCatching { barFocusRequester.requestFocus() }
+        }
+    }
+    // What Select on a slot does: the same thing that icon's click does, so the keys and the pointer
+    // cannot drift apart.
+    fun activateSlot(slot: Int) {
+        // fork:music-navbar - the album cover slot: expand the mini player and hand it the keys.
+        if (musicRowShown && slot == musicSlotIndex) {
+            com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
+            return
+        }
+        // The avatar opens the profile selector; Settings is its own gear slot now.
+        if (slot == profileSlotIndex) {
+            if (com.nuvio.app.features.profiles.ProfileRepository.state.value.profiles.isNotEmpty()) {
+                com.nuvio.app.features.profiles.ProfileSwitcherTabRequests.requestOpen()
+            } else {
+                onTabSelected(AppScreenTab.Settings)
+            }
+            return
+        }
+        val entry = latestEntries.getOrNull(slot)
+        when {
+            entry == null -> onTabSelected(AppScreenTab.Settings)
+            // Search opens its field over the page instead of switching tabs.
+            entry == com.nuvio.app.features.navbar.NavBarEntry.Search -> onSearchOverlayOpen()
+            // Not a tab: game mode opens over the app and takes the keys itself. Selecting the
+            // icon again while the library is up closes it, so the bar is also the way out.
+            entry == com.nuvio.app.features.navbar.NavBarEntry.Games -> {
+                com.nuvio.app.features.games.GameModeController.setActive(
+                    !com.nuvio.app.features.games.GameModeController.active.value,
+                )
+                RootNavFocus.leaveTopBar(restoreContent = false)
+                return
+            }
+            // Every other entry opens the tab its descriptor names (NavBarDestination.kt), so a
+            // new page needs no change here.
+            else -> navBarTab(entry)?.let(onTabSelected)
+        }
+        // The icon of the page already open is a step back into that page, as the sidebar's row is.
+        // Search is left out: its own handler puts the keyboard in the search field.
+        if (entry != null && entry != com.nuvio.app.features.navbar.NavBarEntry.Search &&
+            navRowTab(entry) == latestSelectedTab
+        ) {
+            RootNavFocus.leaveTopBar()
+        }
+    }
 
     var searchFieldState by remember(isSearchActive) {
         mutableStateOf(TextFieldValue(searchQuery))
@@ -7316,122 +7827,119 @@ private fun TabletFloatingTopBar(
                     com.nuvio.app.features.youtube.YouTubeTopBarContent(onLeave = onLeaveYouTube, modifier = Modifier.fillMaxSize())
                 } else {
                     Row(
-                        modifier = Modifier.fillMaxSize().padding(horizontal = 6.dp, vertical = 4.dp),
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(horizontal = 6.dp, vertical = 4.dp)
+                            .focusRequester(barFocusRequester)
+                            // Before focusable(), as every focus observer here is: Compose only
+                            // reports focus to one that sits outside the focus target.
+                            .onFocusChanged { barHasFocus = it.hasFocus }
+                            .focusable()
+                            // At either end of the row, step into the page icons drawn beside the
+                            // bar (YouTube's section tabs and its own search sit there) instead of
+                            // pinning the keys to the first/last tab.
+                            .onPreviewKeyEvent { event ->
+                                if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                // Only the YouTube tab has icons laid out beside the bar; on the
+                                // other tabs the edge keys stay on the bar as they always did.
+                                if (selectedTab != AppScreenTab.YouTube) return@onPreviewKeyEvent false
+                                val key = event.navigationKey()
+                                val leaveLeft = key == Key.DirectionLeft && barIndex <= 0
+                                val leaveRight = key == Key.DirectionRight && barIndex >= topBarSlots - 1
+                                if (!leaveLeft && !leaveRight) return@onPreviewKeyEvent false
+                                focusManager.moveFocus(
+                                    if (leaveLeft) FocusDirection.Left else FocusDirection.Right,
+                                )
+                                true
+                            }
+                            .topBarKeyNavigation(
+                                index = { barIndex },
+                                count = { topBarSlots },
+                                onMove = { barIndex = it },
+                                onActivate = { activateSlot(barIndex) },
+                                onLeave = { RootNavFocus.leaveTopBar() },
+                            ),
                         horizontalArrangement = Arrangement.spacedBy(2.dp),
                         verticalAlignment = Alignment.CenterVertically,
                     ) {
                         // In the order set under Settings > Appearance > Navigation order (NavBarLayout.kt);
                         // the profile / Settings slot always comes last.
-                        navEntries.forEach { entry ->
+                        navEntries.forEachIndexed { entryIndex, entry ->
                             key(entry) {
-                                when (entry) {
-                                    com.nuvio.app.features.navbar.NavBarEntry.Home -> NavQuadrant(
-                                        selected = selectedTab == AppScreenTab.Home,
-                                        onClick = { onTabSelected(AppScreenTab.Home) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Filled.Home,
-                                            contentDescription = stringResource(Res.string.compose_nav_home),
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.Search -> NavQuadrant(
-                                        selected = isSearchActive,
-                                        onClick = onSearchOverlayOpen,
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            painter = painterResource(Res.drawable.sidebar_search),
-                                            contentDescription = stringResource(Res.string.compose_nav_search),
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.Discover -> NavQuadrant(
-                                        selected = selectedTab == AppScreenTab.Discover,
-                                        onClick = { onTabSelected(AppScreenTab.Discover) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Rounded.Explore,
-                                            contentDescription = stringResource(Res.string.compose_nav_discover),
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> NavQuadrant(
-                                        selected = selectedTab == AppScreenTab.LiveTv,
-                                        onClick = { onTabSelected(AppScreenTab.LiveTv) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Rounded.LiveTv,
-                                            contentDescription = stringResource(Res.string.iptv_settings_page),
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.Library -> NavQuadrant(
-                                        selected = selectedTab == AppScreenTab.Library,
-                                        onClick = { onTabSelected(AppScreenTab.Library) },
-                                        onSecondaryClick = { libraryMenuVisible = true },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            painter = painterResource(Res.drawable.sidebar_library),
-                                            contentDescription = stringResource(Res.string.compose_nav_library),
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.YouTube -> NavQuadrant( // fork:youtube-mode
-                                        selected = selectedTab == AppScreenTab.YouTube,
-                                        onClick = { onTabSelected(AppScreenTab.YouTube) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Rounded.SmartDisplay,
-                                            contentDescription = "YouTube",
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    com.nuvio.app.features.navbar.NavBarEntry.Music -> NavQuadrant( // fork:music
-                                        selected = selectedTab == AppScreenTab.Music,
-                                        onClick = { onTabSelected(AppScreenTab.Music) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Rounded.MusicNote,
-                                            contentDescription = "Music",
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
-                                    // Not a tab: game mode opens over the app (GameModeController).
-                                    com.nuvio.app.features.navbar.NavBarEntry.Games -> NavQuadrant(
-                                        selected = false,
-                                        onClick = { com.nuvio.app.features.games.GameModeController.setActive(true) },
-                                    ) { iconModifier, iconTint ->
-                                        Icon(
-                                            imageVector = Icons.Rounded.SportsEsports,
-                                            contentDescription = "Games",
-                                            modifier = iconModifier,
-                                            tint = iconTint,
-                                        )
-                                    }
+                                val entryFocused = barHasFocus && barIndex == entryIndex
+                                // The glyph, its name and the selected state come from the entry's
+                                // descriptor (NavBarDestination.kt); only the open callback and the
+                                // Library quick menu are this bar's own.
+                                NavQuadrant(
+                                    selected = entry.isDestinationSelected(selectedTab, isSearchActive),
+                                    onClick = { activateSlot(entryIndex) },
+                                    onSecondaryClick = if (entry == com.nuvio.app.features.navbar.NavBarEntry.Library) {
+                                        { libraryMenuVisible = true }
+                                    } else {
+                                        null
+                                    },
+                                    focused = entryFocused,
+                                ) { iconModifier, iconTint ->
+                                    entry.DestinationIcon(iconModifier, iconTint)
                                 }
                             }
                         }
+                        if (musicRowShown) {
+                            NavQuadrant(
+                                selected = false,
+                                onClick = { activateSlot(musicSlotIndex) },
+                                focused = barHasFocus && barIndex == musicSlotIndex,
+                            ) { _, _ ->
+                                val cover = musicState.coverUrl
+                                if (cover != null) {
+                                    com.nuvio.app.core.ui.NuvioAsyncImage(
+                                        model = cover,
+                                        contentDescription = "Now playing",
+                                        modifier = Modifier
+                                            .size(NuvioTokens.Space.s22)
+                                            .clip(RoundedCornerShape(5.dp)),
+                                        contentScale = ContentScale.Crop,
+                                    )
+                                } else {
+                                    Icon(
+                                        imageVector = Icons.Rounded.MusicNote,
+                                        contentDescription = "Now playing",
+                                        modifier = Modifier.size(NuvioTokens.Space.s18),
+                                        tint = inactiveIconTint,
+                                    )
+                                }
+                            }
+                        }
+                        // The avatar opens the profile selector, as the sidebar's profile does.
                         NavQuadrant(
-                            selected = selectedTab == AppScreenTab.Settings,
-                            onClick = { onTabSelected(AppScreenTab.Settings) },
+                            selected = false,
+                            onClick = { activateSlot(profileSlotIndex) },
+                            focused = barHasFocus && barIndex == profileSlotIndex,
                         ) { _, _ ->
-                            // The avatar carries its own selected ring; it is not a glyph to tint.
                             Box {
                                 ProfileSwitcherTab(
-                                    selected = selectedTab == AppScreenTab.Settings,
-                                    onClick = { onTabSelected(AppScreenTab.Settings) },
+                                    selected = false,
+                                    onClick = { activateSlot(profileSlotIndex) },
                                     onProfileSelected = onProfileSelected,
                                     onAddProfileRequested = onAddProfileRequested,
+                                    openPopupOnClick = true,
                                 )
                             }
                         }
+                        // Settings is a gear, not the profile avatar.
+                        NavQuadrant(
+                            selected = selectedTab == AppScreenTab.Settings,
+                            onClick = { activateSlot(settingsSlotIndex) },
+                            focused = barHasFocus && barIndex == settingsSlotIndex,
+                        ) { iconModifier, iconTint ->
+                            Icon(
+                                imageVector = Icons.Rounded.Settings,
+                                contentDescription = stringResource(Res.string.compose_settings_page_root),
+                                modifier = iconModifier,
+                                tint = iconTint,
+                            )
+                        }
+
                     }
                 }
             }
@@ -7551,12 +8059,26 @@ private fun TabletFloatingTopBar(
     }
 }
 
+/**
+ * The tab a navigation entry opens, or null for the rows that are not tabs (Games opens game mode,
+ * the profile slot opens Settings). The sidebar and the floating bar both walk their rows with it,
+ * so a row and its index agree.
+ */
+private fun navRowTab(entry: com.nuvio.app.features.navbar.NavBarEntry?): AppScreenTab? = navBarTab(entry)
+
+/** The bar slot that shows [tab]'s icon, falling back to the profile/Settings slot at the end. */
+private fun navEntrySlot(
+    entries: List<com.nuvio.app.features.navbar.NavBarEntry>,
+    tab: AppScreenTab,
+): Int = entries.indexOfFirst { navRowTab(it) == tab }.takeIf { it >= 0 } ?: entries.size
+
 @Composable
 private fun RowScope.NavQuadrant(
     selected: Boolean,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     onSecondaryClick: (() -> Unit)? = null,
+    focused: Boolean = false,
     content: @Composable (iconModifier: Modifier, iconTint: Color) -> Unit,
 ) {
     val interaction = remember { MutableInteractionSource() }
@@ -7576,6 +8098,15 @@ private fun RowScope.NavQuadrant(
             .weight(1f)
             .height(NavBarItemHeight)
             .clip(shape)
+            // The ring marks the icon the arrow keys are on, as the sidebar's profile row does: the
+            // keys live on the bar, not on the page behind it.
+            .then(
+                if (focused) {
+                    Modifier.border(2.dp, Color(0xFF9ECAFF).copy(alpha = .9f), shape)
+                } else {
+                    Modifier
+                },
+            )
             .then(if (onSecondaryClick != null) Modifier.secondaryClick(onSecondaryClick) else Modifier)
             .hoverable(interaction)
             .clickable(
@@ -7749,11 +8280,13 @@ private val LaunchTaglineTracking = 6.sp
 private const val PLAYLIST_HANDOFF_DISPOSE_TIMEOUT_MS = 3_000L
 
 /**
- * The top inset for the YouTube mini player's corner page. The floating bar is drawn over the page
- * whether it is pinned or hover-only (see the app's topChromePadding). The corner copy owns the same
- * bar, so it uses the same number: reserving the bar's row here left a dead band above the
- * recommendations after coming back from a video. Without a bar (the sidebar layout) the tab's own
- * 24 dp margin applies, as it does on the host.
+ * Top inset for the YouTube mini player's recommendations page, drawn inside the player route.
+ *
+ * The main tab's YouTube page starts [YouTubeTabTopBarMargin] under the status bar, because the
+ * floating bar is drawn over the page whether it is pinned or hover-only (see the app's
+ * topChromePadding). The corner copy owns the same bar, so it uses the same number: reserving the
+ * bar's row here left a dead band above the recommendations after coming back from a video.
+ * Without a bar (the sidebar layout) the tab's own 24 dp margin applies, as it does on the host.
  */
 private val YouTubeTabTopBarMargin = 16.dp
 

@@ -104,9 +104,14 @@ object YouTubeTopBarSearch {
     var suggestions by mutableStateOf<MusicBarSuggestions?>(null)
         internal set
 
+    /** True while the YouTube tab or its top bar is composed. */
+    internal var active by mutableStateOf(false)
+
     /** The search key on the YouTube tab: into this box rather than the video search. */
-    fun requestFocus() {
+    fun requestFocus(): Boolean {
+        if (!active) return false
         focusRequests++
+        return true
     }
 
     /**
