@@ -51,10 +51,8 @@ import androidx.compose.runtime.collectAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.Explore
-import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.MusicNote // fork:music
 import androidx.compose.material.icons.rounded.SmartDisplay // fork:youtube-mode
-import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material3.IconButton
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -7914,10 +7912,6 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                             )
                         }
                     }
-                } else if (musicBarActive) { // fork:music-navbar
-                    com.nuvio.app.features.music.MusicTopBarContent(onLeave = onLeaveMusic, modifier = Modifier.fillMaxSize())
-                } else if (youTubeBarActive) { // fork:youtube-mode
-                    com.nuvio.app.features.youtube.YouTubeTopBarContent(onLeave = onLeaveYouTube, modifier = Modifier.fillMaxSize())
                 } else {
                     Row(
                         modifier = Modifier
