@@ -16,7 +16,7 @@
 
 This fork is unaffiliated with the Nuvio team. Don't worry about the commit disparity, Nuvio's team makes many small commits while I bundle everything into a single release commit for simplicity as this is mostly a solo focused project. 
 
-If you're a Linux user check out [Slokker's Linux Fork.](https://github.com/iamSlokker/NuvioDesktop-Linux) It supports appimage, flatpack or debian. It's based on the nightly releases of this project.
+Built off [Slokker's Linux fork](https://github.com/iamSlokker/NuvioDesktop-Linux) of [UmbraProject's NuvioHTPC](https://github.com/UmbraProjects/NuvioDesktop) version of [Nuvio Desktop](https://github.com/NuvioMedia/NuvioDesktop). It supports appimage, flatpack, debian and RPM. It's based on the nightly releases of this project.
 
 Linux development status and redistribution gates are documented in the
 [final readiness report](docs/FINAL-READINESS-REPORT.md). See
