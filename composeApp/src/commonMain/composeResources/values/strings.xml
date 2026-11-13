@@ -1457,7 +1457,10 @@
     <string name="compose_settings_page_youtube">YouTube account</string>
     <string name="settings_youtube_description">Sign in with Google to play age-restricted and sign-in-gated trailers</string>
     <string name="settings_youtube_section_account">Account</string>
-    <string name="settings_youtube_explainer">Opens Google's real sign-in page in a temporary Edge, Chrome, Brave or Chromium window. Sign in there, wait for YouTube Music to load, then close the window; Nuvio then reads the session cookies and deletes the temporary profile. They are sent only for videos YouTube blocks without an account, and Nuvio never sees your password. A secondary Google account is safest.</string>
+    <string name="settings_youtube_explainer">Opens Google's real sign-in page in a temporary Edge, Chrome, Brave or Chromium window. Sign in there, wait for YouTube to load, then close the window; Nuvio then reads the session cookies and deletes the temporary profile. They are sent only for videos YouTube blocks without an account, and Nuvio never sees your password. A secondary Google account is safest.</string>
+    <string name="settings_youtube_explainer_paste">No browser window opens. Copy your YouTube session cookies from a browser you are already signed in to and paste them below; Nuvio never sees your password. A secondary Google account is safest.</string>
+    <string name="settings_youtube_browser_window">Open a browser window to sign in</string>
+    <string name="settings_youtube_browser_window_description">Off: sign in by pasting your YouTube session cookies instead, so no browser window ever opens.</string>
     <string name="settings_youtube_state_signed_out">Not signed in</string>
     <string name="settings_youtube_state_signed_in">Signed in to YouTube</string>
     <string name="settings_youtube_state_signing_in">Sign in in the browser window, then close it to finish…</string>
