@@ -6,10 +6,10 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.nuvio.app.features.player.dismissesOverlay
 
 /**
  * The transient panels currently up, innermost last, so a Back request can close the top one before
@@ -60,21 +60,23 @@ fun DialogBackRegistration(onDismiss: () -> Unit) {
 }
 
 /**
- * Dismisses a dialog on Escape and Backspace (and a pad's B button, which arrives as Backspace).
+ * Dismisses a dialog on either close bind - Close/Dismiss overlay (Escape) or Go back (Backspace,
+ * which is also a pad's B while browsing); see [dismissesOverlay]. Both are asked for because a
+ * dialog is at once the overlay on top and the top of the Back stack, so answering only one leaves
+ * the other's users unable to close it.
+ *
  * Applied at the dialog's root, so the preview phase sees the key before any focused control does:
  * a settings row inside the dialog would otherwise answer Back by trying to focus the page's
  * sidebar, which belongs to the parent window's focus manager and can never be reached from here.
- * Text fields keep the key first, so typing and deleting still work; a second Escape, with no field
- * active, closes the dialog.
+ * A text field keeps the key: [dismissesOverlay] answers false while one holds focus, so Backspace
+ * deletes and Escape ends the edit; the next press, with no field active, closes the dialog.
  */
 fun Modifier.dismissOnBackKey(onDismiss: () -> Unit): Modifier = onPreviewKeyEvent { event ->
     if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-    if (TextInputFocusTracker.active.value) return@onPreviewKeyEvent false
-    when (event.navigationKey()) {
-        Key.Backspace, Key.Escape -> {
-            onDismiss()
-            true
-        }
-        else -> false
+    if (event.dismissesOverlay()) {
+        onDismiss()
+        true
+    } else {
+        false
     }
 }

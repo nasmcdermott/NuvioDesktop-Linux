@@ -58,8 +58,7 @@ import com.nuvio.app.core.ui.NuvioTokens
 import com.nuvio.app.core.ui.StartupOverlayCoordinator
 import com.nuvio.app.core.ui.ditheredBackground
 import com.nuvio.app.core.ui.nuvio
-import com.nuvio.app.features.player.AppShortcutAction
-import com.nuvio.app.features.player.appShortcutMatches
+import com.nuvio.app.features.player.dismissesOverlay
 import com.nuvio.app.isDesktop
 import kotlinx.coroutines.delay
 import nuvio.composeapp.generated.resources.Res
@@ -164,11 +163,18 @@ fun FirstRunWizardPanel(
                     Key.DirectionDown -> focusManager.moveFocus(FocusDirection.Down)
                     Key.DirectionLeft -> focusManager.moveFocus(FocusDirection.Left)
                     Key.DirectionRight -> focusManager.moveFocus(FocusDirection.Right)
-                    Key.Escape, Key.Back -> {
+                    // The OS/browser Back key, which is fixed and has no rebindable action.
+                    Key.Back -> {
                         FirstRunWizardController.close()
                         true
                     }
-                    else -> if (appShortcutMatches(AppShortcutAction.DismissOverlay, event)) {
+                    // Escape (close) or Backspace (back), as currently bound: the wizard is the
+                    // overlay on top, so it closes on either and follows a rebind of either. This
+                    // used to compare the physical Escape, which kept closing the wizard after the
+                    // key was rebound elsewhere and never answered Backspace. A text field keeps
+                    // the key for itself - the matcher says so - so this stays safe wherever the
+                    // wizard later gains an input.
+                    else -> if (event.dismissesOverlay()) {
                         FirstRunWizardController.close()
                         true
                     } else {
