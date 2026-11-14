@@ -19,6 +19,9 @@ class NavBarDestinationTest {
         val expected = mapOf(
             NavBarEntry.Home to AppScreenTab.Home,
             NavBarEntry.Search to AppScreenTab.Search,
+            // Upstream 1.38.1's entry: it opens the Tonight picker over whichever content tab is
+            // showing rather than a tab of its own.
+            NavBarEntry.Tonight to null,
             NavBarEntry.Discover to AppScreenTab.Discover,
             NavBarEntry.Library to AppScreenTab.Library,
             NavBarEntry.LiveTv to AppScreenTab.LiveTv,
@@ -77,9 +80,11 @@ class NavBarDestinationTest {
     }
 
     @Test
-    fun gamesIsTheOnlyEntryWithoutATab() {
+    fun onlyThePickerAndGamesHaveNoTab() {
         val withoutTab = NavBarEntry.entries.filter { it.destination.tab == null }
-        assertEquals(listOf(NavBarEntry.Games), withoutTab)
+        // Tonight (upstream 1.38.1) opens the picker over the current tab, Games opens a window.
+        assertEquals(listOf(NavBarEntry.Tonight, NavBarEntry.Games), withoutTab)
         assertNull(navBarTab(NavBarEntry.Games))
+        assertNull(navBarTab(NavBarEntry.Tonight))
     }
 }

@@ -33,14 +33,20 @@ class NavigationActionRatchetTest {
     private val baseline: Map<String, Int> = mapOf(
         "commonMain/kotlin/com/nuvio/app/core/ui/NuvioInputFields.kt" to 3,
         "commonMain/kotlin/com/nuvio/app/features/librarypvr/ManualLinkDialog.kt" to 1,
+        // Merged in from upstream 1.38.1 (Umbra sync 8e2adb00b): their variants of these handlers
+        // still compare the physical key, and SettingsScreen.kt/AlbumLensEdit.kt are new there.
+        // The numbers are the merged counts; migrating them is the next step, and they may only shrink.
+        "commonMain/kotlin/com/nuvio/app/features/settings/SettingsScreen.kt" to 2,
+        "commonMain/kotlin/com/nuvio/app/features/music/AlbumLensEdit.kt" to 2,
+        "commonMain/kotlin/com/nuvio/app/features/music/MusicPlayerHost.kt" to 2,
+        "commonMain/kotlin/com/nuvio/app/features/music/MusicMiniPlayerBar.kt" to 6,
+        "commonMain/kotlin/com/nuvio/app/features/music/MusicTabScreen.kt" to 5,
         "commonMain/kotlin/com/nuvio/app/features/music/MusicAppHooks.kt" to 2,
         "commonMain/kotlin/com/nuvio/app/features/music/MusicCornerCard.kt" to 4,
         "commonMain/kotlin/com/nuvio/app/features/music/MusicDockNotch.kt" to 4,
-        "commonMain/kotlin/com/nuvio/app/features/music/MusicMiniPlayerBar.kt" to 4,
-        "commonMain/kotlin/com/nuvio/app/features/music/MusicNowPlaying.kt" to 2,
+                "commonMain/kotlin/com/nuvio/app/features/music/MusicNowPlaying.kt" to 2,
         "commonMain/kotlin/com/nuvio/app/features/music/MusicNowPlayingWidgets.kt" to 2,
-        "commonMain/kotlin/com/nuvio/app/features/music/MusicTabScreen.kt" to 3,
-        "commonMain/kotlin/com/nuvio/app/features/music/StageOptionsMenu.kt" to 1,
+                "commonMain/kotlin/com/nuvio/app/features/music/StageOptionsMenu.kt" to 1,
         "commonMain/kotlin/com/nuvio/app/features/music/library/ConstellationView.kt" to 3,
         "commonMain/kotlin/com/nuvio/app/features/music/library/LibraryErasView.kt" to 1,
         "commonMain/kotlin/com/nuvio/app/features/music/library/MusicLadderScreen.kt" to 1,
