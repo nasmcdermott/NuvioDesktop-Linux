@@ -8386,3 +8386,23 @@ internal fun youTubeMiniTopChromePadding(
     topBarDrawn: Boolean,
     statusBarPadding: Dp,
 ): Dp? = if (topBarDrawn) statusBarPadding + YouTubeTabTopBarMargin else null
+
+// ---------------------------------------------------------------------------------------------
+// Carried over from upstream 1.38.1 (UmbraProjects sync 8e2adb00b), which the port pre-dates. The
+// port's App.kt wires its own search bar, so only the declarations other files reference are kept
+// here: `features/search/SearchPredictions.kt` asks for BarSearchScope. The bar's per-tab search
+// scoping itself is still to be ported - see the notes on the test branch.
+// ---------------------------------------------------------------------------------------------
+
+/**
+ * fork:navbar-search - what the top bar's Search searches. The bar keeps its tabs on every tab; only Search adapts:
+ * on Music, YouTube and Live TV it searches that tab (music, videos, channels), everywhere else the films and shows.
+ */
+internal enum class BarSearchScope { Media, Music, YouTube, LiveTv }
+
+internal fun barSearchScopeFor(tab: AppScreenTab): BarSearchScope = when (tab) {
+    AppScreenTab.Music -> BarSearchScope.Music
+    AppScreenTab.YouTube -> BarSearchScope.YouTube
+    AppScreenTab.LiveTv -> BarSearchScope.LiveTv
+    else -> BarSearchScope.Media
+}
