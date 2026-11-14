@@ -811,11 +811,6 @@ private fun DesktopAddonSortMenu(
                 DesktopAddonSort.entries.getOrNull(index)?.let { onSortChange(it) }
             },
             onDismissRequest = { expanded = false },
-            shape = SettingsSectionGlassShape,
-            containerColor = tokens.colors.background,
-            tonalElevation = 0.dp,
-            shadowElevation = 0.dp,
-            border = androidx.compose.foundation.BorderStroke(1.dp, SettingsSectionGlassEdge),
         ) { activeIndex ->
             com.nuvio.app.core.ui.KeyRouteLayer("addons menu") // the focus router leaves an open menu alone
             DesktopAddonSort.entries.forEachIndexed { index, option ->

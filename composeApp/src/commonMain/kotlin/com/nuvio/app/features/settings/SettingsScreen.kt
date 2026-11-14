@@ -1212,8 +1212,6 @@ private fun MobileSettingsScreen(
                     selectedTheme = selectedTheme,
                     onThemeSelected = onThemeSelected,
                     customTheme = customTheme,
-                    amoledEnabled = amoledEnabled,
-                    onAmoledToggle = onAmoledToggle,
                     liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                     liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                     onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
@@ -2057,8 +2055,6 @@ private fun TabletSettingsScreen(
                             selectedTheme = selectedTheme,
                             onThemeSelected = onThemeSelected,
                             customTheme = customTheme,
-                            amoledEnabled = amoledEnabled,
-                            onAmoledToggle = onAmoledToggle,
                             liquidGlassNativeTabBarSupported = liquidGlassNativeTabBarSupported,
                             liquidGlassNativeTabBarEnabled = liquidGlassNativeTabBarEnabled,
                             onLiquidGlassNativeTabBarToggle = onLiquidGlassNativeTabBarToggle,
@@ -3380,6 +3376,7 @@ private fun androidx.compose.foundation.lazy.LazyListScope.watchPartySettingsCon
             com.nuvio.app.features.party.PartyPage(
                 initialCode = invite?.code.orEmpty(),
                 onWatch = onOpenPartyMedia,
+                onBack = {},
             )
         }
     }

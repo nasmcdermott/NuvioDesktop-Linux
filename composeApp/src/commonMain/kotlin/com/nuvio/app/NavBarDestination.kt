@@ -2,6 +2,7 @@ package com.nuvio.app
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
+import androidx.compose.material.icons.rounded.AutoAwesome
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.MusicNote
@@ -87,6 +88,13 @@ internal val NavBarEntry.destination: NavBarDestination
             label = NavBarLabel.Resource(Res.string.compose_nav_search),
             tab = AppScreenTab.Search,
             orderDescription = "Search across your addons. Always shown.",
+        )
+        NavBarEntry.Tonight -> NavBarDestination(
+            glyph = NavBarGlyph.Vector(Icons.Rounded.AutoAwesome),
+            label = NavBarLabel.Literal("What to watch"),
+            // Not a tab: it opens the Tonight picker over Home, Library or Discover.
+            tab = null,
+            orderDescription = "Opens the Tonight picker over Home, Library or Discover.",
         )
         NavBarEntry.Discover -> NavBarDestination(
             glyph = NavBarGlyph.Vector(Icons.Rounded.Explore),
