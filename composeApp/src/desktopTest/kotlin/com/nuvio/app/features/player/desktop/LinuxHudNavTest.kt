@@ -10,7 +10,16 @@ class LinuxHudNavTest {
     private val playPause = KeyEvent.VK_SPACE
 
     private val dismiss = KeyEvent.VK_ESCAPE
-    private fun route(keyCode: Int, state: Int) = linuxHudNavKey(keyCode, state, select, playPause, dismiss)
+    private val keys = HudNavKeyBindings(
+        select = select,
+        playPause = playPause,
+        dismiss = dismiss,
+        up = KeyEvent.VK_UP,
+        down = KeyEvent.VK_DOWN,
+        left = KeyEvent.VK_LEFT,
+        right = KeyEvent.VK_RIGHT,
+    )
+    private fun route(keyCode: Int, state: Int) = linuxHudNavKey(keyCode, state, keys)
 
     @Test
     fun unavailableStateKeepsEveryKeysNormalMeaning() {
@@ -65,12 +74,31 @@ class LinuxHudNavTest {
 
     @Test
     fun reboundSelectAndPlayPauseFollowTheBindings() {
-        val reboundSelect = KeyEvent.VK_SPACE
-        val reboundPlayPause = KeyEvent.VK_K
-        assertEquals("Enter", linuxHudNavKey(KeyEvent.VK_SPACE, LinuxHudNavState.VISIBLE, reboundSelect, reboundPlayPause, dismiss))
-        assertEquals("Enter", linuxHudNavKey(KeyEvent.VK_K, LinuxHudNavState.FOCUSED, reboundSelect, reboundPlayPause, dismiss))
-        assertNull(linuxHudNavKey(KeyEvent.VK_K, LinuxHudNavState.VISIBLE, reboundSelect, reboundPlayPause, dismiss))
-        assertNull(linuxHudNavKey(KeyEvent.VK_ENTER, LinuxHudNavState.VISIBLE, reboundSelect, reboundPlayPause, dismiss))
+        val rebound = keys.copy(select = KeyEvent.VK_SPACE, playPause = KeyEvent.VK_K)
+        assertEquals("Enter", linuxHudNavKey(KeyEvent.VK_SPACE, LinuxHudNavState.VISIBLE, rebound))
+        assertEquals("Enter", linuxHudNavKey(KeyEvent.VK_K, LinuxHudNavState.FOCUSED, rebound))
+        assertNull(linuxHudNavKey(KeyEvent.VK_K, LinuxHudNavState.VISIBLE, rebound))
+        // The historical default stops acting once the action has moved off it.
+        assertNull(linuxHudNavKey(KeyEvent.VK_ENTER, LinuxHudNavState.VISIBLE, rebound))
+    }
+
+    @Test
+    fun theArrowKeysFollowTheMoveBindings() {
+        // A keyboard without an arrow cluster: the four directions live on W/A/S/D (TKL mode's
+        // keys, but bound as the Move actions, which is what the rest of the app navigates with).
+        val wasd = keys.copy(
+            up = KeyEvent.VK_W,
+            down = KeyEvent.VK_S,
+            left = KeyEvent.VK_A,
+            right = KeyEvent.VK_D,
+        )
+        assertEquals("ArrowUp", linuxHudNavKey(KeyEvent.VK_W, LinuxHudNavState.VISIBLE, wasd))
+        assertEquals("ArrowDown", linuxHudNavKey(KeyEvent.VK_S, LinuxHudNavState.VISIBLE, wasd))
+        assertEquals("ArrowLeft", linuxHudNavKey(KeyEvent.VK_A, LinuxHudNavState.VISIBLE, wasd))
+        assertEquals("ArrowRight", linuxHudNavKey(KeyEvent.VK_D, LinuxHudNavState.VISIBLE, wasd))
+        // ...and the physical arrows no longer navigate, as everywhere else in the app.
+        assertNull(linuxHudNavKey(KeyEvent.VK_UP, LinuxHudNavState.VISIBLE, wasd))
+        assertNull(linuxHudNavKey(KeyEvent.VK_LEFT, LinuxHudNavState.VISIBLE, wasd))
     }
 }
 
@@ -130,11 +158,21 @@ class PlayerOwnsKeysTest {
 }
 
 class YouTubeWatchFocusAfterTest {
+    private val keys = HudNavKeyBindings(
+        select = KeyEvent.VK_ENTER,
+        playPause = KeyEvent.VK_SPACE,
+        dismiss = KeyEvent.VK_ESCAPE,
+        up = KeyEvent.VK_UP,
+        down = KeyEvent.VK_DOWN,
+        left = KeyEvent.VK_LEFT,
+        right = KeyEvent.VK_RIGHT,
+    )
+
     @Test
     fun downFromTheHudBottomRowGoesToThePage() {
         assertEquals(
             YouTubeWatchFocusLocation.PageFirstControl,
-            youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_DOWN),
+            youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_DOWN, keys),
         )
     }
 
@@ -142,16 +180,16 @@ class YouTubeWatchFocusAfterTest {
     fun upFromThePageFirstControlReturnsToTheHud() {
         assertEquals(
             YouTubeWatchFocusLocation.HudBottomRow,
-            youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_UP),
+            youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_UP, keys),
         )
     }
 
     @Test
     fun everyOtherPressHasNoCrossBoundaryMeaning() {
-        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_UP))
-        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_LEFT))
-        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_DOWN))
-        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_RIGHT))
-        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_ENTER))
+        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_UP, keys))
+        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.HudBottomRow, KeyEvent.VK_LEFT, keys))
+        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_DOWN, keys))
+        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_RIGHT, keys))
+        assertNull(youTubeWatchFocusAfter(YouTubeWatchFocusLocation.PageFirstControl, KeyEvent.VK_ENTER, keys))
     }
 }

@@ -42,34 +42,79 @@ internal enum class YouTubeWatchFocusLocation { HudBottomRow, PageFirstControl }
 internal fun youTubeWatchFocusAfter(
     location: YouTubeWatchFocusLocation,
     keyCode: Int,
+    keys: HudNavKeyBindings,
 ): YouTubeWatchFocusLocation? = when {
-    location == YouTubeWatchFocusLocation.HudBottomRow && keyCode == KeyEvent.VK_DOWN ->
+    location == YouTubeWatchFocusLocation.HudBottomRow && keyCode == keys.down ->
         YouTubeWatchFocusLocation.PageFirstControl
-    location == YouTubeWatchFocusLocation.PageFirstControl && keyCode == KeyEvent.VK_UP ->
+    location == YouTubeWatchFocusLocation.PageFirstControl && keyCode == keys.up ->
         YouTubeWatchFocusLocation.HudBottomRow
     else -> null
 }
 
 /**
+ * The player's bound navigation keys, as AWT key codes. Every one of these is a rebindable action
+ * (Select, PlayPause, Dismiss/Close and the four Move directions), so the player honours the same
+ * bindings as the rest of the app: the key is resolved here, and controls.js/mpv still receive only
+ * the fixed key names they know ("Escape", "Enter", "ArrowLeft", ...).
+ */
+internal data class HudNavKeyBindings(
+    val select: Int,
+    val playPause: Int,
+    val dismiss: Int,
+    val up: Int,
+    val down: Int,
+    val left: Int,
+    val right: Int,
+) {
+    companion object {
+        /** Reads the live bindings; call per event so a rebind takes effect without a restart. */
+        fun current(): HudNavKeyBindings = HudNavKeyBindings(
+            select = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.SelectFocused,
+            ),
+            playPause = com.nuvio.app.features.player.PlayerShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.PlayerShortcutAction.PlayPause,
+            ),
+            dismiss = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.DismissOverlay,
+            ),
+            up = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.MoveUp,
+            ),
+            down = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.MoveDown,
+            ),
+            left = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.MoveLeft,
+            ),
+            right = com.nuvio.app.features.player.AppShortcutsRepository.keyCode(
+                com.nuvio.app.features.player.AppShortcutAction.MoveRight,
+            ),
+        )
+    }
+}
+
+/**
  * The key name controls.js expects for [keyCode] under [state], or null when the key keeps its
- * normal meaning. Select and PlayPause are the player's bound keys, so rebinding them is honored.
+ * normal meaning. Every key this answers for is a bound one, so rebinding it is honored.
  */
 internal fun linuxHudNavKey(
     keyCode: Int,
     state: Int,
-    selectKeyCode: Int,
-    playPauseKeyCode: Int,
-    dismissKeyCode: Int,
+    keys: HudNavKeyBindings,
 ): String? {
+    val selectKeyCode = keys.select
+    val playPauseKeyCode = keys.playPause
+    val dismissKeyCode = keys.dismiss
     if (state == LinuxHudNavState.UNAVAILABLE) return null
     // Only the volume slider's selected mode takes Escape from the player's normal Back handling:
     // it leaves the slider so the arrows navigate the HUD again.
     if (state == LinuxHudNavState.VOLUME_FOCUSED && keyCode == dismissKeyCode) return "Escape"
     val arrow = when (keyCode) {
-        KeyEvent.VK_LEFT -> "ArrowLeft"
-        KeyEvent.VK_RIGHT -> "ArrowRight"
-        KeyEvent.VK_UP -> "ArrowUp"
-        KeyEvent.VK_DOWN -> "ArrowDown"
+        keys.left -> "ArrowLeft"
+        keys.right -> "ArrowRight"
+        keys.up -> "ArrowUp"
+        keys.down -> "ArrowDown"
         else -> null
     }
     return when {

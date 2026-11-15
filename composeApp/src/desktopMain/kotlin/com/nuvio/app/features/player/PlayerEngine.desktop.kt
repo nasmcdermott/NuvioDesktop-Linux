@@ -563,23 +563,22 @@ private fun NativePlayerSurface(
             // routed to a focused Nuvio window, which defeats the point of a media key; they are
             // owned by the Windows media session in player_bridge.cpp and arrive as the
             // "media*" events handled in setControlCallbacks above.
+            // Every key the player forwards as navigation is a rebindable action, read here so a
+            // rebind takes effect on the next press: the arrows are AppShortcutAction.Move*, Select
+            // is SelectFocused, Escape is DismissOverlay, Enter is PlayPause. The native side and
+            // controls.js keep receiving the fixed names they know.
+            val navKeys = com.nuvio.app.features.player.desktop.HudNavKeyBindings.current()
             val panelKey = when (event.keyCode) {
-                KeyEvent.VK_UP -> "ArrowUp"
-                KeyEvent.VK_DOWN -> "ArrowDown"
-                KeyEvent.VK_LEFT -> "ArrowLeft"
-                KeyEvent.VK_RIGHT -> "ArrowRight"
-                AppShortcutsRepository.keyCode(AppShortcutAction.SelectFocused) -> "Enter"
-                AppShortcutsRepository.keyCode(AppShortcutAction.DismissOverlay) -> "Escape"
+                navKeys.up -> "ArrowUp"
+                navKeys.down -> "ArrowDown"
+                navKeys.left -> "ArrowLeft"
+                navKeys.right -> "ArrowRight"
+                navKeys.select -> "Enter"
+                navKeys.dismiss -> "Escape"
                 else -> null
             }
             val hudNavKey = if (DesktopHostOs.current == DesktopHostOs.LINUX) {
-                linuxHudNavKey(
-                    event.keyCode,
-                    controller.hudNavState,
-                    AppShortcutsRepository.keyCode(AppShortcutAction.SelectFocused),
-                    PlayerShortcutsRepository.keyCode(PlayerShortcutAction.PlayPause),
-                    AppShortcutsRepository.keyCode(AppShortcutAction.DismissOverlay),
-                )
+                linuxHudNavKey(event.keyCode, controller.hudNavState, navKeys)
             } else {
                 null
             }
