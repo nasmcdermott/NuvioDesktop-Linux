@@ -5243,17 +5243,17 @@ const renderSubtitleModal = () => {
 // kept (it holds the value and fires the change the rest of the code listens for) but hidden, and
 // a field in the sheet's own style opens a list of its options exactly under it, at its width.
 const styleDropdowns = [];
-let openStyleDropdown = null;
+let openFieldStyleDropdown = null;
 const styleDropdownFont = (select, option) => {
   if (!select.dataset.fontPreview || !option || option.value === "0") return "";
   return `"${String(option.textContent).replace(/["\\]/g, "")}", ${uiFontStack}`;
 };
-const closeStyleDropdown = () => {
-  if (!openStyleDropdown) return;
-  openStyleDropdown.menu.remove();
-  openStyleDropdown.button.classList.remove("open");
-  openStyleDropdown.button.setAttribute("aria-expanded", "false");
-  openStyleDropdown = null;
+const closeFieldStyleDropdown = () => {
+  if (!openFieldStyleDropdown) return;
+  openFieldStyleDropdown.menu.remove();
+  openFieldStyleDropdown.button.classList.remove("open");
+  openFieldStyleDropdown.button.setAttribute("aria-expanded", "false");
+  openFieldStyleDropdown = null;
 };
 const syncStyleDropdowns = () => {
   styleDropdowns.forEach(({ select, label }) => {
@@ -5264,7 +5264,7 @@ const syncStyleDropdowns = () => {
   });
 };
 const openStyleDropdownFor = entry => {
-  closeStyleDropdown();
+  closeFieldStyleDropdown();
   const { select, button } = entry;
   const panel = select.closest(".track-panel");
   if (!panel) return;
@@ -5287,7 +5287,7 @@ const openStyleDropdownFor = entry => {
     const item = event.target.closest(".style-dropdown-item");
     if (!item) return;
     const index = Number(item.dataset.index);
-    closeStyleDropdown();
+    closeFieldStyleDropdown();
     if (index === select.selectedIndex) return;
     select.selectedIndex = index;
     select.dispatchEvent(new Event("change", { bubbles: true }));
@@ -5325,7 +5325,7 @@ const openStyleDropdownFor = entry => {
   if (selected) menu.scrollTop = Math.max(0, selected.offsetTop - (menu.clientHeight - selected.offsetHeight) / 2);
   button.classList.add("open");
   button.setAttribute("aria-expanded", "true");
-  openStyleDropdown = { ...entry, menu };
+  openFieldStyleDropdown = { ...entry, menu };
 };
 document.querySelectorAll("#subtitleStylePanel select.style-select").forEach(select => {
   const button = document.createElement("button");
@@ -5346,23 +5346,23 @@ document.querySelectorAll("#subtitleStylePanel select.style-select").forEach(sel
   styleDropdowns.push(entry);
   button.addEventListener("click", event => {
     event.stopPropagation();
-    if (openStyleDropdown && openStyleDropdown.select === select) closeStyleDropdown();
+    if (openFieldStyleDropdown && openFieldStyleDropdown.select === select) closeFieldStyleDropdown();
     else openStyleDropdownFor(entry);
   });
 });
 document.addEventListener("pointerdown", event => {
-  if (!openStyleDropdown) return;
+  if (!openFieldStyleDropdown) return;
   const target = event.target instanceof Element ? event.target : null;
   if (target && (target.closest(".style-dropdown-menu") || target.closest(".style-dropdown"))) return;
-  closeStyleDropdown();
+  closeFieldStyleDropdown();
 }, true);
 document.addEventListener("keydown", event => {
-  if (!openStyleDropdown || event.key !== "Escape") return;
+  if (!openFieldStyleDropdown || event.key !== "Escape") return;
   event.preventDefault();
   event.stopImmediatePropagation();
-  closeStyleDropdown();
+  closeFieldStyleDropdown();
 }, true);
-subtitleStylePanel.addEventListener("scroll", closeStyleDropdown, { passive: true });
+subtitleStylePanel.addEventListener("scroll", closeFieldStyleDropdown, { passive: true });
 
 const normalizeItems = items =>
   Array.isArray(items) ? items.filter(item => item && typeof item === "object") : [];
@@ -10039,7 +10039,7 @@ document.addEventListener("mousedown", event => {
 // Keep the existing focused-WebView order for Windows/macOS; Linux must dismiss an
 // open panel even if a playback error arrived underneath it.
 function handlePlayerEscape(linux = false) {
-  if (styleDropdownOpen) { closeStyleDropdown(); return; }
+  if (styleDropdownOpen) { closeFieldStyleDropdown(); return; }
   if (subtitleHexField) { closeSubtitleHexPrompt(); return; }
   if (contextMenuOpen) { closeContextMenu(); return; }
   if (actionOverflowOpen) { setActionOverflowOpen(false); return; }
