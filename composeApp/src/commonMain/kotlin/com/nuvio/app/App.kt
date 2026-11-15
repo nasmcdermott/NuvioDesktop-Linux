@@ -1813,11 +1813,15 @@ private fun MainAppContent(
     var lastNetworkToastCondition by rememberSaveable { mutableStateOf(NetworkCondition.Unknown.name) }
 
     fun handleRootTabClick(tab: AppScreenTab) {
-        // fork:tonight - the picker covers Home, Library and Discover. Choosing one of those pages
-        // from the bar is a way out of it: upstream kept the picker up until "Just browse
-        // everything", which made the icons look like they did nothing.
-        if (com.nuvio.app.features.tonight.TonightController.open.value) {
-            com.nuvio.app.features.tonight.TonightController.close()
+        // fork:tonight - choosing any panel (bar, sidebar, panel ring, a hotkey) leaves the picker, as it leaves game
+        // mode. It used to stay open under the next tab, so it looked impossible to leave except by its own X
+        // (2026-11-15). "What to watch" opens it again after this runs.
+        com.nuvio.app.features.tonight.TonightController.close()
+        // Game mode is a panel like the others (2026-11-15): choosing any panel leaves it. The tab under it is the
+        // one the user left, so choosing that one just closes game mode rather than also scrolling it to the top.
+        if (GameModeController.active.value) {
+            GameModeController.setActive(false)
+            if (tab == selectedTab && tab != AppScreenTab.Search) return
         }
         // Discover is hidden from the navigation: nothing may select it, or the bar would show no
         // active tab and leave no way back.
@@ -1939,15 +1943,31 @@ private fun MainAppContent(
     LaunchedEffect(Unit) {
         com.nuvio.app.features.navbar.NavBarNavigation.requests.collect { entry ->
             when (entry) {
-                com.nuvio.app.features.navbar.NavBarEntry.Games ->
+                com.nuvio.app.features.navbar.NavBarEntry.Home -> latestRootTabClick.value(AppScreenTab.Home)
+                com.nuvio.app.features.navbar.NavBarEntry.Search -> latestRootTabClick.value(AppScreenTab.Search)
+                com.nuvio.app.features.navbar.NavBarEntry.Discover -> latestRootTabClick.value(AppScreenTab.Discover)
+                com.nuvio.app.features.navbar.NavBarEntry.Library -> latestRootTabClick.value(AppScreenTab.Library)
+                com.nuvio.app.features.navbar.NavBarEntry.LiveTv -> latestRootTabClick.value(AppScreenTab.LiveTv)
+                com.nuvio.app.features.navbar.NavBarEntry.YouTube -> latestRootTabClick.value(AppScreenTab.YouTube)
+                com.nuvio.app.features.navbar.NavBarEntry.Music -> latestRootTabClick.value(AppScreenTab.Music)
+                com.nuvio.app.features.navbar.NavBarEntry.Games -> {
+                    navController.navigate(TabsRoute) {
+                        popUpTo<TabsRoute> { inclusive = false }
+                        launchSingleTop = true
+                    }
+                    searchOverlayActive = false
+                    com.nuvio.app.features.tonight.TonightController.close()
                     com.nuvio.app.features.games.GameModeController.setActive(true)
-                // fork:tonight - the picker is not a tab: it opens over Home, Library or Discover,
-                // and from any other tab it goes to Home first (upstream's bar does the same).
+                }
+                // fork:tonight - opens over Home, Library or Discover; from any other tab it goes to Home first.
                 com.nuvio.app.features.navbar.NavBarEntry.Tonight -> {
-                    if (selectedTab != AppScreenTab.Home &&
-                        selectedTab != AppScreenTab.Library &&
-                        selectedTab != AppScreenTab.Discover
-                    ) {
+                    // A second press of "What to watch" closes it, like the other panels' entries switch away.
+                    if (com.nuvio.app.features.tonight.TonightController.open.value) {
+                        com.nuvio.app.features.tonight.TonightController.close()
+                        return@collect
+                    }
+                    GameModeController.setActive(false)
+                    if (selectedTab != AppScreenTab.Home && selectedTab != AppScreenTab.Library && selectedTab != AppScreenTab.Discover) {
                         latestRootTabClick.value(AppScreenTab.Home)
                     }
                     com.nuvio.app.features.tonight.TonightController.open()
@@ -2214,7 +2234,11 @@ private fun MainAppContent(
                     latestRootTabClick.value(target)
                 }
                 AppShortcutAction.OpenCalendar -> navController.navigateIfResumed(CalendarRoute)
-                AppShortcutAction.ToggleGameMode -> GameModeController.toggle()
+                AppShortcutAction.ToggleGameMode -> if (GameModeController.active.value) {
+                    GameModeController.setActive(false)
+                } else {
+                    com.nuvio.app.features.navbar.NavBarNavigation.request(com.nuvio.app.features.navbar.NavBarEntry.Games)
+                }
                 else -> Unit
             }
         }
@@ -4716,22 +4740,30 @@ private fun MainAppContent(
                                         )
                                     }
 
-                                    // fork:games-nav - the game library over the tab content but
-                                    // under the chrome: the bar across the top is drawn after it,
-                                    // so Back, Left and Up can give it the keys while the library
-                                    // stays open behind it (see GameModeScreen's key handler).
-                                    // No zIndex: a non-zero one would lift this sibling above the
-                                    // bar, which draws in plain composition order.
+                                    // Game mode: a panel in the tabs like the others, under the navbar and sidebar (it
+                                        // used to cover the whole window, bar included, so the only way out was G). The
+                                        // tab under it stays composed, so leaving lands on the row the user left. The
+                                        // wrapper takes the clicks that would otherwise fall through to that tab.
                                     if (gameModeActive) {
-                                        GameModeLayer(
-                                            modifier = Modifier,
-                                            onExit = { GameModeController.setActive(false) },
-                                            onOpenSettings = {
-                                                GameModeController.setActive(false)
-                                                requestedSettingsPageName = "Games"
-                                                handleRootTabClick(AppScreenTab.Settings)
-                                            },
-                                        )
+                                        Box(
+                                            modifier = Modifier
+                                                .fillMaxSize()
+                                                .background(MaterialTheme.colorScheme.background)
+                                                .clickable(
+                                                    interactionSource = remember { MutableInteractionSource() },
+                                                    indication = null,
+                                                    onClick = {},
+                                                ),
+                                        ) {
+                                            // Full height: its backdrop runs up behind the navbar like Home's hero.
+                                            GameModeScreen(
+                                                onExit = { GameModeController.setActive(false) },
+                                                onOpenSettings = {
+                                                    requestedSettingsPageName = "Games"
+                                                    handleRootTabClick(AppScreenTab.Settings)
+                                                },
+                                            )
+                                        }
                                     }
 
                                     if (showDesktopSidebar) {
@@ -4781,7 +4813,7 @@ private fun MainAppContent(
                                         )
                                     }
                                     if (
-                                        (useFloatingTopBar && selectedTab != AppScreenTab.Settings) ||
+                                        (useFloatingTopBar && (selectedTab != AppScreenTab.Settings || gameModeActive)) ||
                                         selectedTab == AppScreenTab.Search ||
                                         searchOverlayActive
                                     ) {
@@ -6320,51 +6352,7 @@ private fun MainAppContent(
                 },
             )
 
-            // Game mode sits on top of a still-composed app rather than replacing it, so toggling
-            // back lands on exactly the row and scroll position the user left. Over the tab host
-            // the game library is drawn inside that host instead (under the navigation chrome), so
-            // Back can hand the keys to the bar without leaving it; this whole-window layer is
-            // only for the rest of the app (game mode toggled over the player or a details page),
-            // where no bar of the host is on screen.
-            if (gameModeActive && navController.currentDestination?.hasRoute<TabsRoute>() != true) {
-                GameModeLayer(
-                    modifier = Modifier.fillMaxSize().zIndex(40f),
-                    onExit = { GameModeController.setActive(false) },
-                    onOpenSettings = {
-                        GameModeController.setActive(false)
-                        requestedSettingsPageName = "Games"
-                        // The app behind game mode may be parked on a details route, so the
-                        // tab host has to be brought forward before selecting a tab in it.
-                        navController.navigate(TabsRoute) {
-                            popUpTo<TabsRoute> { inclusive = false }
-                            launchSingleTop = true
-                        }
-                        handleRootTabClick(AppScreenTab.Settings)
-                    },
-                )
-            }
         }
-}
-
-@Composable
-private fun GameModeLayer(
-    modifier: Modifier,
-    onExit: () -> Unit,
-    onOpenSettings: () -> Unit,
-) {
-    // A pointer-input node covering the whole layer: without it, clicks and wheel events over
-    // empty areas of the game library would fall through to the screen underneath.
-    Box(
-        modifier = modifier
-            .fillMaxSize()
-            .clickable(
-                interactionSource = remember { MutableInteractionSource() },
-                indication = null,
-                onClick = {},
-            ),
-    ) {
-        GameModeScreen(onExit = onExit, onOpenSettings = onOpenSettings)
-    }
 }
 
 @Composable
@@ -6925,6 +6913,7 @@ private fun DesktopHoverSidebar(
     onAddProfileRequested: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    val gameModeOn = GameModeController.active.collectAsStateWithLifecycle().value
     val tokens = MaterialTheme.nuvio
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
     val profileState by ProfileRepository.state.collectAsStateWithLifecycle()
@@ -7174,11 +7163,13 @@ private fun DesktopHoverSidebar(
                             LibraryNavigationContextMenu(modifier = Modifier.fillMaxWidth()) { contextModifier ->
                                 DesktopSidebarItem(
                                     label = destination.label.resolve(),
-                                    selected = if (entry == com.nuvio.app.features.navbar.NavBarEntry.Tonight) {
-                                    com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
-                                } else {
-                                    entry.isDestinationSelected(selectedTab, searchActive = false)
-                                },
+                                    selected = when (entry) {
+                                        com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
+                                        com.nuvio.app.features.navbar.NavBarEntry.Tonight ->
+                                            !gameModeOn &&
+                                                com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
+                                        else -> !gameModeOn && entry.isDestinationSelected(selectedTab, searchActive = false)
+                                    },
                                     focused = navFocused(entry),
                                     onHoverFocus = { focusSidebarRow(entry) },
                                     expanded = false,
@@ -7191,7 +7182,10 @@ private fun DesktopHoverSidebar(
                         } else {
                             DesktopSidebarItem(
                                 label = destination.label.resolve(),
-                                selected = entry.isDestinationSelected(selectedTab, searchActive = false),
+                                selected = when (entry) {
+                                    com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
+                                    else -> !gameModeOn && entry.isDestinationSelected(selectedTab, searchActive = false)
+                                },
                                 focused = navFocused(entry),
                                 onHoverFocus = { focusSidebarRow(entry) },
                                 expanded = false,
@@ -7544,6 +7538,7 @@ private fun TabletFloatingTopBar(
     onLeaveMusic: () -> Unit = {}, // fork:music-navbar
     onLeaveYouTube: () -> Unit = {}, // fork:youtube-mode
 ) {
+    val gameModeOn = GameModeController.active.collectAsStateWithLifecycle().value
     val tokens = MaterialTheme.nuvio
     val focusManager = LocalFocusManager.current
     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
@@ -7805,7 +7800,7 @@ val youTubeMiniPlayerShown = youTubeBrowsing
         contentAlignment = Alignment.TopCenter,
     ) {
         val pickerMaxHeight = (
-            maxHeight - statusBarPadding - NavBarTopOffset - 44.dp - tokens.spacing.controlGap - 8.dp
+            maxHeight - statusBarPadding - NavBarTopOffset - 44.dp - tokens.spacing.controlGap - 8.dp - SearchPanelGap
         ).coerceIn(120.dp, 360.dp)
         Column(horizontalAlignment = Alignment.CenterHorizontally) {
             Surface(
@@ -8039,10 +8034,12 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                                 // The glyph, its name and the selected state come from the entry's
                                 // descriptor (NavBarDestination.kt); only the open callback and the
                                 // Library quick menu are this bar's own.
-                                val entrySelected = if (entry == com.nuvio.app.features.navbar.NavBarEntry.Tonight) {
-                                    com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
-                                } else {
-                                    entry.isDestinationSelected(selectedTab, isSearchActive)
+                                val entrySelected = when (entry) {
+                                    com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
+                                    com.nuvio.app.features.navbar.NavBarEntry.Tonight ->
+                                        !gameModeOn &&
+                                            com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
+                                    else -> !gameModeOn && entry.isDestinationSelected(selectedTab, isSearchActive)
                                 }
                                 NavQuadrant(
                                     selected = entrySelected,
@@ -8142,16 +8139,25 @@ val youTubeMiniPlayerShown = youTubeBrowsing
 
         androidx.compose.animation.AnimatedVisibility(
                 visible = pickerVisible,
-                enter = androidx.compose.animation.fadeIn() + androidx.compose.animation.expandVertically(expandFrom = Alignment.Top),
-                exit = androidx.compose.animation.fadeOut() + androidx.compose.animation.shrinkVertically(shrinkTowards = Alignment.Top),
+                enter = androidx.compose.animation.fadeIn(tween(140)) + androidx.compose.animation.scaleIn(
+                    animationSpec = tween(140),
+                    initialScale = 0.97f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f),
+                ),
+                exit = androidx.compose.animation.fadeOut(tween(120)) + androidx.compose.animation.scaleOut(
+                    animationSpec = tween(120),
+                    targetScale = 0.97f,
+                    transformOrigin = androidx.compose.ui.graphics.TransformOrigin(0.5f, 0f),
+                ),
             ) {
+                // Its own glass panel under the bar, same night glass, edge and shadow as the pill.
                 Surface(
                     color = floatingSearchSurfaceColor,
-                    shape = androidx.compose.foundation.shape.RoundedCornerShape(bottomStart = 24.dp, bottomEnd = 24.dp),
+                    shape = androidx.compose.foundation.shape.RoundedCornerShape(24.dp),
                     tonalElevation = 0.dp,
-                    shadowElevation = 0.dp,
-                    border = androidx.compose.foundation.BorderStroke(0.5.dp, dividerColor),
-                    modifier = Modifier.width(topBarWidth).offset(y = (-0.5).dp),
+                    shadowElevation = tokens.elevation.overlay,
+                    border = BorderStroke(1.dp, dividerColor),
+                    modifier = Modifier.padding(top = SearchPanelGap).width(topBarWidth),
                 ) {
                     val shownEntries = panelMusic?.let { music -> remember(music.items) { music.items.map(::SearchPickerEntry) } }
                         ?: pickerEntries
@@ -8297,6 +8303,7 @@ private fun RowScope.NavQuadrant(
 /** How much of the night-blue glass base shows; the rest is the page behind it. */
 private const val NavBarGlassOpacity = 0.84f
 private val NavBarHeight = 48.dp
+private val SearchPanelGap = 8.dp
 // Bar centred 41dp from the top with 22dp icons: the same line and size as the nav icons in the
 // settings top bar (82dp tall, see DesktopSettingsRootNavigation), so switching to Settings leaves
 // every icon where it was.

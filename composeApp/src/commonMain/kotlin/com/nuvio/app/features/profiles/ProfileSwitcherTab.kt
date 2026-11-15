@@ -752,7 +752,10 @@ private fun SidebarCompactPinKeypad(
         listOf("", "0", "⌫"),
     )
 
-    Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+    Column(
+        modifier = Modifier.pinKeyInput(onDigit, onBackspace),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
         rows.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),
@@ -1193,7 +1196,10 @@ private fun CompactPinKeypad(
         listOf("", "0", "⌫"),
     )
 
-    Column(verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap)) {
+    Column(
+        modifier = Modifier.pinKeyInput(onDigit, onBackspace),
+        verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+    ) {
         rows.forEach { row ->
             Row(
                 modifier = Modifier.fillMaxWidth(),

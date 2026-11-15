@@ -33,6 +33,9 @@ class NavigationActionRatchetTest {
     private val baseline: Map<String, Int> = mapOf(
         "commonMain/kotlin/com/nuvio/app/core/ui/NuvioInputFields.kt" to 3,
         "commonMain/kotlin/com/nuvio/app/features/librarypvr/ManualLinkDialog.kt" to 1,
+        // Upstream 1.39's PIN pad (PinKeyInput.kt) reads the number keys, Backspace and Escape like a
+        // text field, so they are not navigation actions to rebind. Allowed as-is.
+        "commonMain/kotlin/com/nuvio/app/features/profiles/PinKeyInput.kt" to 2,
         // Merged in from upstream 1.38.1 (Umbra sync 8e2adb00b): their variants of these handlers
         // still compare the physical key, and SettingsScreen.kt/AlbumLensEdit.kt are new there.
         // The numbers are the merged counts; migrating them is the next step, and they may only shrink.

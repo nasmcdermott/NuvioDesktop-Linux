@@ -8,6 +8,7 @@ internal actual object NavBarLayoutStorage {
     private const val ORDER_KEY = "order"
     private const val GAMES_KEY = "games_in_nav"
     private const val VOICE_KEY = "voice_in_nav"
+    private const val TONIGHT_KEY = "tonight_in_nav"
 
     actual fun loadOrder(): String? = store.getString(ORDER_KEY)?.takeIf { it.isNotBlank() }
 
@@ -20,4 +21,8 @@ internal actual object NavBarLayoutStorage {
     actual fun loadVoiceInNav(): Boolean? = store.getBoolean(VOICE_KEY)
 
     actual fun saveVoiceInNav(value: Boolean) = store.putBoolean(VOICE_KEY, value)
+
+    actual fun loadTonightInNav(): Boolean? = store.getBoolean(TONIGHT_KEY)
+
+    actual fun saveTonightInNav(value: Boolean) = store.putBoolean(TONIGHT_KEY, value)
 }

@@ -502,6 +502,11 @@ private fun NativePlayerSurface(
         DesktopScreensaver.playerActive = true
         // Linux only: a held Enter-class key is forwarded once per press, not once per auto-repeat.
         val selectRepeat = LinuxHudSelectRepeatGuard()
+        // Holding the play/pause key while playing plays at 2x until it is let go; a tap still pauses on release.
+        // Paused, the key plays at once as before. Mirrors the HUD's own hold (controls.js, playHold*).
+        var playHoldKey = 0
+        var playHoldActive = false
+        var playHoldJob: kotlinx.coroutines.Job? = null
         val dispatcher = KeyEventDispatcher { event ->
             if (DesktopHostOs.current == DesktopHostOs.LINUX &&
                 (event.keyCode == KeyEvent.VK_ESCAPE ||
@@ -511,10 +516,30 @@ private fun NativePlayerSurface(
                 // behind it. The controller also consumes key-up/repeat for our own window.
                 return@KeyEventDispatcher controller.dispatchLinuxEscapeKey(event)
             }
-            if (event.id == KeyEvent.KEY_RELEASED && DesktopHostOs.current == DesktopHostOs.LINUX) {
-                selectRepeat.release(event.keyCode)
+            if (event.id == KeyEvent.KEY_RELEASED) {
+                if (DesktopHostOs.current == DesktopHostOs.LINUX) {
+                    selectRepeat.release(event.keyCode)
+                }
+                if (playHoldKey != 0 && event.keyCode == playHoldKey) {
+                    playHoldJob?.cancel()
+                    playHoldJob = null
+                    playHoldKey = 0
+                    if (playHoldActive) {
+                        playHoldActive = false
+                        controller.dispatchKeyboardShortcut("holdSpeedEnd", 0.0)
+                    } else {
+                        controller.dispatchKeyboardShortcut("keyboardToggle", 1.0)
+                    }
+                    event.consume()
+                    return@KeyEventDispatcher true
+                }
             }
             if (event.id != KeyEvent.KEY_PRESSED) return@KeyEventDispatcher false
+            // Auto-repeat of a held play/pause key: the hold is already timing or running.
+            if (playHoldKey != 0 && event.keyCode == playHoldKey) {
+                event.consume()
+                return@KeyEventDispatcher true
+            }
             // fork:pip-browse - the video in its corner box over the app: the keys drive the app.
             // fork:youtube-mini-player - same for the YouTube corner player and classic PiP: the
             // player only owns the keys while the video fills the window (see playerOwnsKeys).
@@ -575,7 +600,12 @@ private fun NativePlayerSurface(
                 navKeys.right -> "ArrowRight"
                 navKeys.select -> "Enter"
                 navKeys.dismiss -> "Escape"
-                else -> null
+                // Play / pause (a pad's A in the player) picks while the keys drive a panel or the player menu.
+                else -> if (controller.isKeyboardPanelOpen && playHoldKey == 0 &&
+                    PlayerShortcutsRepository.actionForKeyCode(event.keyCode).let {
+                        it == PlayerShortcutAction.PlayPause || it == PlayerShortcutAction.AlternatePlayPause
+                    }
+                ) "Enter" else null
             }
             val hudNavKey = if (DesktopHostOs.current == DesktopHostOs.LINUX) {
                 linuxHudNavKey(event.keyCode, controller.hudNavState, navKeys)
@@ -672,21 +702,29 @@ private fun NativePlayerSurface(
                 event.consume()
                 return@KeyEventDispatcher true
             }
-            // Enter (the select key), when no player action is bound to it: onto the on-screen controls, which the
-            // arrows then walk. Until now the controls could only be reached with the mouse.
-            if (event.keyCode == AppShortcutsRepository.keyCode(AppShortcutAction.SelectFocused) &&
-                PlayerShortcutsRepository.actionForKeyCode(event.keyCode) == null
-            ) {
-                controller.openKeyboardPanel("controls")
-                event.consume()
-                return@KeyEventDispatcher true
-            }
+            // Enter no longer starts walking the on-screen controls (2026-11-15): the player menu (P, a pad's View)
+            // reaches everything they did.
             // Rebindable actions, resolved against the user's current bindings.
             val action = PlayerShortcutsRepository.actionForKeyCode(event.keyCode)
                 ?: return@KeyEventDispatcher false
             when (action) {
-                PlayerShortcutAction.PlayPause -> controller.dispatchKeyboardShortcut("keyboardToggle", 1.0)
-                PlayerShortcutAction.AlternatePlayPause -> controller.dispatchKeyboardShortcut("keyboardToggle", 1.0)
+                PlayerShortcutAction.PlayPause, PlayerShortcutAction.AlternatePlayPause -> {
+                    if (controller.toggleWouldPlay() == false) {
+                        // Playing: wait to see whether this is a tap (pause on release) or a hold (2x).
+                        val key = event.keyCode
+                        playHoldKey = key
+                        playHoldActive = false
+                        playHoldJob = surfaceScope.launch {
+                            kotlinx.coroutines.delay(PLAY_HOLD_DELAY_MS)
+                            if (playHoldKey == key) {
+                                playHoldActive = true
+                                controller.dispatchKeyboardShortcut("holdSpeedStart", 0.0)
+                            }
+                        }
+                    } else {
+                        controller.dispatchKeyboardShortcut("keyboardToggle", 1.0)
+                    }
+                }
                 PlayerShortcutAction.ToggleMute -> controller.dispatchKeyboardShortcut("keyboardToggleMute", 1.0)
                 PlayerShortcutAction.SeekBackward -> controller.dispatchKeyboardShortcut("keyboardSeekBack", 1.0)
                 PlayerShortcutAction.SeekForward -> controller.dispatchKeyboardShortcut("keyboardSeekForward", 1.0)
@@ -716,6 +754,7 @@ private fun NativePlayerSurface(
                     controller.dispatchKeyboardShortcut("iptvChannel", -1.0)
                 }
                 PlayerShortcutAction.CycleZoom -> controller.dispatchKeyboardShortcut("resize", 1.0)
+                PlayerShortcutAction.OpenPlayerMenu -> controller.openPlayerMenu()
                 PlayerShortcutAction.SkipInterval -> {
                     if (!controller.triggerSkipIntervalIfAvailable()) return@KeyEventDispatcher false
                 }
@@ -744,6 +783,7 @@ private fun NativePlayerSurface(
             GamepadContext.playerActive = false
             DesktopScreensaver.playerActive = false
             GamepadContext.animeShaderActive = false
+            playHoldJob?.cancel()
             KeyboardFocusManager.getCurrentKeyboardFocusManager().removeKeyEventDispatcher(dispatcher)
         }
     }
@@ -2371,6 +2411,8 @@ private fun looksLikeExpiredPinnedLink(message: String): Boolean =
     EXPIRED_PINNED_LINK_STATUS.containsMatchIn(message)
 
 private const val PLAYER_BADGES_POLL_MS = 2_000L
+/** How long the play/pause key is held before it means 2x rather than pause. */
+private const val PLAY_HOLD_DELAY_MS = 350L
 
 /** How long the post-show cards take to fade in. */
 private const val POST_SHOW_SHRINK_MS = 500
