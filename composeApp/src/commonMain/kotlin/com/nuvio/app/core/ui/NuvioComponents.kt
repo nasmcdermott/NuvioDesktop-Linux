@@ -1,5 +1,7 @@
 package com.nuvio.app.core.ui
 
+import com.nuvio.app.features.settings.settingsNavItem
+
 import com.nuvio.app.core.ui.smoothBorder
 import androidx.compose.animation.AnimatedContent
 import androidx.compose.animation.AnimatedVisibility
@@ -258,7 +260,14 @@ fun NuvioActionLabel(
             )
             .then(
                 if (onClick != null) {
-                    Modifier.clickable(onClick = onClick)
+                    // A settings section's heading action ("Reset", "Refresh") sits beside the
+                    // centred title, where Compose's spatial focus never finds it: Settings walks its
+                    // own item ladder, so an action outside it could only be clicked with a pointer.
+                    // Registering it as an item puts it on that ladder, without making it the page's
+                    // first stop (registerAsEntry = false).
+                    Modifier
+                        .settingsNavItem(onActivate = onClick, registerAsEntry = false)
+                        .clickable(onClick = onClick)
                 } else {
                     Modifier
                 }
