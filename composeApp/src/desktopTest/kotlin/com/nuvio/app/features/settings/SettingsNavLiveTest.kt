@@ -53,7 +53,7 @@ import kotlin.test.assertTrue
 class SettingsNavLiveTest {
 
     @Test
-    fun escapeFromTheSettingsRootReturnsToThePreviousTab() {
+    fun escapeWalksTheSettingsFocusLadderBeforeItLeavesTheTab() {
         requireLive()
         installSignedInFixture()
 
@@ -65,18 +65,35 @@ class SettingsNavLiveTest {
             assumeTrue("The Settings screen never opened", win.openSettings())
             val enteredFrom = win.screen()
 
+            // Back inside Settings walks focus outward — page to category, category to the nav bar —
+            // and only the bar leaves for the tab Settings was opened from. The first press is always
+            // consumed by Settings, whatever holds the keys.
             win.press(KeyEvent.VK_ESCAPE)
-
+            Thread.sleep(350)
             assertTrue(
-                win.awaitScreen("Library"),
-                "Escape on the Settings root did not return to the tab it was opened from " +
+                win.screen() == enteredFrom,
+                "the first Escape left Settings instead of walking the focus ladder " +
                     "(was on '$enteredFrom', now on '${win.screen()}')",
+            )
+
+            var left = false
+            for (attempt in 1..4) {
+                win.press(KeyEvent.VK_ESCAPE)
+                Thread.sleep(350)
+                if (!win.screen().startsWith("Settings")) {
+                    left = true
+                    break
+                }
+            }
+            assertTrue(
+                left,
+                "Escape never left Settings for the tab it was opened from (still on '${win.screen()}')",
             )
         }
     }
 
     @Test
-    fun downFromThePageEntersTheCategorySidebar() {
+    fun downSailsThroughTheSidebarAndBackReachesTheBar() {
         requireLive()
         installSignedInFixture()
 
@@ -85,35 +102,30 @@ class SettingsNavLiveTest {
             if (!win.awaitMain()) return skipUnreachable(win.screen())
 
             assumeTrue("The Settings screen never opened", win.openSettings())
-            val startPage = perfSettingsPage
+            val settingsScreen = win.screen()
 
-            // Down from the page root hands the keys to the selected category row; Up on that row
-            // then walks to the category above it, which changes the page. Nothing changes the page
-            // unless the sidebar took the keys.
-            //
-            // Up rather than a second Down: the open category unfolds its sections underneath, so a
-            // Down that already entered the sidebar moves into those sections and leaves the page
-            // as it was.
-            //
-            // Repeated rather than sent once: the page composes a frame or two before its root asks
-            // for the keys (a LaunchedEffect), and a key posted into that gap is simply lost. A lost
-            // pair changes nothing, so the next one is the one that lands; a screen that really
-            // never hands the keys over runs out of attempts.
-            var enteredSidebar = false
-            for (attempt in 1..5) {
+            // Down moves through the category list and never opens a page on its own. Repeating it
+            // also covers the frames before the page's root asks for the keys.
+            repeat(3) {
                 win.press(KeyEvent.VK_DOWN)
-                Thread.sleep(400)
-                win.press(KeyEvent.VK_UP)
-                if (awaitTrue(1_500) { perfSettingsPage != startPage }) {
-                    enteredSidebar = true
+                Thread.sleep(250)
+            }
+            assertTrue(
+                win.screen() == settingsScreen,
+                "moving through the categories opened a page or left Settings (now on '${win.screen()}')",
+            )
+
+            // Back from the categories goes to the nav bar, then from the bar out of Settings.
+            var left = false
+            for (attempt in 1..6) {
+                win.press(KeyEvent.VK_ESCAPE)
+                Thread.sleep(350)
+                if (!win.screen().startsWith("Settings")) {
+                    left = true
                     break
                 }
             }
-
-            assertTrue(
-                enteredSidebar,
-                "Down did not put the keyboard in the category sidebar: still on $startPage",
-            )
+            assertTrue(left, "Back from the category list never reached the bar and left Settings")
         }
     }
 

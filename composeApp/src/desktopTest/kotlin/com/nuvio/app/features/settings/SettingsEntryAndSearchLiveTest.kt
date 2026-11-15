@@ -50,13 +50,19 @@ class SettingsEntryAndSearchLiveTest {
         }.let { it }
         try {
             val manager = awaitManager(window, focusManager) ?: return
-            // A plain entry (no requested page) must leave a control focused, not null.
-            assertNotNull(manager.focusedControl(), "opening Settings left nothing focused")
+            // A plain entry (no requested page) must leave a control focused, not null. The page's
+            // entry runs over the first frames, so poll rather than sampling once.
+            assertTrue(
+                awaitTrue(5_000) { manager.focusedControl() != null },
+                "opening Settings left nothing focused",
+            )
 
+            // The entry runs over the first frames; let it settle before sampling the control.
+            Thread.sleep(800)
             // Arrows must move focus immediately, with no click first.
             val before = manager.focusedControl()
             window.pressKey(KeyEvent.VK_DOWN)
-            Thread.sleep(300)
+            Thread.sleep(600)
             val after = manager.focusedControl()
             assertNotNull(after, "Down after opening Settings left nothing focused")
             assertTrue(
@@ -69,7 +75,10 @@ class SettingsEntryAndSearchLiveTest {
                 Thread.sleep(450)
                 onEdt { requested.value = SettingsPage.Root.name }
                 Thread.sleep(450)
-                assertNotNull(manager.focusedControl(), "a page change left focus null (cycle $it)")
+                assertTrue(
+                    awaitTrue(3_000) { manager.focusedControl() != null },
+                    "a page change left focus null (cycle $it)",
+                )
             }
         } finally {
             onEdt { window.isVisible = false; window.dispose() }
@@ -130,6 +139,13 @@ class SettingsEntryAndSearchLiveTest {
     }
 
     private fun ComposeWindow.pressKey(keyCode: Int) {
+        // The standalone window can lose the compositor's focus between opening and the first
+        // key, even though AWT still reports it focused.
+        if (!isFocused) {
+            toFront()
+            requestFocus()
+            Thread.sleep(300)
+        }
         robot.keyPress(keyCode)
         robot.keyRelease(keyCode)
     }

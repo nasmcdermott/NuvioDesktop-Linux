@@ -493,11 +493,6 @@ internal fun Modifier.settingsNavItem(
     var horizontalHeld by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
     val region = LocalSettingsFocusRegion.current
-    // Whether this item sits on a page with a parent within Settings (a nested page such as TMDB
-    // under Integrations). A content control on a page without one (a top-level category) returns
-    // focus to the sidebar on Back rather than walking the page ladder out of Settings. Read once at
-    // composition: the item belongs to exactly one page for its lifetime.
-    val pageHasParent = LocalSettingsPage.current?.desktopBackPage() != null
     // The item also serves as one of its region's entry points; see [SettingsFocusRegionEntries].
     // The region is filtered by focus manager, so a dialog's rows never become a page's fallback.
     val regionEntries = if (registerAsEntry) {
@@ -540,18 +535,21 @@ internal fun Modifier.settingsNavItem(
             }
             if (action == SettingsNavKeyAction.Back) {
                 if (event.type == KeyEventType.KeyDown) {
+                    // Back inside Settings walks the focus outward before it walks the app's history:
+                    // search results and page content go to the category list, the category list goes
+                    // to the navigation bar, and only the bar itself leaves Settings. A control with
+                    // its own Back (a sidebar sub-entry returning to its parent row) answers first.
                     if (onBack?.invoke() != true) {
-                        // A content control on a page with no parent (a top-level category such as
-                        // Watch Party) returns focus to the sidebar on Back, so a subsequent Back
-                        // from the sidebar root — not this one — exits Settings. A nested page keeps
-                        // Back on the bridge so it goes to its parent; the sidebar itself keeps Back
-                        // on the bridge so it exits Settings.
-                        val contentTopLevel = region == SettingsFocusRegion.Content && !pageHasParent
-                        if (contentTopLevel) {
-                            SettingsSidebarFocus.requestEntry(focusManager)
-                        } else {
-                            DesktopNavigationGestureBridge.requestBack()
+                        val handled = when (region) {
+                            SettingsFocusRegion.Content ->
+                                SettingsSidebarFocus.requestEntry(focusManager)
+                            SettingsFocusRegion.ContextPanel ->
+                                SettingsContentFocus.requestEntry(focusManager) ||
+                                    SettingsSidebarFocus.requestEntry(focusManager)
+                            SettingsFocusRegion.Sidebar ->
+                                SettingsTopBarFocus.requestEntry(focusManager)
                         }
+                        if (!handled) DesktopNavigationGestureBridge.requestBack()
                     }
                 }
                 return@onPreviewKeyEvent true
@@ -593,7 +591,9 @@ internal fun Modifier.settingsNavItem(
                                     SettingsTopBarFocus.requestEntry(focusManager)
                                 }
                             }
-                        } else {
+                        } else if (!focusManager.moveFocus(FocusDirection.Previous)) {
+                            // The category list's rows are separate lazy items, where a spatial Up
+                            // can find nothing; traversal order is the list's own order.
                             SettingsTopBarFocus.requestEntry(focusManager)
                         }
                     }
@@ -609,8 +609,10 @@ internal fun Modifier.settingsNavItem(
                                 focusManager.moveFocus(FocusDirection.Down)
                             }
                         }
-                    } else {
-                        focusManager.moveFocus(FocusDirection.Down)
+                    } else if (!focusManager.moveFocus(FocusDirection.Down)) {
+                        // Same as Up: a lazy list's next row is not found spatially, so walk on in
+                        // traversal order.
+                        focusManager.moveFocus(FocusDirection.Next)
                     }
                 }
                 SettingsNavKeyAction.Left, SettingsNavKeyAction.Right -> {
@@ -660,6 +662,26 @@ internal fun Modifier.settingsNavItem(
             // focused control does not ring around the whole row as well.
             if (selfFocused) Modifier.settingsFocusRing(clipContent = true) else Modifier,
         )
+}
+
+/**
+ * The category sidebar's Back handling, without taking its arrows: Back from a category row asks
+ * [onBack] for the navigation bar, and falls back to the app's ladder when no bar is drawn. The
+ * rows' Up/Down stay with the page's existing focus traversal, which already walks the lazy list and
+ * enters the open category's section list.
+ *
+ * Applied outside the row's focus target, like [settingsNavItem], so it sees the key before the
+ * row's clickable.
+ */
+internal fun Modifier.settingsBackOnly(onBack: () -> Boolean): Modifier = composed {
+    onPreviewKeyEvent { event ->
+        if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+        if (settingsNavKeyAction(event.navigationKey()) != SettingsNavKeyAction.Back) {
+            return@onPreviewKeyEvent false
+        }
+        if (!onBack()) DesktopNavigationGestureBridge.requestBack()
+        true
+    }
 }
 
 /**

@@ -4750,6 +4750,36 @@ private fun MainAppContent(
                                             request != null && dock?.ownerKey == StreamPickerDock.HOME
                                         }.distinctUntilChanged()
                                     }.collectAsStateWithLifecycle(initialValue = false)
+                                    // Drawn before the top bar so a pinned bar floats over the picker
+                                    // instead of being hidden by its full-screen wash.
+                                    if (tonightShowing) {
+                                        com.nuvio.app.features.tonight.TonightHost(
+                                            // Same start inset as the tab host beside it: the
+                                            // sidebar is a floating overlay, so without this the
+                                            // picker's heading sat clipped underneath it.
+                                            modifier = Modifier.padding(
+                                                start = if (showDesktopSidebar) DesktopSidebarCollapsedWidth else 0.dp,
+                                            ),
+                                            // Keep the pinned bar's strip clear of the heading and tiles.
+                                            contentTopInset = if (useFloatingTopBar && desktopTopBarAlwaysVisible) {
+                                                WindowInsets.statusBars.asPaddingValues().calculateTopPadding() +
+                                                    NavBarTopOffset + NavBarHeight + 16.dp
+                                            } else {
+                                                0.dp
+                                            },
+                                            onPlay = { type, id ->
+                                                navController.navigateIfResumed(
+                                                    DetailRoute(type = type, id = id, autoPlay = true),
+                                                )
+                                            },
+                                            onOpenDetails = { type, id ->
+                                                navController.navigateIfResumed(DetailRoute(type = type, id = id))
+                                            },
+                                            onClose = {
+                                                com.nuvio.app.features.tonight.TonightController.close()
+                                            },
+                                        )
+                                    }
                                     if (
                                         (useFloatingTopBar && selectedTab != AppScreenTab.Settings) ||
                                         selectedTab == AppScreenTab.Search ||
@@ -4764,7 +4794,11 @@ private fun MainAppContent(
                                             onAddProfileRequested = onSwitchProfile,
                                             // TV mode docks the source picker into the home hero, right where
                                             // the bar sits; the bar has nothing to offer there, pinned or not.
-                                            hidden = selectedTab == AppScreenTab.Home && homeHeroPickerDocked && !searchOverlayActive,
+                                            // The picker's own full-screen page is drawn before the bar, so
+                                            // a pinned bar shows over it; the hover-only bar stays out of the
+                                            // way there, as it did when the picker covered it.
+                                            hidden = (selectedTab == AppScreenTab.Home && homeHeroPickerDocked && !searchOverlayActive) ||
+                                                (tonightShowing && !desktopTopBarAlwaysVisible),
                                             // Pinning the bar is a content-screen preference: Settings
                                             // draws its own chrome, so it keeps the fade regardless.
                                             dimUntilHovered = (
@@ -4831,27 +4865,6 @@ private fun MainAppContent(
                                                 }
                                             },
                                             onNavigateToContent = { navigateToContentCount++ },
-                                        )
-                                    }
-                                    if (tonightShowing) {
-                                        com.nuvio.app.features.tonight.TonightHost(
-                                            // Same start inset as the tab host beside it: the
-                                            // sidebar is a floating overlay, so without this the
-                                            // picker's heading sat clipped underneath it.
-                                            modifier = Modifier.padding(
-                                                start = if (showDesktopSidebar) DesktopSidebarCollapsedWidth else 0.dp,
-                                            ),
-                                            onPlay = { type, id ->
-                                                navController.navigateIfResumed(
-                                                    DetailRoute(type = type, id = id, autoPlay = true),
-                                                )
-                                            },
-                                            onOpenDetails = { type, id ->
-                                                navController.navigateIfResumed(DetailRoute(type = type, id = id))
-                                            },
-                                            onClose = {
-                                                com.nuvio.app.features.tonight.TonightController.close()
-                                            },
                                         )
                                     }
                                     val setupPanelOpen by remember {

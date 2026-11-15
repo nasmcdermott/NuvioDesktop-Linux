@@ -12,6 +12,9 @@ import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.test.ExperimentalTestApi
 import androidx.compose.ui.test.onRoot
@@ -30,9 +33,9 @@ import kotlin.test.assertEquals
 import kotlin.test.assertTrue
 
 /**
- * The Back hierarchy from a settings item's perspective: a content control on a top-level page
- * returns to the sidebar, a nested page keeps Back on the bridge so it goes to its parent, and the
- * sidebar root keeps Back on the bridge so it exits Settings.
+ * The Back hierarchy from a settings item's perspective: page content and search results return to
+ * the category list, the category list returns to the navigation bar, and only the bar itself stays
+ * on the bridge so Back leaves Settings.
  */
 @OptIn(ExperimentalTestApi::class)
 class SettingsBackHierarchyTest {
@@ -79,7 +82,7 @@ class SettingsBackHierarchyTest {
     }
 
     @Test
-    fun backFromNestedContentGoesToTheParent() = runComposeUiTest {
+    fun backFromNestedContentAlsoReturnsToTheSidebar() = runComposeUiTest {
         var backRequests = 0
         GlobalScope.launch(Dispatchers.Unconfined) {
             DesktopNavigationGestureBridge.backRequests.collect { backRequests += 1 }
@@ -115,17 +118,19 @@ class SettingsBackHierarchyTest {
 
         onRoot().performKeyInput { pressKey(Key.Backspace) }
         waitForIdle()
-        assertEquals(1, backRequests, "Back from a nested page stays on the bridge (to its parent)")
-        assertEquals(false, sidebarFocused, "and does not jump straight to the sidebar")
+        assertTrue(sidebarFocused, "Back from a nested page's content returns to the sidebar too")
+        assertEquals(0, backRequests, "and must not exit Settings")
     }
 
     @Test
-    fun backFromTheSidebarRootExitsSettings() = runComposeUiTest {
+    fun backFromTheSidebarRootGoesToTheNavigationBar() = runComposeUiTest {
         var backRequests = 0
         GlobalScope.launch(Dispatchers.Unconfined) {
             DesktopNavigationGestureBridge.backRequests.collect { backRequests += 1 }
         }
+        var topBarFocused = false
         val row = FocusRequester()
+        val topBarEntry = FocusRequester()
         setContent {
             NuvioTheme(darkTheme = true, appTheme = AppTheme.CRIMSON) {
                 CompositionLocalProvider(LocalSettingsFocusRegion provides SettingsFocusRegion.Sidebar) {
@@ -137,6 +142,10 @@ class SettingsBackHierarchyTest {
                             .focusable(),
                     )
                 }
+                TopBarEntryBox(
+                    requester = topBarEntry,
+                    onFocused = { topBarFocused = it },
+                )
             }
         }
         waitForIdle()
@@ -145,7 +154,95 @@ class SettingsBackHierarchyTest {
 
         onRoot().performKeyInput { pressKey(Key.Backspace) }
         waitForIdle()
-        assertEquals(1, backRequests, "Back from the sidebar root stays on the bridge (to exit Settings)")
+        assertTrue(topBarFocused, "Back from the sidebar root focuses the navigation bar")
+        assertEquals(0, backRequests, "and does not leave Settings on the same press")
+
+        // Only the bar itself leaves Settings.
+        onRoot().performKeyInput { pressKey(Key.Backspace) }
+        waitForIdle()
+        assertEquals(1, backRequests, "Back on the navigation bar stays on the bridge (to exit Settings)")
+    }
+
+    @Test
+    fun backFromAContextPanelRowReturnsToTheContent() = runComposeUiTest {
+        var sidebarFocused = false
+        var contentFocused = false
+        val row = FocusRequester()
+        val contentEntry = FocusRequester()
+        val sidebarEntry = FocusRequester()
+        setContent {
+            NuvioTheme(darkTheme = true, appTheme = AppTheme.CRIMSON) {
+                Column {
+                    CompositionLocalProvider(LocalSettingsFocusRegion provides SettingsFocusRegion.ContextPanel) {
+                        Box(
+                            Modifier
+                                .size(60.dp)
+                                .focusRequester(row)
+                                .settingsNavItem(onActivate = {})
+                                .focusable(),
+                        )
+                    }
+                    ContentEntryBox(requester = contentEntry, onFocused = { contentFocused = it })
+                    SidebarEntryBox(
+                        requester = sidebarEntry,
+                        onFocused = { sidebarFocused = it },
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        runOnIdle { row.requestFocus() }
+        waitForIdle()
+
+        onRoot().performKeyInput { pressKey(Key.Backspace) }
+        waitForIdle()
+        assertTrue(contentFocused, "a context-panel row returns to the page in front of it")
+        assertEquals(false, sidebarFocused, "not past the page to the categories")
+    }
+
+    /** A focusable registered as the navigation bar's keyboard entry. */
+    @Composable
+    private fun TopBarEntryBox(requester: FocusRequester, onFocused: (Boolean) -> Unit) {
+        val focusManager = LocalFocusManager.current
+        DisposableEffect(requester, focusManager) {
+            SettingsTopBarFocus.register(requester, focusManager)
+            onDispose { SettingsTopBarFocus.unregister(requester) }
+        }
+        Box(
+            Modifier
+                .size(60.dp)
+                .focusRequester(requester)
+                .onFocusChanged { onFocused(it.hasFocus) }
+                // The real bar's row handles Back itself and leaves Settings through the bridge.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == androidx.compose.ui.input.key.KeyEventType.KeyDown &&
+                        event.key == Key.Backspace
+                    ) {
+                        DesktopNavigationGestureBridge.requestBack()
+                        true
+                    } else {
+                        false
+                    }
+                }
+                .focusable(),
+        )
+    }
+
+    /** A focusable registered as the page content's keyboard entry. */
+    @Composable
+    private fun ContentEntryBox(requester: FocusRequester, onFocused: (Boolean) -> Unit) {
+        val focusManager = LocalFocusManager.current
+        DisposableEffect(requester, focusManager) {
+            SettingsContentFocus.register(requester, focusManager)
+            onDispose { SettingsContentFocus.unregister(requester) }
+        }
+        Box(
+            Modifier
+                .size(60.dp)
+                .focusRequester(requester)
+                .onFocusChanged { onFocused(it.hasFocus) }
+                .focusable(),
+        )
     }
 
     /** A focusable that also serves as the registered sidebar entry, so Back's destination is observable. */

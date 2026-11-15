@@ -231,14 +231,23 @@ fun MusicPlayerHost(
             .focusRequester(keys)
             .onPreviewKeyEvent { event ->
                 if (event.type != KeyEventType.KeyDown || !hostHasFocus) return@onPreviewKeyEvent false
-                // Back out of the bar, dock or card: Escape, Backspace or the Back shortcut (a pad's B) hands focus to
-                // the page again. Only the player shortcut did before, so B and Escape left focus stuck in the player
-                // until the mouse was used (2026-11-13).
+                // Back out of the bar, dock or card: Escape, Backspace or the Back shortcut (a pad's B) leaves the
+                // player and hands the keys to the navigation bar, the same outward step the rest of the app takes.
+                // Only the player shortcut did before, so B and Escape left focus stuck in the player until the
+                // mouse was used (2026-11-13).
                 if (!big) {
                     val back = event.key == Key.Escape || event.key == Key.Backspace ||
                         appShortcutMatches(AppShortcutAction.GoBack, event)
-                    return@onPreviewKeyEvent back && !com.nuvio.app.core.ui.TextInputFocusTracker.active.value &&
-                        MusicKeyboard.playerHasFocus() && MusicKeyboard.togglePlayerFocus()
+                    if (!back || com.nuvio.app.core.ui.TextInputFocusTracker.active.value) {
+                        return@onPreviewKeyEvent false
+                    }
+                    if (!MusicKeyboard.playerHasFocus() || !MusicKeyboard.togglePlayerFocus()) {
+                        return@onPreviewKeyEvent false
+                    }
+                    if (!com.nuvio.app.core.ui.RootNavFocus.enterSidebar()) {
+                        com.nuvio.app.core.ui.RootNavFocus.enterTopBar()
+                    }
+                    return@onPreviewKeyEvent true
                 }
                 when (event.key) {
                     Key.Escape -> when {
