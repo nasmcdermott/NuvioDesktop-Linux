@@ -272,6 +272,9 @@ fun NuvioActionLabel(
                     Modifier
                 }
             )
+            // Padding sits inside the ring, so the ring clears the glyphs: drawn at the text's own
+            // bounds it shaved the sides of 'Sign out' and 'Reset to Default'.
+            .padding(horizontal = NuvioTokens.Space.s8, vertical = NuvioTokens.Space.s2)
             .accentGradientMask(),
         style = MaterialTheme.typography.titleMedium.accentBrush(),
         color = MaterialTheme.nuvio.colors.accent,

@@ -21,6 +21,7 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.focusable
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.focusProperties
 import androidx.compose.foundation.gestures.awaitEachGesture
 import androidx.compose.foundation.hoverable
@@ -1032,6 +1033,7 @@ internal fun SettingsSection(
     content: @Composable ColumnScope.() -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val sectionFocusManager = LocalFocusManager.current
     val displayTitle = settingsTitleCase(title)
     // Both anchors land the heading at the top of the page so the rows it names are in view.
     val sectionHighlight = rememberSettingsAnchorHighlight(
@@ -1119,8 +1121,20 @@ internal fun SettingsSection(
                             // control (the rows beneath it are). Header actions are their own
                             // clickables and consume their presses first, so only Select/click on
                             // the band itself toggles.
+                            //
+                            // Right descends into the heading's own action ("Reset", "Refresh")
+                            // instead of leaving for the panel beside the page: the action lives
+                            // inside this item, where the spatial moveFocus(Right) cannot see it,
+                            // so without this the only way to reach it was the pointer.
                             Modifier
-                                .settingsNavItem(onActivate = toggleCollapse, registerAsEntry = false)
+                                .settingsNavItem(
+                                    onActivate = toggleCollapse,
+                                    registerAsEntry = false,
+                                    onHorizontal = { direction ->
+                                        direction > 0 &&
+                                            sectionFocusManager.moveFocus(FocusDirection.Enter)
+                                    },
+                                )
                                 .clickable(
                                     interactionSource = remember { MutableInteractionSource() },
                                     indication = null,
