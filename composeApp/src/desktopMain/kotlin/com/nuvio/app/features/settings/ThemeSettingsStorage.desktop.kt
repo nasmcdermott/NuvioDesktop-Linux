@@ -33,6 +33,7 @@ internal actual object ThemeSettingsStorage {
     private const val desktopTopBarPinnedByDefaultKey = "desktop_top_bar_pinned_by_default"
     private const val desktopDiscoverTabVisibleKey = "desktop_discover_tab_visible"
     private const val desktopAppUiScalePercentKey = "desktop_app_ui_scale_percent"
+    private const val desktopOskScalePercentKey = "desktop_osk_scale_percent"
     private const val desktopAppUiScaleAppliesToDetailsKey = "desktop_app_ui_scale_applies_to_details"
     private const val appFontFamilyKey = "app_font_family"
     private const val appFontScalePercentKey = "app_font_scale_percent"
@@ -204,6 +205,13 @@ internal actual object ThemeSettingsStorage {
 
     actual fun saveDesktopAppUiScalePercent(percent: Int) {
         store.putInt(ProfileScopedKey.of(desktopAppUiScalePercentKey), percent)
+    }
+
+    actual fun loadDesktopOskScalePercent(): Int? =
+        store.getInt(ProfileScopedKey.of(desktopOskScalePercentKey))
+
+    actual fun saveDesktopOskScalePercent(percent: Int) {
+        store.putInt(ProfileScopedKey.of(desktopOskScalePercentKey), percent)
     }
 
     actual fun loadDesktopAppUiScaleAppliesToDetails(): Boolean? =

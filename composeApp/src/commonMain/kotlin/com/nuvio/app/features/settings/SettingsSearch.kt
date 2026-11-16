@@ -747,6 +747,15 @@ private fun settingsSearchEntries(
             section = resolve(Res.string.settings_shortcuts_on_screen_keyboard),
             icon = Icons.Rounded.Keyboard,
         )
+        addRow(
+            page = SettingsPage.KeyboardShortcuts,
+            key = "osk-scale",
+            title = resolve(Res.string.settings_shortcuts_osk_scale),
+            description = resolve(Res.string.settings_shortcuts_osk_scale_description),
+            pageLabel = resolve(Res.string.compose_settings_page_keyboard_shortcuts),
+            section = resolve(Res.string.settings_shortcuts_on_screen_keyboard),
+            icon = Icons.Rounded.Keyboard,
+        )
     }
     if (isDesktop) {
         addRow(

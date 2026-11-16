@@ -67,6 +67,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.window.Popup
 import androidx.compose.ui.window.PopupProperties
 import com.nuvio.app.core.ui.NuvioBackdropDirection
+import com.nuvio.app.core.ui.LocalPureBlackBackground
 import com.nuvio.app.core.ui.NuvioGlass
 import com.nuvio.app.core.ui.KeyboardSuggestions
 import com.nuvio.app.core.ui.ditheredBackground
@@ -170,13 +171,14 @@ internal fun OnScreenKeyboardOverlay() {
     transition.targetState = visible
     if (!transition.currentState && !transition.targetState) return
     val placement by OskPlacement.state.collectAsState()
-    // The panel sits outside the App's density scaler (see Main.kt), so it follows the App UI scale
-    // slider by applying the same multiplier itself: +25% grows the keys with the rest of the app.
-    val appUiScalePercent by remember {
+    // The panel sits outside the App's density scaler (see Main.kt) and has its own size setting.
+    // It deliberately does not follow the App UI scale: a couch user may want a big keyboard while
+    // the rest of the UI stays compact.
+    val oskScalePercent by remember {
         ThemeSettingsRepository.ensureLoaded()
-        ThemeSettingsRepository.desktopAppUiScalePercent
+        ThemeSettingsRepository.desktopOskScalePercent
     }.collectAsState()
-    val appUiScale = oskAppUiScale(appUiScalePercent)
+    val appUiScale = oskAppUiScale(oskScalePercent)
     // The popup positions within its parent, so give it the whole window to sit in.
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
         if (placement.floating) {
@@ -358,7 +360,7 @@ private fun dockedKeyboardScale(windowWidth: Dp, windowHeight: Dp): Float =
  * -50%. The keyboard is hosted beside the app rather than inside its density scaler, so it applies
  * the slider itself and its keys grow and shrink with the rest of the UI.
  */
-internal fun oskAppUiScale(percent: Int): Float = 1f + percent.coerceIn(-50, 50) / 100f
+internal fun oskAppUiScale(percent: Int): Float = 1f + percent.coerceIn(-50, 100) / 100f
 
 @Composable
 private fun ScaledDensity(scale: Float, content: @Composable () -> Unit) {
@@ -468,14 +470,22 @@ private fun OnScreenKeyboardPanel(
     }
 
     // The modal glass (see NuvioDialogSurface): the night base it needs over busy content, the
-    // glass fill and the one-pixel edge, so the panel matches the dialogs it now opens over.
-    Surface(
-        modifier = modifier
+    // glass fill and the one-pixel edge, so the panel matches the dialogs it now opens over. In
+    // AMOLED Black the panel and keys are flat black rather than dark glass.
+    val pureBlack = LocalPureBlackBackground.current
+    val panelBackground = if (pureBlack) {
+        Modifier.background(Color.Black, shape)
+    } else {
+        Modifier
             .background(
                 nuvioBackdropBrush(NuvioGlass.night(tokens.colors.background, tokens.colors.accent), NuvioBackdropDirection.Vertical),
                 shape,
             )
             .ditheredBackground(NuvioGlass.Fill, shape)
+    }
+    Surface(
+        modifier = modifier
+            .then(panelBackground)
             .border(width = 1.dp, brush = NuvioGlass.Edge, shape = shape),
         shape = shape,
         color = Color.Transparent,
@@ -577,6 +587,8 @@ private fun SuggestionCell(word: String, selected: Boolean, modifier: Modifier =
             .then(
                 if (selected) {
                     Modifier.background(brush = tokens.colors.accentFill, shape = shape, alpha = SelectedKeyGlassAlpha)
+                } else if (LocalPureBlackBackground.current) {
+                    Modifier.background(Color.Black, shape)
                 } else {
                     Modifier.ditheredBackground(NuvioGlass.Fill, shape)
                 },
@@ -623,6 +635,8 @@ private fun KeyCell(
             .then(
                 if (selected) {
                     Modifier.background(brush = tokens.colors.accentFill, shape = shape, alpha = SelectedKeyGlassAlpha)
+                } else if (LocalPureBlackBackground.current) {
+                    Modifier.background(Color.Black, shape)
                 } else {
                     Modifier.ditheredBackground(NuvioGlass.Fill, shape)
                 },

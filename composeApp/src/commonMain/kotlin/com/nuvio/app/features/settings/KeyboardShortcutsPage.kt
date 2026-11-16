@@ -386,6 +386,7 @@ private fun GamepadSection(isTablet: Boolean) {
     val deadZone by gamepadDeadZoneState().collectAsState()
     val repeatInterval by gamepadRepeatIntervalState().collectAsState()
     val mouseKeyboard by mouseKeyboardState().collectAsState()
+    val oskScalePercent by ThemeSettingsRepository.desktopOskScalePercent.collectAsState()
     val bindingsVersion by gamepadBindingsVersion().collectAsState()
     val rows = remember(bindingsVersion) { gamepadMappingRows() }
     var rebindingButton by remember { mutableStateOf<GamepadButton?>(null) }
@@ -401,6 +402,21 @@ private fun GamepadSection(isTablet: Boolean) {
                     checked = mouseKeyboard,
                     isTablet = isTablet,
                     onCheckedChange = { setMouseKeyboard(it) },
+                )
+                SettingsGroupDivider(isTablet = isTablet)
+                // Its own size, not a multiplier on App UI Scale: a couch user may want a big
+                // keyboard while the rest of the UI stays compact.
+                SettingsSliderRow(
+                    title = stringResource(Res.string.settings_shortcuts_osk_scale),
+                    description = stringResource(Res.string.settings_shortcuts_osk_scale_description),
+                    value = oskScalePercent,
+                    valueText = "${if (oskScalePercent > 0) "+" else ""}$oskScalePercent%",
+                    valueTextForValue = { "${if (it > 0) "+" else ""}$it%" },
+                    valueRange = DESKTOP_OSK_SCALE_PERCENT_RANGE,
+                    step = 5,
+                    isTablet = isTablet,
+                    modifier = Modifier.settingsScrollAnchor(SettingsScrollAnchor.searchKey("osk-scale")),
+                    onValueChange = ThemeSettingsRepository::setDesktopOskScalePercent,
                 )
             }
         }

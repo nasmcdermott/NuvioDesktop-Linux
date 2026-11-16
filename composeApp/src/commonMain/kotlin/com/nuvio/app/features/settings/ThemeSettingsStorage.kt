@@ -41,6 +41,8 @@ internal expect object ThemeSettingsStorage {
     fun saveDesktopDiscoverTabVisible(visible: Boolean)
     fun loadDesktopAppUiScalePercent(): Int?
     fun saveDesktopAppUiScalePercent(percent: Int)
+    fun loadDesktopOskScalePercent(): Int?
+    fun saveDesktopOskScalePercent(percent: Int)
     fun loadDesktopAppUiScaleAppliesToDetails(): Boolean?
     fun saveDesktopAppUiScaleAppliesToDetails(enabled: Boolean)
     fun loadAppFontFamily(): String?

@@ -43,6 +43,7 @@ import com.nuvio.app.core.ui.keyRouteInner
 import com.nuvio.app.core.ui.keyRouteOuter
 import com.nuvio.app.core.ui.DesktopNavigationGestureBridge
 import com.nuvio.app.core.ui.NuvioDesktopViewportDensityScaler
+import com.nuvio.app.core.ui.NuvioTheme
 import com.nuvio.app.core.ui.HoldToSelect
 import com.nuvio.app.core.ui.SwallowedClickRescue
 import com.nuvio.app.core.ui.SwallowedClickRescue.detectClicksSwallowedByScrolling
@@ -103,6 +104,7 @@ import com.nuvio.app.features.player.AppShortcutBridge
 import com.nuvio.app.features.player.AppShortcutsRepository
 import com.nuvio.app.core.ui.TextInputFocusTracker
 import com.nuvio.app.features.settings.DesktopWindowStartupPreference
+import com.nuvio.app.features.settings.AmoledAppearance
 import com.nuvio.app.features.settings.ThemeSettingsRepository
 import java.awt.Toolkit
 import java.awt.Frame
@@ -473,6 +475,35 @@ private inline fun desktopStartupStep(name: String, block: () -> Unit) {
             System.err.println("Error: (DesktopStartup) $name failed after ${System.currentTimeMillis() - startedAt}ms")
             error.printStackTrace(System.err)
         }
+}
+
+/**
+ * The window-level overlays (panel ring, on-screen keyboard) are hosted beside [App] in the window,
+ * so they sit outside the NuvioTheme that App() installs for its own content. Read the same theme
+ * settings here so they follow the selected theme, dark mode and AMOLED/black appearance instead of
+ * falling back to the default light Material palette.
+ */
+@androidx.compose.runtime.Composable
+private fun NuvioOverlayTheme(content: @androidx.compose.runtime.Composable () -> Unit) {
+    val selectedTheme by remember {
+        ThemeSettingsRepository.ensureLoaded()
+        ThemeSettingsRepository.selectedTheme
+    }.collectAsState()
+    val customTheme by remember { ThemeSettingsRepository.customTheme }.collectAsState()
+    val amoledMode by remember { ThemeSettingsRepository.amoledMode }.collectAsState()
+    val accentGradient by remember { ThemeSettingsRepository.accentGradientDirection }.collectAsState()
+    val appFontFamily by remember { ThemeSettingsRepository.appFontFamily }.collectAsState()
+    val appFontScalePercent by remember { ThemeSettingsRepository.appFontScalePercent }.collectAsState()
+    NuvioTheme(
+        appTheme = selectedTheme,
+        customThemePalette = customTheme.palette,
+        amoled = amoledMode != AmoledAppearance.Off,
+        pureBlackBackground = amoledMode == AmoledAppearance.Black,
+        accentGradientDirection = accentGradient,
+        appFontFamilyName = appFontFamily,
+        appFontScale = appFontScalePercent / 100f,
+        content = content,
+    )
 }
 
 /**
@@ -1272,12 +1303,14 @@ fun main(args: Array<String>) {
                     // Above the app so it covers whatever screen owns the focused field, and hosted
                     // here rather than inside App() because it is desktop-only.
                     // Over the app and under the on-screen keyboard: the panel ring (R, hold LB, hold the middle button).
-                    com.nuvio.app.core.ui.TvMenuBackdrop()
-                    // The panel ring and its hint are drawn beside App(), so the App's density
-                    // scaler does not reach them. Give them the same scale (viewport and the App
-                    // UI slider) or they stay small while the rest of the UI grows.
-                    PanelRingChrome(window)
-                    com.nuvio.app.features.input.OnScreenKeyboardOverlay()
+                    NuvioOverlayTheme {
+                        com.nuvio.app.core.ui.TvMenuBackdrop()
+                        // The panel ring and its hint are drawn beside App(), so the App's density
+                        // scaler does not reach them. Give them the same scale (viewport and the App
+                        // UI slider) or they stay small while the rest of the UI grows.
+                        PanelRingChrome(window)
+                        com.nuvio.app.features.input.OnScreenKeyboardOverlay()
+                    }
                     com.nuvio.app.core.ui.FrameCadenceTelemetry()
                     com.nuvio.app.core.ui.FrameBudgetTelemetry()
                     com.nuvio.app.core.ui.SteadyFramePacingEffect(window)

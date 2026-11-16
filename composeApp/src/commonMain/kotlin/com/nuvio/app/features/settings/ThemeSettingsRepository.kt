@@ -33,6 +33,9 @@ data class CustomThemeSettings(
 const val DEFAULT_APP_FONT_SCALE_PERCENT = 100
 val APP_FONT_SCALE_PERCENT_RANGE = 70..130
 
+/** The on-screen keyboard's own size range: down to half, up to double. */
+val DESKTOP_OSK_SCALE_PERCENT_RANGE = -50..100
+
 /** The appearance choice: normal, the existing AMOLED look, or complete black. */
 enum class AmoledAppearance { Off, Amoled, Black }
 
@@ -97,6 +100,12 @@ object ThemeSettingsRepository {
     private val _desktopAppUiScalePercent = MutableStateFlow(0)
     val desktopAppUiScalePercent: StateFlow<Int> = _desktopAppUiScalePercent.asStateFlow()
 
+    // The on-screen keyboard has its own size. It is deliberately not composed with the App UI
+    // scale: a couch user may want a big keyboard while the rest of the UI stays compact (or the
+    // other way round), and changing one must not move the other.
+    private val _desktopOskScalePercent = MutableStateFlow(0)
+    val desktopOskScalePercent: StateFlow<Int> = _desktopOskScalePercent.asStateFlow()
+
     private val _desktopAppUiScaleAppliesToDetails = MutableStateFlow(true)
     val desktopAppUiScaleAppliesToDetails: StateFlow<Boolean> = _desktopAppUiScaleAppliesToDetails.asStateFlow()
 
@@ -143,6 +152,7 @@ object ThemeSettingsRepository {
         _desktopTopBarAlwaysVisible.value = false
         _desktopDiscoverTabVisible.value = true
         _desktopAppUiScalePercent.value = 0
+        _desktopOskScalePercent.value = 0
         _desktopAppUiScaleAppliesToDetails.value = true
         NativeTabBridge.publishAccentColor(ThemeColors.Ocean.nativeAccentHex)
         NativeTabBridge.publishLiquidGlassEnabled(false)
@@ -213,6 +223,8 @@ object ThemeSettingsRepository {
         _desktopDiscoverTabVisible.value = ThemeSettingsStorage.loadDesktopDiscoverTabVisible() ?: true
         _desktopAppUiScalePercent.value =
             ThemeSettingsStorage.loadDesktopAppUiScalePercent()?.coerceIn(-50, 50) ?: 0
+        _desktopOskScalePercent.value =
+            ThemeSettingsStorage.loadDesktopOskScalePercent()?.coerceIn(DESKTOP_OSK_SCALE_PERCENT_RANGE) ?: 0
         _desktopAppUiScaleAppliesToDetails.value =
             ThemeSettingsStorage.loadDesktopAppUiScaleAppliesToDetails() ?: true
         _appFontFamily.value = ThemeSettingsStorage.loadAppFontFamily()?.trim().orEmpty()
@@ -387,6 +399,14 @@ object ThemeSettingsRepository {
         if (_desktopAppUiScalePercent.value == clamped) return
         _desktopAppUiScalePercent.value = clamped
         ThemeSettingsStorage.saveDesktopAppUiScalePercent(clamped)
+    }
+
+    fun setDesktopOskScalePercent(percent: Int) {
+        ensureLoaded()
+        val clamped = percent.coerceIn(DESKTOP_OSK_SCALE_PERCENT_RANGE)
+        if (_desktopOskScalePercent.value == clamped) return
+        _desktopOskScalePercent.value = clamped
+        ThemeSettingsStorage.saveDesktopOskScalePercent(clamped)
     }
 
     /**

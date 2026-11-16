@@ -4348,6 +4348,8 @@
     <string name="settings_shortcuts_esc_windowed_first">Escape goes windowed first</string>
     <string name="settings_shortcuts_esc_windowed_first_description">In fullscreen playback, Escape leaves fullscreen instead of closing the player. Press it again while windowed to close.</string>
     <string name="settings_shortcuts_on_screen_keyboard">On-screen keyboard</string>
+    <string name="settings_shortcuts_osk_scale">Keyboard Scale</string>
+    <string name="settings_shortcuts_osk_scale_description">Sizes only the on-screen keyboard, independently of App UI Scale. Up to double size.</string>
     <string name="settings_shortcuts_osk_show_for_mouse">Show for mouse</string>
     <string name="settings_shortcuts_osk_show_for_mouse_description">Open the on-screen keyboard whenever a text box is clicked, so you can search by clicking letters — for a wireless mouse on the couch with no keyboard.</string>
     <string name="settings_shortcuts_controller">Controller</string>
