@@ -1699,7 +1699,9 @@ internal data class ContinueWatchingLayout(
 internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatchingLayout =
     when {
         maxWidthDp >= 1440f -> ContinueWatchingLayout(
-            itemGap = 20.dp,
+            // The same card gap as NuvioShelfSection's Library/Discover rows: Home must not read
+            // as a different page because its Continue Watching row is spaced wider.
+            itemGap = 10.dp,
             wideCardWidth = 400.dp,
             wideCardHeight = 160.dp,
             widePosterStripWidth = 100.dp,
@@ -1718,7 +1720,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             posterBadgeTextSize = 12.sp,
         )
         maxWidthDp >= 1024f -> ContinueWatchingLayout(
-            itemGap = 18.dp,
+            itemGap = 10.dp,
             wideCardWidth = 350.dp,
             wideCardHeight = 140.dp,
             widePosterStripWidth = 90.dp,
@@ -1737,7 +1739,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             posterBadgeTextSize = 10.sp,
         )
         maxWidthDp >= 768f -> ContinueWatchingLayout(
-            itemGap = 16.dp,
+            itemGap = 10.dp,
             wideCardWidth = 320.dp,
             wideCardHeight = 130.dp,
             widePosterStripWidth = 85.dp,
@@ -1756,7 +1758,7 @@ internal fun rememberContinueWatchingLayout(maxWidthDp: Float): ContinueWatching
             posterBadgeTextSize = 10.sp,
         )
         else -> ContinueWatchingLayout(
-            itemGap = 16.dp,
+            itemGap = 10.dp,
             wideCardWidth = 280.dp,
             wideCardHeight = 120.dp,
             widePosterStripWidth = 80.dp,
