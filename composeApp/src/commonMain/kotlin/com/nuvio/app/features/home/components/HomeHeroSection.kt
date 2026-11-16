@@ -2982,6 +2982,9 @@ private const val HERO_DISC_PEEK = 0.32f
 /** Lines of synopsis the hero shows before the rest has to be scrolled into view. */
 private const val HeroSynopsisMaxLines = 5
 
+/** Further shrink applied to the hero synopsis on top of its base 0.94 bodyLarge size. */
+private const val HeroSynopsisShrink = 0.9f
+
 /**
  * fork:music-search - how one screen's TV Mode hero differs from Home's: the metadata column (logo, genres, plot) [lift]ed
  * that far above the shelf, and the plot allowed up to [synopsisMaxLines] lines when the column has the room (Home's is 5).
@@ -3078,9 +3081,13 @@ private fun HeroSynopsis(
     maxLines: Int = HeroSynopsisMaxLines,
 ) {
     // Slightly smaller than bodyLarge: at TV distance the synopsis was the widest, densest block
-    // and made the hierarchy read bottom-heavy against the metadata line.
+    // and made the hierarchy read bottom-heavy against the metadata line. The extra 10% brings it
+    // down again without touching the genre line above or the footer below.
     val body = MaterialTheme.typography.bodyLarge
-    val style = body.copy(fontSize = body.fontSize * 0.94f)
+    val style = body.copy(
+        fontSize = body.fontSize * 0.94f * HeroSynopsisShrink,
+        lineHeight = if (body.lineHeight.isSpecified) body.lineHeight * HeroSynopsisShrink else body.lineHeight,
+    )
     val color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.82f)
     val density = LocalDensity.current
     val scrollState = remember(resetKey) { ScrollState(0) }
