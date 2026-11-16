@@ -1267,6 +1267,7 @@
     <string name="settings_poster_highlight">Focused Poster Highlight</string>
     <string name="settings_poster_highlight_description">The effect applied when hovering something.</string>
     <string name="settings_poster_highlight_off">Off</string>
+    <string name="settings_poster_highlight_border">Border</string>
     <string name="settings_poster_highlight_white">White</string>
     <string name="settings_poster_highlight_accent">Accent</string>
     <string name="settings_poster_highlight_shine">Shine</string>

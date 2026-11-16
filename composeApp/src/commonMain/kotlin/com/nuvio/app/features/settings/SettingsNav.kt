@@ -82,6 +82,14 @@ internal enum class SettingsFocusRegion { Sidebar, Content, ContextPanel }
 internal val LocalSettingsFocusRegion = staticCompositionLocalOf { SettingsFocusRegion.Content }
 
 /**
+ * The focus manager whose Settings shell paints one focus ring over the whole page (see
+ * [SettingsScreen]). Items composed under it leave the outline to that overlay instead of drawing a
+ * second ring of their own. A dialog composes its own focus manager, so its items still draw the
+ * known-good per-item ring where the page overlay cannot reach.
+ */
+internal val LocalSettingsFocusRingOwner = staticCompositionLocalOf<FocusManager?> { null }
+
+/**
  * The focus stops of one region, in composition order. The page has several entry points into its
  * content — opening a category, stepping Left out of the context panel, giving up a bar — and none
  * of them can name a row ahead of time. Each item registers the requester it already needs, and an
@@ -492,6 +500,7 @@ internal fun Modifier.settingsNavItem(
     // Set while a Left/Right this item took is still held, so its key-up commits exactly once.
     var horizontalHeld by remember { mutableStateOf(false) }
     val focusManager = LocalFocusManager.current
+    val focusRingOwner = LocalSettingsFocusRingOwner.current
     val region = LocalSettingsFocusRegion.current
     // The item also serves as one of its region's entry points; see [SettingsFocusRegionEntries].
     // The region is filtered by focus manager, so a dialog's rows never become a page's fallback.
@@ -659,8 +668,14 @@ internal fun Modifier.settingsNavItem(
         }
         .then(
             // The ring marks the stop the keys are actually on: a row that merely contains the
-            // focused control does not ring around the whole row as well.
-            if (selfFocused) Modifier.settingsFocusRing(clipContent = true) else Modifier,
+            // focused control does not ring around the whole row as well. A Settings shell that
+            // paints its own page-wide ring is the one exception: drawing this one too put two
+            // outlines around the same stop.
+            if (selfFocused && focusRingOwner !== focusManager) {
+                Modifier.settingsFocusRing(clipContent = true)
+            } else {
+                Modifier
+            },
         )
 }
 

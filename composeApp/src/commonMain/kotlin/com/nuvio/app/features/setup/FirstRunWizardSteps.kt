@@ -91,6 +91,7 @@ import nuvio.composeapp.generated.resources.settings_poster_card_width
 import nuvio.composeapp.generated.resources.settings_poster_hide_labels
 import nuvio.composeapp.generated.resources.settings_poster_highlight
 import nuvio.composeapp.generated.resources.settings_poster_highlight_accent
+import nuvio.composeapp.generated.resources.settings_poster_highlight_border
 import nuvio.composeapp.generated.resources.settings_poster_highlight_description
 import nuvio.composeapp.generated.resources.settings_poster_highlight_off
 import nuvio.composeapp.generated.resources.settings_poster_highlight_shine
@@ -383,6 +384,7 @@ internal fun nearestPosterPresetIndex(widthDp: Int): Int =
 private val PosterHighlightMode.labelRes: StringResource
     get() = when (this) {
         PosterHighlightMode.Off -> Res.string.settings_poster_highlight_off
+        PosterHighlightMode.Border -> Res.string.settings_poster_highlight_border
         PosterHighlightMode.White -> Res.string.settings_poster_highlight_white
         PosterHighlightMode.Accent -> Res.string.settings_poster_highlight_accent
         PosterHighlightMode.Shine -> Res.string.settings_poster_highlight_shine

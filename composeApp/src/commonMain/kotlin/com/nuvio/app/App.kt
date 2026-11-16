@@ -8270,6 +8270,14 @@ private fun RowScope.NavQuadrant(
         targetValue = if (hovered || selected) Color.White else Color.White.copy(alpha = 0.55f),
         animationSpec = tween(durationMillis = 140),
     )
+    // The bar's icons zoom on keyboard/D-pad focus and on hover, like the sidebar's icons and the
+    // Settings category rows. The 40dp slot holds the 22dp glyph at 1.18x (about 26dp), so the row
+    // keeps its layout and neighbouring slots are never overlapped.
+    val iconScale by animateFloatAsState(
+        targetValue = if (focused || hovered) 1.18f else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = "navbarIconFocusScale",
+    )
     val iconModifier = Modifier
         .size(NavBarIconSize)
         .then(if (selected) Modifier.settingsGlassGlyph() else Modifier)
@@ -8296,7 +8304,15 @@ private fun RowScope.NavQuadrant(
             ),
         contentAlignment = Alignment.Center,
     ) {
-        content(iconModifier, iconTint)
+        Box(
+            modifier = Modifier.graphicsLayer {
+                scaleX = iconScale
+                scaleY = iconScale
+            },
+            contentAlignment = Alignment.Center,
+        ) {
+            content(iconModifier, iconTint)
+        }
     }
 }
 

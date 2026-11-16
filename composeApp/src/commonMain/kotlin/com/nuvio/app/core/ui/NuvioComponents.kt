@@ -241,23 +241,15 @@ fun NuvioActionLabel(
     modifier: Modifier = Modifier,
     onClick: (() -> Unit)? = null,
 ) {
-    var focused by remember { mutableStateOf(false) }
     val ringShape = RoundedCornerShape(NuvioTokens.Radius.sm)
     Text(
         text = text,
         // Masked so a gradient accent sweeps the label the way it sweeps a filled accent surface;
-        // a no-op on the built-in palettes, which paint accents flat. The ring marks it as a real
-        // keyboard stop, like every other clickable in Settings.
+        // a no-op on the built-in palettes, which paint accents flat. The focus ring is the one
+        // settingsNavItem adds around the padded control; drawing another here around the bare
+        // glyphs gave a focused action two rings.
         modifier = modifier
             .clip(ringShape)
-            .onFocusChanged { focused = it.isFocused }
-            .then(
-                if (focused) {
-                    Modifier.border(2.dp, MaterialTheme.nuvio.colors.borderFocus, ringShape)
-                } else {
-                    Modifier
-                },
-            )
             .then(
                 if (onClick != null) {
                     // A settings section's heading action ("Reset", "Refresh") sits beside the

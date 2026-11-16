@@ -683,6 +683,9 @@ fun SettingsScreen(
             if (mergedInto != null) {
                 LaunchedEffect(page) { currentPage = mergedInto.name }
             }
+            CompositionLocalProvider(
+                LocalSettingsFocusRingOwner provides if (isDesktop) settingsFocusManager else null,
+            ) {
             TabletSettingsScreen(
                 page = mergedInto ?: page,
                 scrollToTopRequests = scrollToTopRequests,
@@ -779,7 +782,11 @@ fun SettingsScreen(
                 onNavigateToMusic = onNavigateToMusic,
                 onSettingsSearchFocusChange = { settingsSearchHasFocus = it },
             )
+            }
         } else {
+            CompositionLocalProvider(
+                LocalSettingsFocusRingOwner provides if (isDesktop) settingsFocusManager else null,
+            ) {
             MobileSettingsScreen(
                 page = page,
                 scrollToTopRequests = scrollToTopRequests,
@@ -869,6 +876,7 @@ fun SettingsScreen(
                 onOpenCollectionEditor = onOpenCollectionEditor,
                 onSettingsSearchFocusChange = { settingsSearchHasFocus = it },
             )
+            }
         }
         DownloadsSettingsDeleteDialog(
             target = pendingDownloadsDelete,

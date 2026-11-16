@@ -54,7 +54,7 @@ internal data class FirstRunWizardDraft(
     val tvRowDotsAnchor: HomeTvRowDotsAnchor = HomeTvRowDotsAnchor.RowTitle,
     val posterWidthDp: Int = DefaultPosterCardWidthDp,
     val landscapePostersEnabled: Boolean = false,
-    val posterHighlightMode: PosterHighlightMode = PosterHighlightMode.Shine,
+    val posterHighlightMode: PosterHighlightMode = PosterHighlightMode.Border,
     val hidePosterLabelsEnabled: Boolean = false,
     val continueWatchingVisible: Boolean = true,
     val continueWatchingStyle: ContinueWatchingSectionStyle = ContinueWatchingSectionStyle.Card,
