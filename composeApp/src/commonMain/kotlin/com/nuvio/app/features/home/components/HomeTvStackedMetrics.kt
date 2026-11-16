@@ -12,11 +12,6 @@ data class HomeTvStackedMetrics(
     val heroHeightDp: Float,
     /** Height of the backdrop artwork and its black bottom fade: the full window height. */
     val backdropHeightDp: Float,
-    /**
-     * How far down the window the artwork is painted. Past [rowBandTopDp], because a backdrop is
-     * cropped to this box; the rows are drawn over it, and the black fade still reaches solid here.
-     */
-    val artworkBottomDp: Float,
     /** Left/right padding for both the hero text and the rows: 0.5% of the window width. */
     val sidePaddingDp: Float,
     /**
@@ -50,10 +45,6 @@ data class HomeTvStackedMetrics(
     val rowListTopDp: Float,
     /** Left edge of the hero text: 0.5% of the window width, measured from the rail's right edge. */
     val heroTextLeftDp: Float,
-    /** Top of the backdrop's black bottom fade: just under the nav bar. */
-    val heroFadeTopDp: Float,
-    /** Height of the backdrop's black bottom fade: from 66.7% of the window height to the bottom edge. */
-    val heroFadeHeightDp: Float,
 )
 
 /** Synopsis line height as a fraction of window width: 47 px of a 2576 px reference. */
@@ -96,9 +87,6 @@ internal const val HOME_TV_STACKED_TEXT_SCALE_MULTIPLIER = 0.9f
 /** The first row band starts no higher than this fraction of the window height. */
 internal const val HOME_TV_STACKED_ROW_BAND_MIN_FRACTION = 0.58f
 
-/** How far down the window the artwork runs, as a fraction of its height. */
-internal const val HOME_TV_STACKED_ARTWORK_BOTTOM_FRACTION = 0.70f
-
 /** The hero text column starts this far down the window. */
 internal const val HOME_TV_STACKED_CONTENT_TOP_FRACTION = 0.13f
 
@@ -115,9 +103,6 @@ internal const val HOME_TV_STACKED_MEDAL_BAND_GAP_DP = 16f
  */
 internal fun homeTvStackedMedalTopDp(rowBandTopDp: Float, diameterDp: Float): Float =
     rowBandTopDp - diameterDp - HOME_TV_STACKED_MEDAL_BAND_GAP_DP
-
-/** The backdrop's black bottom fade starts just under the nav bar and runs to the bottom edge. */
-internal const val HOME_TV_STACKED_HERO_FADE_TOP_FRACTION = 0.05f
 
 /** Fade height where the rows layer dissolves into the hero. */
 internal const val HOME_TV_STACKED_ROW_BAND_FADE_DP = 24f
@@ -159,12 +144,10 @@ internal fun homeTvStackedMetrics(
         immersiveContentBottomPadding = contentBottomPaddingDp.dp,
     ).value
     val rowBandTopDp = maxOf(heightDp * HOME_TV_STACKED_ROW_BAND_MIN_FRACTION, backdropBottomDp)
-    val artworkBottomDp = maxOf(rowBandTopDp, heightDp * HOME_TV_STACKED_ARTWORK_BOTTOM_FRACTION * heroHeightMultiplier)
     val contentTopDp = heightDp * HOME_TV_STACKED_CONTENT_TOP_FRACTION
     return HomeTvStackedMetrics(
         heroHeightDp = heroHeightDp,
         backdropHeightDp = heightDp,
-        artworkBottomDp = artworkBottomDp,
         sidePaddingDp = widthDp * HOME_TV_STACKED_SIDE_PADDING_FRACTION,
         cardInsetDp = widthDp * HOME_TV_STACKED_CARD_INSET_FRACTION,
         rowPitchDp = heightDp * HOME_TV_STACKED_ROW_PITCH_FRACTION * (guiScale / HOME_TV_STACKED_UI_SCALE_REFERENCE),
@@ -180,8 +163,6 @@ internal fun homeTvStackedMetrics(
         rowBandFadeDp = HOME_TV_STACKED_ROW_BAND_FADE_DP,
         rowListTopDp = rowBandTopDp - HOME_TV_STACKED_ROW_BAND_FADE_DP,
         heroTextLeftDp = widthDp * HOME_TV_STACKED_SIDE_PADDING_FRACTION,
-        heroFadeTopDp = heightDp * HOME_TV_STACKED_HERO_FADE_TOP_FRACTION,
-        heroFadeHeightDp = heightDp * (1f - HOME_TV_STACKED_HERO_FADE_TOP_FRACTION),
     )
 }
 

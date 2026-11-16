@@ -211,9 +211,6 @@ private val DesktopHeroBackdropAlignment = BiasAlignment(
     horizontalBias = 0f,
     verticalBias = -0.65f,
 )
-/** Linux TV Mode stacked rows: top of the art stays in view (vertical bias -1 is no top crop). */
-private val StackedHeroBackdropAlignment = BiasAlignment(horizontalBias = 1f, verticalBias = -1f)
-
 private val ImmersiveHeroBackdropAlignment = BiasAlignment(
     horizontalBias = 1f,
     verticalBias = -0.6f,
@@ -1695,11 +1692,10 @@ private fun DesktopHomeHeroFrame(
     // the rail, and the trailer surface, which is a heavyweight native window Compose cannot draw
     // over — running that to the bottom edge would hide the rows outright rather than sit behind
     // them.
-    // Linux TV Mode stacked rows: the artwork runs the full window, but the trailer and the badges
-    // stay bounded by the stacked hero's own height, so the trailer still stops above the rows.
+    // Linux TV Mode stacked rows: the trailer and the badges stop at the first media row, so they
+    // never run under the rows they belong beside. The still artwork is unaffected: it follows
+    // upstream's full-backdrop extent below.
     val immersiveBackdropHeight = if (tvStackedMetrics != null) {
-        // Linux TV Mode stacked rows: the trailer and the badges stop at the first media row, so
-        // they never run under the rows they belong beside.
         tvStackedMetrics.rowBandTopDp.dp
     } else {
         immersiveHeroBackdropHeight(
@@ -1709,13 +1705,13 @@ private fun DesktopHomeHeroFrame(
     }
     // The still artwork, and only it, is what full backdrop extends.
     val heroArtworkHeight =
-        if (tvStackedMetrics != null) {
-            // Down to the artwork's own bottom; the rows and the black fade sit over this strip.
-            tvStackedMetrics.artworkBottomDp.dp
-        } else if (immersiveFullBackdropActive) {
+        if (immersiveFullBackdropActive) {
             layout.heroHeight
         } else {
-            immersiveBackdropHeight
+            immersiveHeroBackdropHeight(
+                heroHeight = layout.heroHeight,
+                immersiveContentBottomPadding = immersiveContentBottomPadding,
+            )
         }
     val heroBackdropWidthFraction =
         if (immersiveFullBackdropActive) 1f else HERO_BACKDROP_WIDTH_FRACTION
@@ -1803,10 +1799,6 @@ private fun DesktopHomeHeroFrame(
                         backgroundColor = backgroundColor,
                         fullWidth = immersiveFullBackdropActive,
                         longFade = !immersiveMode,
-                        // Linux TV Mode stacked rows: the black left fade, 45% of the hero width.
-                        stackedWidthFraction = IMMERSIVE_STACKED_SIDE_SCRIM_WIDTH_FRACTION.takeIf {
-                            tvStackedMetrics != null
-                        },
                     )
                     .then(
                         // Basic and Adaptive take TV Mode's vignette as well: without it the text
@@ -1856,7 +1848,6 @@ private fun DesktopHomeHeroFrame(
                                 ),
                             crossfade = !pagesKeyed,
                             alignment = when {
-                                immersiveMode && tvStackedMetrics != null -> StackedHeroBackdropAlignment
                                 immersiveMode -> ImmersiveHeroBackdropAlignment
                                 adaptiveHeroMode -> BiasAlignment(horizontalBias = 0f, verticalBias = adaptiveHeroVerticalBias)
                                 else -> DesktopHeroBackdropAlignment
@@ -1880,25 +1871,13 @@ private fun DesktopHomeHeroFrame(
 
             // Ambient's dissolve takes the place of the bottom fade.
             if (!ambientFade) Box(
-                modifier = (if (immersiveMode && tvStackedMetrics != null) {
-                    Modifier
-                        .align(Alignment.TopStart)
-                        .offset(y = tvStackedMetrics.heroFadeTopDp.dp)
-                        .height(tvStackedMetrics.heroFadeHeightDp.dp)
-                } else {
-                    Modifier
-                        .height(if (immersiveMode) layout.heroHeight * 0.52f else layout.bottomFadeHeight)
-                        .align(Alignment.BottomCenter)
-                }).fillMaxWidth()
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(if (immersiveMode) layout.heroHeight * 0.52f else layout.bottomFadeHeight)
+                    .align(Alignment.BottomCenter)
                     .background(
                         nuvioDitheredVerticalGradient(
-                            if (immersiveMode && tvStackedMetrics != null) {
-                                immersiveHeroStackedBottomFadeStops(
-                                    top = HOME_TV_STACKED_HERO_FADE_TOP_FRACTION,
-                                    solid = (tvStackedMetrics.artworkBottomDp / tvStackedMetrics.backdropHeightDp)
-                                        .coerceIn(0.2f, 1f),
-                                )
-                            } else if (immersiveMode) {
+                            if (immersiveMode) {
                                 immersiveHeroBottomFadeStops(
                                     backgroundColor = backgroundColor,
                                     fullBackdrop = immersiveFullBackdropActive,
@@ -1906,7 +1885,6 @@ private fun DesktopHomeHeroFrame(
                             } else {
                                 arrayOf(
                                     0f to backgroundColor.copy(alpha = 0f),
-                                    0.55f to backgroundColor.copy(alpha = 0.42f),
                                     1f to backgroundColor,
                                 )
                             },
@@ -2243,15 +2221,13 @@ private fun Modifier.heroBackdropFadeMask(
      * own text sits lower and narrower, under its vignette, and keeps the short ramp.
      */
     longFade: Boolean = false,
-    /** Linux TV Mode stacked rows only: the black left fade's width as a fraction of the hero box. */
-    stackedWidthFraction: Float? = null,
 ): Modifier =
     drawWithContent {
         drawContent()
         drawRect(
             brush = Brush.horizontalGradient(
                 colorStops = if (fullWidth) {
-                    immersiveHeroSideScrimStops(backgroundColor, stackedWidthFraction)
+                    immersiveHeroSideScrimStops(backgroundColor)
                 } else if (longFade) {
                     arrayOf(
                         0f to backgroundColor,
@@ -2283,8 +2259,7 @@ private fun Modifier.immersiveHeroExtraMask(
                 brush = Brush.verticalGradient(
                     colorStops = arrayOf(
                         0f to Color.Transparent,
-                        0.55f to Color.Transparent,
-                        0.85f to backgroundColor.copy(alpha = 0.55f),
+                        0.82f to Color.Transparent,
                         1f to backgroundColor,
                     ),
                 ),

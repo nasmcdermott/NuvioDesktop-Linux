@@ -132,16 +132,6 @@ class HomeTvStackedMetricsTest {
     }
 
     @Test
-    fun artworkRunsBelowTheRowBandSoLowFacesAreNotCroppedAway() {
-        for (h in listOf(639f, 720f, 900f, 1080f, 1440f, 2160f)) {
-            val m = homeTvStackedMetrics(widthDp = h * 16f / 9f, heightDp = h)
-            near(0.70f * h, m.artworkBottomDp, 0.2f)
-            assertTrue(m.artworkBottomDp > m.rowBandTopDp, "the artwork reaches past the band at h=$h")
-            assertTrue(m.artworkBottomDp <= m.backdropHeightDp, "the artwork stays inside the window at h=$h")
-        }
-    }
-
-    @Test
     fun rowListStartsTheFadeAboveTheBandAndHeroTextClearsTheRail() {
         val m = homeTvStackedMetrics(widthDp = 1280f, heightDp = 720f)
         near(435.6f, m.rowBandTopDp, 0.2f)
@@ -150,15 +140,6 @@ class HomeTvStackedMetricsTest {
         // 0.5% of the content width, measured from the rail's right edge.
         near(6.4f, m.heroTextLeftDp, 0.01f)
         near(10f, homeTvStackedMetrics(widthDp = 2000f, heightDp = 1125f).heroTextLeftDp, 0.01f)
-    }
-
-    @Test
-    fun heroFadeRunsFromTheFadeTopToTheBottomEdge() {
-        val m = homeTvStackedMetrics(widthDp = 1280f, heightDp = 720f)
-        near(HOME_TV_STACKED_HERO_FADE_TOP_FRACTION * 720f, m.heroFadeTopDp, 0.01f)
-        near((1f - HOME_TV_STACKED_HERO_FADE_TOP_FRACTION) * 720f, m.heroFadeHeightDp, 0.01f)
-        near(720f, m.heroFadeTopDp + m.heroFadeHeightDp, 0.01f)
-        near(720f, m.backdropHeightDp, 0.01f)
     }
 
     @Test
@@ -212,7 +193,6 @@ class HomeTvStackedMetricsTest {
             heroHeightMultiplier = tvStackedHeroHeightMultiplier(1.75f),
         )
         assertTrue(tallest.rowBandTopDp > standard.rowBandTopDp + 100f)
-        assertTrue(tallest.artworkBottomDp > standard.artworkBottomDp)
     }
 }
 

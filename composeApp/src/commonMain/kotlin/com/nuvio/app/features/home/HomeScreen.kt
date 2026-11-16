@@ -4304,7 +4304,7 @@ fun HomeScreen(
                     roundedBottomCorners =
                         !heroAmbientBackgroundEnabled && !tvModeEnabled,
                     immersiveMode = tvModeEnabled,
-                    immersiveFullBackdrop = homeSettingsUiState.tvFullBackdropEnabled || tvStackedRowsEnabled,
+                    immersiveFullBackdrop = homeSettingsUiState.tvFullBackdropEnabled,
                     adaptiveHeroMode = adaptiveHeroEnabled,
                     pagedHero = pagedHomeHero,
                     ambientBackground =
@@ -5197,6 +5197,31 @@ fun HomeScreen(
                 ) {
                     renderHero(null)
                 }
+                // Revert the stacked-rows hero-background override from 65ee7539/1185ed39:
+                // upstream's Full backdrop lets the artwork continue behind the rows and uses this
+                // shelf scrim to reach black at the bottom edge. Stacked row geometry is unchanged.
+                val stackedFullBackdrop = tvStackedMetrics != null &&
+                    homeSettingsUiState.tvFullBackdropEnabled
+                if (stackedFullBackdrop) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxSize()
+                            .padding(top = tvStackedMetrics!!.rowBandTopDp.dp)
+                            .background(
+                                nuvioDitheredVerticalGradient(
+                                    immersiveShelfScrimStops(
+                                        backgroundColor = if (tvAmbientBackgroundEnabled) {
+                                            activeHeroAccent ?: MaterialTheme.colorScheme.primary
+                                        } else {
+                                            Color.Black
+                                        },
+                                        fullBackdrop = true,
+                                        ambientBackgroundEnabled = tvAmbientBackgroundEnabled,
+                                    ),
+                                ),
+                            ),
+                    )
+                }
                 CompositionLocalProvider(
                     LocalHomeTvStackedContinueWatchingCardWidth provides
                         homeTvStackedContinueWatchingCardWidth(tvStackedRowsEnabled),
@@ -5222,7 +5247,10 @@ fun HomeScreen(
                             ),
                         horizontalPadding = 0.dp,
                         topPadding = 0.dp,
-                        backgroundColor = if (ambientBackgroundEnabled) Color.Transparent else null,
+                        backgroundColor = if (
+                            ambientBackgroundEnabled ||
+                            (tvStackedRowsEnabled && stackedFullBackdrop)
+                        ) Color.Transparent else null,
                         listState = currentListState,
                         showDesktopScrollbar = false,
                         content = rowsContent,
