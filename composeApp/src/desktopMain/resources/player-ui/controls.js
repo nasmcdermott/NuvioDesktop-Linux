@@ -913,7 +913,9 @@ const handleHudNavKey = code => {
   const { row, index } = located;
   // The progress bar seeks like J/L instead of moving focus. Up and Down still leave it.
   if ((code === "ArrowLeft" || code === "ArrowRight") && navFocusEl === seek) {
-    send(code === "ArrowLeft" ? "keyboardSeekBack" : "keyboardSeekForward", 0);
+    const direction = code === "ArrowLeft" ? -1 : 1;
+    send(direction < 0 ? "keyboardSeekBack" : "keyboardSeekForward", 0);
+    showKeyboardSeekThumbnail(direction);
     return;
   }
   // Selected, the volume slider owns all four arrows: Right/Up louder, Left/Down quieter, one step
@@ -2156,50 +2158,45 @@ const drawSeekrCue = cue => {
   context.drawImage(sheet, cue.x, cue.y, cue.w, cue.h, 0, 0, width, height);
 };
 
+const KEYBOARD_SEEK_THUMBNAIL_HIDE_MS = 1400;
+let keyboardSeekThumbnailTimer = 0;
+const clearKeyboardSeekThumbnailTimer = () => {
+  window.clearTimeout(keyboardSeekThumbnailTimer);
+  keyboardSeekThumbnailTimer = 0;
+};
+
 const hideSeekThumbnail = () => {
   window.clearTimeout(seekThumbnailRequestTimer);
   seekThumbnailRequestTimer = 0;
   pendingSeekThumbnailPosition = -1;
+  clearKeyboardSeekThumbnailTimer();
   seekThumbnail.hidden = true;
 };
 
-const showSeekThumbnailAt = event => {
-  // Live TV: the hovered point as its distance from live ("-0:20"), since a time into the stream
-  // means nothing there. Never a frame preview: that opens a second connection to the channel,
-  // which providers that allow one connection per account answer by dropping the first.
-  const liveWindow = iptvLiveWindow();
-  if (liveWindow) {
-    const liveRect = seek.getBoundingClientRect();
-    if (liveRect.width <= 0) return hideSeekThumbnail();
-    const liveProgress = Math.max(0, Math.min(1, (event.clientX - liveRect.left) / liveRect.width));
-    const behindMs = Math.round((liveWindow.end - liveWindow.start) * (1 - liveProgress));
-    seekThumbnail.classList.add("no-preview");
-    seekThumbnail.classList.remove("seekr");
-    const liveX = Math.max(112, Math.min(liveRect.width - 112, event.clientX - liveRect.left));
-    seekThumbnail.style.left = `${liveRect.left - timeline.getBoundingClientRect().left + liveX}px`;
-    seekThumbnailTime.textContent = behindMs < 1000 ? (state.iptv.liveLabel || "LIVE") : `-${formatTime(behindMs)}`;
-    seekThumbnailChapter.hidden = true;
-    seekThumbnailImage.removeAttribute("src");
-    seekThumbnail.hidden = false;
-    return;
+// The one card for any non-live position: pointer hover and a pad/remote step both land here, so
+// their placement, chapter, time and native/Seekr frame selection cannot drift apart.
+const showSeekThumbnailAtPosition = (exactPositionMs, autoHide = false) => {
+  if (autoHide) {
+    clearKeyboardSeekThumbnailTimer();
+    keyboardSeekThumbnailTimer = window.setTimeout(hideSeekThumbnail, KEYBOARD_SEEK_THUMBNAIL_HIDE_MS);
   }
   // With previews off the card still shows the hovered time and chapter — those cost nothing.
   // Only the frame itself needs the second stream and its range request.
   const durationMs = Math.max(0, Number(state.durationMs) || 0);
   const rect = seek.getBoundingClientRect();
   if (durationMs <= 0 || rect.width <= 0) return hideSeekThumbnail();
-  const progress = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
-  const exactPositionMs = Math.round(durationMs * progress);
+  const positionMs = Math.max(0, Math.min(durationMs, Math.round(exactPositionMs)));
   // Seekr sprites cost the stream's host nothing, so they draw at once with no settle delay.
-  const seekrCue = seekrCueAt(exactPositionMs);
+  const seekrCue = seekrCueAt(positionMs);
   const previewsEnabled = !!seekrCue || !!state.seekThumbnailsEnabled;
   seekThumbnail.classList.toggle("no-preview", !previewsEnabled);
   seekThumbnail.classList.toggle("seekr", !!seekrCue);
-  const thumbnailPositionMs = Math.round(exactPositionMs / 5000) * 5000;
-  const localX = Math.max(112, Math.min(rect.width - 112, event.clientX - rect.left));
+  const thumbnailPositionMs = Math.round(positionMs / 5000) * 5000;
+  const progress = positionMs / durationMs;
+  const localX = Math.max(112, Math.min(rect.width - 112, rect.width * progress));
   seekThumbnail.style.left = `${rect.left - timeline.getBoundingClientRect().left + localX}px`;
-  seekThumbnailTime.textContent = formatTime(exactPositionMs);
-  const positionSeconds = exactPositionMs / 1000;
+  seekThumbnailTime.textContent = formatTime(positionMs);
+  const positionSeconds = positionMs / 1000;
   const chapters = displayChapters();
   const chapter = chapters.find((candidate, index) => {
     const nextStart = chapters[index + 1]?.startTime ?? Number.POSITIVE_INFINITY;
@@ -2235,6 +2232,47 @@ const showSeekThumbnailAt = event => {
   seekThumbnailRequestTimer = window.setTimeout(() => {
     send("seekThumbnail", thumbnailPositionMs);
   }, SEEK_THUMBNAIL_SETTLE_MS);
+};
+
+// A pad/remote step on the progress bar has no pointer to hover. Show the same card for the
+// position the step is heading to, then let it fade; the next step moves it on.
+const showKeyboardSeekThumbnail = direction => {
+  // Live TV keeps its "-0:20" card on pointer hover only: a frame preview would open a second
+  // connection to the channel, which single-connection providers answer by dropping the first.
+  if (iptvLiveWindow()) return;
+  const durationMs = Math.max(0, Number(state.durationMs) || 0);
+  if (durationMs <= 0) return;
+  const currentMs = isScrubbing ? scrubPositionMs : Math.max(0, Number(state.positionMs) || 0);
+  const targetMs = Math.max(0, Math.min(durationMs, currentMs + direction * seekStepSeconds() * 1000));
+  showSeekThumbnailAtPosition(targetMs, true);
+};
+
+const showSeekThumbnailAt = event => {
+  clearKeyboardSeekThumbnailTimer();
+  // Live TV: the hovered point as its distance from live ("-0:20"), since a time into the stream
+  // means nothing there. Never a frame preview: that opens a second connection to the channel,
+  // which providers that allow one connection per account answer by dropping the first.
+  const liveWindow = iptvLiveWindow();
+  if (liveWindow) {
+    const liveRect = seek.getBoundingClientRect();
+    if (liveRect.width <= 0) return hideSeekThumbnail();
+    const liveProgress = Math.max(0, Math.min(1, (event.clientX - liveRect.left) / liveRect.width));
+    const behindMs = Math.round((liveWindow.end - liveWindow.start) * (1 - liveProgress));
+    seekThumbnail.classList.add("no-preview");
+    seekThumbnail.classList.remove("seekr");
+    const liveX = Math.max(112, Math.min(liveRect.width - 112, event.clientX - liveRect.left));
+    seekThumbnail.style.left = `${liveRect.left - timeline.getBoundingClientRect().left + liveX}px`;
+    seekThumbnailTime.textContent = behindMs < 1000 ? (state.iptv.liveLabel || "LIVE") : `-${formatTime(behindMs)}`;
+    seekThumbnailChapter.hidden = true;
+    seekThumbnailImage.removeAttribute("src");
+    seekThumbnail.hidden = false;
+    return;
+  }
+  const durationMs = Math.max(0, Number(state.durationMs) || 0);
+  const rect = seek.getBoundingClientRect();
+  if (durationMs <= 0 || rect.width <= 0) return hideSeekThumbnail();
+  const progress = Math.max(0, Math.min(1, (event.clientX - rect.left) / rect.width));
+  showSeekThumbnailAtPosition(Math.round(durationMs * progress));
 };
 
 window.nuvioSeekThumbnailReady = (positionMs, dataUrl) => {

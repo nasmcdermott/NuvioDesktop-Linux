@@ -42,11 +42,16 @@ const revealChromeForPlaybackInteraction = () => {
   send("revealChrome", 0);
 };
 globalThis.__hostHide = () => { state = { ...state, controlsVisible: false }; syncHudNavState(); };
+// The preview card lives outside this sliced nav block; record the direction it is asked to show
+// so the seek tests can prove a pad/remote step requests a thumbnail as well as a seek.
+let keyboardSeekThumbnailDirections = [];
+const showKeyboardSeekThumbnail = direction => { keyboardSeekThumbnailDirections.push(direction); };
 globalThis.__nav = {
   handleHudNavKey, hudNavStateValue, syncHudNavState, hideHudForNav,
   reveal: () => revealChromeForPlaybackInteraction(),
   focused: () => navFocusEl,
   scrubbing: () => isScrubbing,
+  previews: () => keyboardSeekThumbnailDirections,
 };
 `;
 
@@ -366,6 +371,15 @@ test('Left and Right on the focused progress bar send the keyboard seek events, 
   nav.handleHudNavKey('ArrowRight');
   assert.deepEqual(actions(sent), [['keyboardSeekBack', 0], ['keyboardSeekForward', 0]]);
   assert.equal(focusedId(nav), 'seek');
+});
+
+test('a progress-bar seek also asks for the target position\'s preview card', () => {
+  const { nav } = load();
+  nav.handleHudNavKey('ArrowLeft');           // enter at toggle
+  nav.handleHudNavKey('ArrowUp');             // progress bar
+  nav.handleHudNavKey('ArrowLeft');
+  nav.handleHudNavKey('ArrowRight');
+  assert.deepEqual(Array.from(nav.previews()), [-1, 1]);
 });
 
 test('a progress-bar seek never enters the scrub pipeline', () => {
