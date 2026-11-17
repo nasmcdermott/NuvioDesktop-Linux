@@ -1,6 +1,7 @@
 package com.nuvio.app.features.tonight
 
 import com.nuvio.app.core.ui.keyLayer
+import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.requestFocusLogged
 import androidx.compose.foundation.background
 import androidx.compose.foundation.clickable
@@ -24,6 +25,8 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.staticCompositionLocalOf
+import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
@@ -43,6 +46,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.zIndex
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.graphicsLayer
@@ -88,6 +92,13 @@ internal val GlassEdge = Color.White.copy(alpha = 0.14f)
 internal val TextDim = Color(0xFFB9B6AD)
 internal val TextFaint = Color(0xFF8F8C84)
 internal val Side = 56.dp
+
+/**
+ * The strip the always-on top navigation bar occupies. Views draw their ambient wash full-height and
+ * inset only their content by this much, so the wash runs up behind the bar instead of starting below
+ * it and leaving a colour seam.
+ */
+internal val LocalTonightTopInset = staticCompositionLocalOf { 0.dp }
 
 private enum class TonightView { Launcher, Questions, Cards, CoinToss, Knockout, Flick, EndsBy, Pile, Map }
 
@@ -320,9 +331,10 @@ fun TonightHost(
                 ),
             )
     ) {
-        // The pinned top bar floats over the picker; its strip is reserved here so the heading and
-        // the tiles are not drawn underneath it. The wash behind stays full-height.
-        Box(modifier = Modifier.fillMaxSize().padding(top = contentTopInset)) {
+        // The pinned top bar floats over the picker; its strip is reserved in each view's content
+        // padding below, while the ambient wash keeps drawing full-height behind the bar.
+        CompositionLocalProvider(LocalTonightTopInset provides contentTopInset) {
+        Box(modifier = Modifier.fillMaxSize()) {
         when (view) {
             TonightView.Launcher -> TonightLauncher(
                 clock = clock,
@@ -418,6 +430,7 @@ fun TonightHost(
             )
         }
         }
+        }
     }
     // A hand dealt before the pool arrived is dealt again once it has.
     LaunchedEffect(poolState.loadedAtEpochMs) {
@@ -501,6 +514,10 @@ internal fun Modifier.tonightKeys(passBack: Boolean = false, handle: (TonightKey
         latest(key)
     }
 }
+
+/** Whatever navigation bar is drawn takes the keys: the sidebar first, then the top bar. */
+private fun enterActiveNavigationBar(): Boolean =
+    RootNavFocus.enterSidebar() || RootNavFocus.enterTopBar()
 
 private val BackKeys = setOf(Key.Escape, Key.Back, Key.Backspace)
 private val OkKeys = setOf(Key.Enter, Key.NumPadEnter, Key.DirectionCenter, Key.Spacebar)
@@ -591,6 +608,9 @@ private fun TonightLauncher(
     var selected by remember { mutableIntStateOf(Tiles.indexOfFirst { it.mode == settings.lastMode }.coerceAtLeast(0)) }
     var lastTile by remember { mutableIntStateOf(selected) }
     var notYet by remember { mutableStateOf<String?>(null) }
+    // The bar can take the keys (Left/Back); the tile or chip under them must not keep its
+    // coloured focus ring while the navigation bar is the thing that is focused.
+    var contentFocused by remember { mutableStateOf(true) }
     val focus = rememberScreenFocus(Unit)
 
     fun activate(index: Int) {
@@ -609,10 +629,11 @@ private fun TonightLauncher(
     val colours = rememberBackdropColours(art.values.mapNotNull { it.backdrop }.distinct())
     fun coloursOf(mode: TonightMode): List<Color>? = art[mode]?.backdrop?.let { colours[it] }?.takeIf { it.isNotEmpty() }
     BoxWithConstraints(modifier = Modifier.fillMaxSize()) {
+    val topInset = LocalTonightTopInset.current
     // Tiles at the backdrops' own 16:9 (user, Nov 12: were ~2.2:1, cropping the art), unless the screen is too short
     // for two rows of that and everything else, when they give up height evenly. Set by the screen, never the content.
     val tileWidth = (maxWidth - Side * 2 - 24.dp * 3) / 4
-    val roomForTiles = (maxHeight - LauncherFixedHeight - 24.dp) / 2
+    val roomForTiles = (maxHeight - topInset - LauncherFixedHeight - 24.dp) / 2
     val tileHeight = minOf(tileWidth * 9f / 16f, roomForTiles).coerceAtLeast(160.dp)
     TonightAmbientWash(Tiles.getOrNull(lastTile)?.let { coloursOf(it.mode) })
     Column(
@@ -620,12 +641,16 @@ private fun TonightLauncher(
             .fillMaxSize()
             // Focus router fallback (KeyLayers): an arrow or OK that went to no one puts focus back here.
             .keyLayer("Tonight") { focus.requestFocusLogged() }
+            // Before the focus target: this must observe the launcher root (and any focused child),
+            // not only the modifier chain after it.
+            .onFocusChanged { contentFocused = it.hasFocus }
             .focusRequester(focus)
             .focusable()
             .tonightKeys { key ->
-                // Back on the launcher closes Tonight (user, Nov 10: there must always be a way out).
+                // Back hands the keys to the navigation bar instead of closing Tonight; with no
+                // bar drawn it keeps the old way out.
                 if (key == TonightKey.Back) {
-                    onBrowseAll()
+                    if (!enterActiveNavigationBar()) onBrowseAll()
                     return@tonightKeys true
                 }
                 val s = selected
@@ -633,10 +658,12 @@ private fun TonightLauncher(
                     s == SEL_BED -> when (key) {
                         TonightKey.Left -> TonightSettingsRepository.nudgeBedtime(-1)
                         TonightKey.Right -> TonightSettingsRepository.nudgeBedtime(1)
+                        TonightKey.Up -> RootNavFocus.enterTopBar()
                         TonightKey.Down -> selected = lastTile
                         else -> Unit
                     }
                     s == SEL_BROWSE -> when (key) {
+                        TonightKey.Left -> RootNavFocus.enterSidebar()
                         TonightKey.Up -> selected = lastTile
                         TonightKey.Ok -> activate(s)
                         else -> Unit
@@ -645,7 +672,7 @@ private fun TonightLauncher(
                         val row = s / 4
                         val col = s % 4
                         when (key) {
-                            TonightKey.Left -> if (col > 0) selected = s - 1
+                            TonightKey.Left -> if (col > 0) selected = s - 1 else RootNavFocus.enterSidebar()
                             TonightKey.Right -> if (col < 3) selected = s + 1
                             TonightKey.Up -> if (row == 0) selected = SEL_BED else selected = s - 4
                             TonightKey.Down -> if (row == 1) selected = SEL_BROWSE else selected = s + 4
@@ -658,6 +685,7 @@ private fun TonightLauncher(
                 }
                 true
             }
+            .padding(top = topInset)
             .padding(horizontal = Side, vertical = 40.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(64.dp), verticalAlignment = Alignment.Top) {
@@ -677,7 +705,7 @@ private fun TonightLauncher(
             BedtimeChip(
                 settings = settings,
                 active = bedtimeFilters,
-                selected = selected == SEL_BED,
+                selected = contentFocused && selected == SEL_BED,
                 onClick = { selected = SEL_BED },
             )
         }
@@ -704,7 +732,7 @@ private fun TonightLauncher(
                         info = Tiles[index],
                         art = art[Tiles[index].mode],
                         glow = coloursOf(Tiles[index].mode)?.first()?.let(::glowColourOf) ?: lerp(accent, Color.White, 0.2f),
-                        selected = selected == index,
+                        selected = contentFocused && selected == index,
                         lastUsed = Tiles[index].mode == settings.lastMode,
                         accent = accent,
                         modifier = Modifier.weight(1f).height(tileHeight),
@@ -716,10 +744,10 @@ private fun TonightLauncher(
             if (row == 0) Spacer(Modifier.height(24.dp))
         }
         // The shared strip (TonightChrome): the hint, a separator, and the way out straight beneath it.
-        TonightControls(hint = notYet ?: "OK starts a mode · Up sets bedtime · Back closes", hintColor = if (notYet != null) accent else TextFaint) {
+        TonightControls(hint = notYet ?: "OK starts a mode · Up sets bedtime · Back to navigation", hintColor = if (notYet != null) accent else TextFaint) {
             GlassPill(
                 text = "Just browse everything  →",
-                selected = selected == SEL_BROWSE,
+                selected = contentFocused && selected == SEL_BROWSE,
                 accent = accent,
                 onClick = onBrowseAll,
                 pill = true,
@@ -915,6 +943,7 @@ private fun TonightQuestions(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 40.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
@@ -1126,6 +1155,7 @@ private fun TonightCards(
                 if (selected < SEL_BACK) lastCard = selected
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 36.dp),
     ) {
         Column(modifier = Modifier.fillMaxWidth().height(56.dp)) {

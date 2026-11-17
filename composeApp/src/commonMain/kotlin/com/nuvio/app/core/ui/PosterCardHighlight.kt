@@ -133,10 +133,15 @@ private const val PosterHighlightSweepDurationMillis = 650
  * including the sharp-cornered one.
  */
 @Composable
-internal fun Modifier.nuvioPosterHighlight(cornerRadius: Dp, artworkUrl: String? = null): Modifier {
+internal fun Modifier.nuvioPosterHighlight(
+    cornerRadius: Dp,
+    artworkUrl: String? = null,
+    /** A card that owns its focus state (YouTube's explicit focused/hovered flag) instead of a shelf slot. */
+    highlightedOverride: Boolean? = null,
+): Modifier {
     val mode = rememberPosterCardStyleUiState().posterHighlightMode
     if (mode == PosterHighlightMode.Off) return this
-    val highlighted = LocalNuvioShelfItemHighlighted.current
+    val highlighted = highlightedOverride ?: LocalNuvioShelfItemHighlighted.current
     if (mode == PosterHighlightMode.Sweep) return nuvioSweepHighlight(highlighted, cornerRadius)
     if (mode == PosterHighlightMode.Glow) {
         // Tells the shelf slot this card shows its own highlight, so it can leave the card its normal size.
@@ -153,12 +158,26 @@ internal fun Modifier.nuvioPosterHighlight(cornerRadius: Dp, artworkUrl: String?
         label = "posterHighlightRing",
     )
     if (ringAlpha <= 0f) return this
-    if (mode == PosterHighlightMode.Border) {
+    if (mode == PosterHighlightMode.Border || mode == PosterHighlightMode.Artwork) {
+        val borderColor = if (mode == PosterHighlightMode.Artwork) {
+            com.nuvio.app.features.tonight.rememberGlowOf(
+                artworkUrl,
+                androidx.compose.ui.graphics.lerp(colors.accent, Color.White, 0.2f),
+            )
+        } else {
+            colors.borderFocus
+        }
         return drawWithContent {
             drawContent()
             drawNuvioPosterBorder(
-                color = colors.borderFocus.copy(alpha = colors.borderFocus.alpha * ringAlpha),
+                color = borderColor.copy(alpha = borderColor.alpha * ringAlpha),
                 cornerRadius = cornerRadius,
+                width = if (mode == PosterHighlightMode.Artwork) {
+                    // 1.5x the standard border: 25% thinner than the earlier 2x artwork ring.
+                    PosterHighlightBorderWidth * 1.5f
+                } else {
+                    PosterHighlightBorderWidth
+                },
             )
         }
     }
@@ -398,8 +417,9 @@ private fun ContentDrawScope.drawSweepMaskedGain(
 internal fun ContentDrawScope.drawNuvioPosterBorder(
     color: Color,
     cornerRadius: Dp,
+    width: Dp = PosterHighlightBorderWidth,
 ) {
-    val strokePx = PosterHighlightBorderWidth.toPx()
+    val strokePx = width.toPx()
     val inset = strokePx / 2f
     drawRoundRect(
         color = color,

@@ -134,6 +134,7 @@ internal fun TonightMapView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 32.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(36.dp), verticalAlignment = Alignment.CenterVertically) {

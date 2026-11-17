@@ -140,6 +140,7 @@ internal fun TonightEndsByView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 36.dp),
     ) {
         Text("ENDS BY", color = TextDim, fontSize = 15.sp, letterSpacing = 2.sp, modifier = Modifier.height(22.dp))
@@ -398,6 +399,7 @@ internal fun TonightPileView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 36.dp),
     ) {
         Text(

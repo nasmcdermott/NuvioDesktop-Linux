@@ -91,6 +91,7 @@ import nuvio.composeapp.generated.resources.settings_poster_card_width
 import nuvio.composeapp.generated.resources.settings_poster_hide_labels
 import nuvio.composeapp.generated.resources.settings_poster_highlight
 import nuvio.composeapp.generated.resources.settings_poster_highlight_accent
+import nuvio.composeapp.generated.resources.settings_poster_highlight_artwork
 import nuvio.composeapp.generated.resources.settings_poster_highlight_border
 import nuvio.composeapp.generated.resources.settings_poster_highlight_description
 import nuvio.composeapp.generated.resources.settings_poster_highlight_off
@@ -388,6 +389,7 @@ private val PosterHighlightMode.labelRes: StringResource
         PosterHighlightMode.Border -> Res.string.settings_poster_highlight_border
         PosterHighlightMode.White -> Res.string.settings_poster_highlight_white
         PosterHighlightMode.Accent -> Res.string.settings_poster_highlight_accent
+        PosterHighlightMode.Artwork -> Res.string.settings_poster_highlight_artwork
         PosterHighlightMode.Shine -> Res.string.settings_poster_highlight_shine
         PosterHighlightMode.Sweep -> Res.string.settings_poster_highlight_sweep
         PosterHighlightMode.Glow -> Res.string.settings_poster_highlight_glow

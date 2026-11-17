@@ -122,6 +122,7 @@ internal fun TonightFlickView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 28.dp),
     ) {
         Row(modifier = Modifier.fillMaxWidth().height(56.dp), verticalAlignment = Alignment.CenterVertically) {

@@ -24,6 +24,7 @@ import nuvio.composeapp.generated.resources.settings_poster_description
 import nuvio.composeapp.generated.resources.settings_poster_hide_labels
 import nuvio.composeapp.generated.resources.settings_poster_highlight
 import nuvio.composeapp.generated.resources.settings_poster_highlight_accent
+import nuvio.composeapp.generated.resources.settings_poster_highlight_artwork
 import nuvio.composeapp.generated.resources.settings_poster_highlight_border
 import nuvio.composeapp.generated.resources.settings_poster_highlight_description
 import nuvio.composeapp.generated.resources.settings_poster_highlight_off
@@ -272,6 +273,10 @@ private fun posterHighlightModeOptions(): List<SettingsChoiceOption<PosterHighli
     SettingsChoiceOption(
         PosterHighlightMode.Accent,
         stringResource(Res.string.settings_poster_highlight_accent),
+    ),
+    SettingsChoiceOption(
+        PosterHighlightMode.Artwork,
+        stringResource(Res.string.settings_poster_highlight_artwork),
     ),
     SettingsChoiceOption(
         PosterHighlightMode.Shine,

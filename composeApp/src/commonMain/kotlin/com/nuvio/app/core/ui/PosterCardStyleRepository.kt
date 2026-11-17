@@ -52,6 +52,8 @@ enum class PosterHighlightMode {
     Border,
     White,
     Accent,
+    /** The focus border in the main colour of the card's own artwork. */
+    Artwork,
     Shine,
     Sweep,
 

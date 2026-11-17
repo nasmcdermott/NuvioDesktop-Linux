@@ -14,6 +14,7 @@ class PosterCardStyleComposeTest {
         assertEquals(PosterHighlightMode.Off, PosterHighlightMode.fromStoredName("Nonsense"))
         assertEquals(PosterHighlightMode.Accent, PosterHighlightMode.fromStoredName("Accent"))
         assertEquals(PosterHighlightMode.Border, PosterHighlightMode.fromStoredName("Border"))
+        assertEquals(PosterHighlightMode.Artwork, PosterHighlightMode.fromStoredName("Artwork"))
     }
 
     @Test

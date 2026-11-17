@@ -249,6 +249,7 @@ internal fun TonightCoinTossView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 36.dp),
     ) {
         Text("COIN TOSS · TOSS ${vetoes.size + 1}", color = TextDim, fontSize = 15.sp, letterSpacing = 2.sp, modifier = Modifier.height(24.dp))
@@ -456,6 +457,7 @@ internal fun TonightKnockoutView(
                 }
                 true
             }
+            .padding(top = LocalTonightTopInset.current)
             .padding(horizontal = Side, vertical = 36.dp),
     ) {
         if (bracket.entrants.size >= 2) {
