@@ -1,5 +1,8 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.core.build.AppFeaturePolicy
+import com.nuvio.app.features.sports.SportsSettingsRepository
+
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
@@ -173,16 +176,26 @@ private fun rememberNavEntrySwitches(): Map<NavBarEntry, NavEntrySwitch> {
         com.nuvio.app.features.iptv.IptvRepository.ensureLoaded()
         com.nuvio.app.features.iptv.IptvRepository.settings
     }.collectAsStateWithLifecycle()
-    return mapOf(
-        NavBarEntry.LiveTv to NavEntrySwitch(iptv.tabShown, com.nuvio.app.features.iptv.IptvRepository::setTabEnabled),
-        NavBarEntry.Discover to NavEntrySwitch(discover, ThemeSettingsRepository::setDesktopDiscoverTabVisible),
-        NavBarEntry.YouTube to NavEntrySwitch(youTube == true, YouTubeFeedRepository::setTabEnabled),
-        NavBarEntry.Music to NavEntrySwitch(music.settings.tabEnabled) { on ->
-            MusicLibraryRepository.updateSettings(MusicLibraryRepository.state.value.settings.copy(tabEnabled = on))
-        },
-        NavBarEntry.Games to NavEntrySwitch(games, NavBarLayoutRepository::setGamesInNav),
-        NavBarEntry.Tonight to NavEntrySwitch(tonight, NavBarLayoutRepository::setTonightInNav),
-    )
+    // fork:sports - read unconditionally so the composable's shape does not depend on the flag;
+    // only the switch itself is gated, below.
+    val sports by remember { SportsSettingsRepository.settings }.collectAsStateWithLifecycle()
+    return buildMap {
+        put(NavBarEntry.LiveTv, NavEntrySwitch(iptv.tabShown, com.nuvio.app.features.iptv.IptvRepository::setTabEnabled))
+        put(NavBarEntry.Discover, NavEntrySwitch(discover, ThemeSettingsRepository::setDesktopDiscoverTabVisible))
+        // fork:sports - the Sports page has the same switch; this is the other place people look for it.
+        if (AppFeaturePolicy.sportsEnabled) {
+            put(NavBarEntry.Sports, NavEntrySwitch(sports.enabled, SportsSettingsRepository::setEnabled))
+        }
+        put(NavBarEntry.YouTube, NavEntrySwitch(youTube == true, YouTubeFeedRepository::setTabEnabled))
+        put(
+            NavBarEntry.Music,
+            NavEntrySwitch(music.settings.tabEnabled) { on ->
+                MusicLibraryRepository.updateSettings(MusicLibraryRepository.state.value.settings.copy(tabEnabled = on))
+            },
+        )
+        put(NavBarEntry.Games, NavEntrySwitch(games, NavBarLayoutRepository::setGamesInNav))
+        put(NavBarEntry.Tonight, NavEntrySwitch(tonight, NavBarLayoutRepository::setTonightInNav))
+    }
 }
 
 private fun NavBarEntry.navDescription(): String = when (this) {
