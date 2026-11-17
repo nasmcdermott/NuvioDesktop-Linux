@@ -6,6 +6,25 @@ import kotlin.test.assertEquals
 
 class NavBarLayoutTest {
 
+    /**
+     * Navigation order lists an entry only when this build has it. Sports is the case that matters:
+     * its row reached the dialog on builds without the feature, showing a row whose switch was
+     * correctly absent — an entry nobody could show, hide or explain.
+     */
+    @Test
+    fun theOrderDialogOnlyListsEntriesThisBuildCarries() {
+        val listed = DEFAULT_NAV_BAR_ORDER.filter { it.existsInThisBuild() }
+
+        if (com.nuvio.app.core.build.AppFeaturePolicy.sportsEnabled) {
+            assertEquals(true, NavBarEntry.Sports in listed, "a Sports build should list Sports")
+        } else {
+            assertEquals(false, NavBarEntry.Sports in listed, "a build without the feature must not list Sports")
+        }
+        // Everything else is unconditional.
+        assert(NavBarEntry.LiveTv.existsInThisBuild())
+        assert(NavBarEntry.YouTube.existsInThisBuild())
+    }
+
     @Test
     fun theDefaultPutsFilmsFirstAndMusicThenGamesLast() {
         assertEquals(DEFAULT_NAV_BAR_ORDER, parseNavBarOrder(null))

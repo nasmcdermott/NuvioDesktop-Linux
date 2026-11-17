@@ -1,6 +1,7 @@
 package com.nuvio.app.features.navbar
 
 import androidx.compose.runtime.Composable
+import com.nuvio.app.core.build.AppFeaturePolicy
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.remember
 import androidx.compose.ui.unit.Dp
@@ -173,6 +174,18 @@ fun rememberNavBarEntries(): List<NavBarEntry> {
             NavBarEntry.Home, NavBarEntry.Search, NavBarEntry.Library -> true
         }
     }
+}
+
+/**
+ * Whether [this] entry exists in this build at all.
+ *
+ * Most entries always exist and are merely hidden by a switch. Sports is different: a build without
+ * the feature has no Sports code, so the entry must not be listed in Navigation order either —
+ * otherwise it appears there as a row nobody can show or hide.
+ */
+internal fun NavBarEntry.existsInThisBuild(): Boolean = when (this) {
+    NavBarEntry.Sports -> AppFeaturePolicy.sportsEnabled // fork:sports
+    else -> true
 }
 
 /**

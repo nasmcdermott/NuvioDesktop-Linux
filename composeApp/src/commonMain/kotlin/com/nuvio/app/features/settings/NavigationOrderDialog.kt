@@ -38,6 +38,7 @@ import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.features.music.library.MusicLibraryRepository
 import com.nuvio.app.features.navbar.NavBarEntry
 import com.nuvio.app.features.navbar.NavBarLayoutRepository
+import com.nuvio.app.features.navbar.existsInThisBuild
 import com.nuvio.app.features.youtube.YouTubeFeedRepository
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_done
@@ -82,11 +83,13 @@ internal fun NavigationOrderDialog(onDismiss: () -> Unit) {
             SettingsGlassButton(text = stringResource(Res.string.action_done), onClick = onDismiss, accent = true)
         },
     ) {
+        // A build without a feature does not list its entry at all (see existsInThisBuild).
+        val listed = order.filter { it.existsInThisBuild() }
         LazyColumn(
             modifier = Modifier.fillMaxWidth().heightIn(max = 560.dp),
             state = listState,
         ) {
-            itemsIndexed(order, key = { _, entry -> entry.key }) { index, entry ->
+            itemsIndexed(listed, key = { _, entry -> entry.key }) { index, entry ->
                 ReorderableItem(reorderState, key = entry.key) { isDragging ->
                     val elevation by animateDpAsState(if (isDragging) 4.dp else 0.dp)
                     val switch = switches[entry]
@@ -130,7 +133,7 @@ internal fun NavigationOrderDialog(onDismiss: () -> Unit) {
                                 }
                                 SettingsIconAction(
                                     onClick = { NavBarLayoutRepository.moveTo(entry, index + 2) },
-                                    enabled = index < order.lastIndex,
+                                    enabled = index < listed.lastIndex,
                                 ) {
                                     Icon(Icons.Rounded.KeyboardArrowDown, contentDescription = stringResource(Res.string.settings_playback_hud_button_move_down))
                                 }
