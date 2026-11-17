@@ -378,17 +378,21 @@ internal fun LazyListScope.appearanceSettingsContent(
                             onSelected = ThemeSettingsRepository::setDesktopSidebarItemsTop,
                         )
                     }
-                    val focusZoomEnabled by remember {
-                        ThemeSettingsRepository.desktopFocusZoomEnabled
+                    val focusZoomPercent by remember {
+                        ThemeSettingsRepository.desktopFocusZoomPercent
                     }.collectAsState()
                     SettingsGroupDivider(isTablet = isTablet)
-                    SettingsSwitchRow(
+                    SettingsSliderRow(
                         title = stringResource(Res.string.settings_appearance_focus_zoom),
                         description = stringResource(Res.string.settings_appearance_focus_zoom_description),
-                        checked = focusZoomEnabled,
+                        value = focusZoomPercent,
+                        valueText = "$focusZoomPercent%",
+                        valueTextForValue = { "$it%" },
+                        valueRange = DESKTOP_FOCUS_ZOOM_PERCENT_RANGE,
+                        step = 1,
                         isTablet = isTablet,
                         modifier = Modifier.settingsScrollAnchor(SettingsScrollAnchor.searchKey("focus-zoom")),
-                        onCheckedChange = ThemeSettingsRepository::setDesktopFocusZoomEnabled,
+                        onValueChange = ThemeSettingsRepository::setDesktopFocusZoomPercent,
                     )
                     SettingsGroupDivider(isTablet = isTablet)
                     var navigationOrderOpen by remember { mutableStateOf(false) }

@@ -12,6 +12,23 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 
+/** The reference value the old fixed focus scale used: 4%. */
+const val DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT = 4
+
+/** The focus-zoom slider's range; 0 turns focus growth off. */
+val DESKTOP_FOCUS_ZOOM_PERCENT_RANGE = 0..12
+
+/**
+ * The scale for one element whose old fixed target was [baseScale], at the user's chosen percent.
+ * 4% keeps every element exactly at its previous size; 0 removes the growth entirely.
+ */
+fun focusZoomScale(baseScale: Float, percent: Int): Float {
+    val factor = percent.coerceIn(DESKTOP_FOCUS_ZOOM_PERCENT_RANGE).toFloat() /
+        DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT.toFloat()
+    return 1f + (baseScale - 1f) * factor
+}
+
+
 data class CustomThemeSettings(
     val accentHex: String = ThemeColors.DefaultCustomAccentHex,
     // Second stop of the accent gradient. Equal to accentHex means accents stay flat.
@@ -91,10 +108,11 @@ object ThemeSettingsRepository {
     // activation strip. Settings is unaffected — it renders its own chrome, not this bar.
     private val _desktopTopBarAlwaysVisible = MutableStateFlow(false)
     val desktopTopBarAlwaysVisible: StateFlow<Boolean> = _desktopTopBarAlwaysVisible.asStateFlow()
-    // Settings' small focus/hover growth (text, icons, toggles, sliders, dropdowns). On by default;
-    // a shared switch so people who find it distracting can turn it off in one place.
-    private val _desktopFocusZoomEnabled = MutableStateFlow(true)
-    val desktopFocusZoomEnabled: StateFlow<Boolean> = _desktopFocusZoomEnabled.asStateFlow()
+    // Settings' small focus/hover growth (text, icons, toggles, sliders, dropdowns) and the
+    // Home/Explore/Library poster magnification. 4% is the old fixed look; the slider scales every
+    // element from that reference, and 0 turns the focus growth off.
+    private val _desktopFocusZoomPercent = MutableStateFlow(DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT)
+    val desktopFocusZoomPercent: StateFlow<Int> = _desktopFocusZoomPercent.asStateFlow()
 
     // Hides the Discover entry from the desktop navigation. Navigation to the tab is blocked while
     // it is off, so the tab can never be selected without a way back to it in the bar.
@@ -160,7 +178,7 @@ object ThemeSettingsRepository {
         _desktopTopBarAlwaysVisible.value = false
         _desktopDiscoverTabVisible.value = true
         _desktopTopBarAlwaysVisible.value = false
-        _desktopFocusZoomEnabled.value = true
+        _desktopFocusZoomPercent.value = DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT
         _desktopDiscoverTabVisible.value = true
         _desktopSidebarItemsTop.value = false
         _desktopAppUiScalePercent.value = 0
@@ -234,7 +252,10 @@ object ThemeSettingsRepository {
         _desktopTopBarAlwaysVisible.value = ThemeSettingsStorage.loadDesktopTopBarAlwaysVisible() ?: false
         _desktopDiscoverTabVisible.value = ThemeSettingsStorage.loadDesktopDiscoverTabVisible() ?: true
         _desktopTopBarAlwaysVisible.value = ThemeSettingsStorage.loadDesktopTopBarAlwaysVisible() ?: false
-        _desktopFocusZoomEnabled.value = ThemeSettingsStorage.loadDesktopFocusZoomEnabled() ?: true
+        _desktopFocusZoomPercent.value =
+            ThemeSettingsStorage.loadDesktopFocusZoomPercent()
+                ?.coerceIn(DESKTOP_FOCUS_ZOOM_PERCENT_RANGE)
+                ?: DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT
         _desktopDiscoverTabVisible.value = ThemeSettingsStorage.loadDesktopDiscoverTabVisible() ?: true
         _desktopSidebarItemsTop.value = ThemeSettingsStorage.loadDesktopSidebarItemsTop() ?: false
         _desktopAppUiScalePercent.value =
@@ -401,11 +422,12 @@ object ThemeSettingsRepository {
         _desktopTopBarAlwaysVisible.value = enabled
         ThemeSettingsStorage.saveDesktopTopBarAlwaysVisible(enabled)
     }
-    fun setDesktopFocusZoomEnabled(enabled: Boolean) {
+    fun setDesktopFocusZoomPercent(percent: Int) {
         ensureLoaded()
-        if (_desktopFocusZoomEnabled.value == enabled) return
-        _desktopFocusZoomEnabled.value = enabled
-        ThemeSettingsStorage.saveDesktopFocusZoomEnabled(enabled)
+        val next = percent.coerceIn(DESKTOP_FOCUS_ZOOM_PERCENT_RANGE)
+        if (_desktopFocusZoomPercent.value == next) return
+        _desktopFocusZoomPercent.value = next
+        ThemeSettingsStorage.saveDesktopFocusZoomPercent(next)
     }
 
     fun setDesktopSidebarItemsTop(top: Boolean) {

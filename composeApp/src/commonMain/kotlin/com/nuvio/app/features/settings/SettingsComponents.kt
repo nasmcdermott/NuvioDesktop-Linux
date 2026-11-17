@@ -203,9 +203,9 @@ internal fun rememberSettingsHoverState(): Pair<MutableInteractionSource, Boolea
 /** The small zoom the Settings category rows use, applied to a row's title and help text while it holds the keys. */
 @Composable
 internal fun Modifier.settingsRowTextZoom(focused: Boolean, label: String): Modifier {
-    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val zoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val scale by animateFloatAsState(
-        targetValue = if (focused && zoomEnabled) SettingsTextFocusScale else 1f,
+        targetValue = if (focused) focusZoomScale(SettingsTextFocusScale, zoomPercent) else 1f,
         animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = label,
     )
@@ -223,9 +223,9 @@ internal fun Modifier.settingsControlZoom(
     label: String,
     scale: Float = SettingsTextFocusScale,
 ): Modifier {
-    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val zoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val animated by animateFloatAsState(
-        targetValue = if (focused && zoomEnabled) scale else 1f,
+        targetValue = if (focused) focusZoomScale(scale, zoomPercent) else 1f,
         animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = label,
     )

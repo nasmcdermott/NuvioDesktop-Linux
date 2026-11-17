@@ -59,6 +59,7 @@ import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.snapshotFlow
 import androidx.compose.runtime.getValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.mutableStateOf
@@ -454,7 +455,15 @@ internal fun NuvioShelfItemSlot(
     // only on a card that draws the glow; any other keeps the enlarge so the row never loses its place.
     val report = remember { NuvioShelfHighlightReport() }
     val enlarge = rememberPosterCardStyleUiState().posterHighlightMode != PosterHighlightMode.Glow || !report.drawsGlow
-    val scale by animateFloatAsState(targetValue = if (focused && enlarge) 1.04f else 1f)
+    val focusZoomPercent by com.nuvio.app.features.settings.ThemeSettingsRepository
+        .desktopFocusZoomPercent.collectAsStateWithLifecycle()
+    val scale by animateFloatAsState(
+        targetValue = if (focused && enlarge) {
+            com.nuvio.app.features.settings.focusZoomScale(1.04f, focusZoomPercent)
+        } else {
+            1f
+        },
+    )
     Box(
         modifier = modifier
             .zIndex(if (focused) 1f else 0f)

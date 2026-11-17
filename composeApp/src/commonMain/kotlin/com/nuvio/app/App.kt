@@ -385,6 +385,7 @@ import com.nuvio.app.features.settings.LicensesAttributionsSettingsScreen
 import com.nuvio.app.features.settings.DesktopNavigationLayout
 import com.nuvio.app.features.settings.SettingsSearchIndex
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.settings.focusZoomScale
 import com.nuvio.app.features.collection.CollectionEditorScreen
 import com.nuvio.app.features.collection.CollectionEditorRepository
 import com.nuvio.app.features.collection.CollectionRepository
@@ -7534,10 +7535,10 @@ private fun DesktopSidebarItem(
     // slot is fixed and the glyph is smaller than it, so the scale stays inside the slot: the
     // column never shifts and neighbouring rows are never overlapped.
     val sidebarFocused = LocalDesktopSidebarFocused.current
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val iconFocusScale by animateFloatAsState(
         targetValue = when {
-            (focused || hovered) && focusZoomEnabled -> 1.18f
+            focused || hovered -> focusZoomScale(1.18f, focusZoomPercent)
             selected && !sidebarFocused -> 1.10f
             else -> 1f
         },
@@ -8394,9 +8395,9 @@ private fun RowScope.NavQuadrant(
     // The bar's icons zoom on keyboard/D-pad focus and on hover, like the sidebar's icons and the
     // Settings category rows. The 40dp slot holds the 22dp glyph at 1.18x (about 26dp), so the row
     // keeps its layout and neighbouring slots are never overlapped.
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val iconScale by animateFloatAsState(
-        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.18f else 1f,
+        targetValue = if (focused || hovered) focusZoomScale(1.18f, focusZoomPercent) else 1f,
         animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = "navbarIconFocusScale",
     )

@@ -75,6 +75,7 @@ import com.nuvio.app.core.ui.nuvioPosterHighlight
 import com.nuvio.app.features.music.library.musicKeyFocusRing
 import com.nuvio.app.features.settings.settingsSkyBackground
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.settings.focusZoomScale
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.Block
@@ -1898,10 +1899,11 @@ private fun YouTubeVideoCard(
     val focused by interaction.collectIsKeyboardFocusedAsState()
     val hovered by interaction.collectIsHoveredAsState()
     val highlight = focused || hovered
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
-    // The same small lift the Home/Explore/Library cards take when the keys or cursor land on them.
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
+    // The same small lift the Home/Explore/Library cards take when the keys or cursor land on them,
+    // now driven by the shared focus-zoom slider.
     val thumbnailScale by animateFloatAsState(
-        targetValue = if (highlight && focusZoomEnabled) 1.04f else 1f,
+        targetValue = if (highlight) focusZoomScale(1.04f, focusZoomPercent) else 1f,
         label = "youtubeThumbnailFocusScale",
     )
     val shape = RoundedCornerShape(12.dp)
@@ -1978,7 +1980,7 @@ private fun YouTubeVideoCard(
         modifier = modifier
             .fillMaxWidth()
             // Keep the lifted thumbnail above the cards beside/below it while it zooms.
-            .zIndex(if (highlight && focusZoomEnabled) 1f else 0f)
+            .zIndex(if (highlight) 1f else 0f)
             .onGloballyPositioned { cardBounds = it.boundsInWindow() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             // Select plays; holding it (Enter, or a pad's A) opens the menu beside the card, as
@@ -2254,9 +2256,9 @@ private fun CardGlassButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val scale by animateFloatAsState(
-        targetValue = if (hovered && focusZoomEnabled) 1.08f else 1f,
+        targetValue = if (hovered) focusZoomScale(1.08f, focusZoomPercent) else 1f,
         label = "youtubeGlassButtonHoverScale",
     )
     val shape = androidx.compose.foundation.shape.CircleShape
@@ -2324,9 +2326,9 @@ private fun YouTubeSectionTabPill(
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val focused by interaction.collectIsFocusedAsState()
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val scale by animateFloatAsState(
-        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        targetValue = if (focused || hovered) focusZoomScale(1.04f, focusZoomPercent) else 1f,
         label = "youtubeSectionPillZoom",
     )
     val shape = RoundedCornerShape(percent = 50)

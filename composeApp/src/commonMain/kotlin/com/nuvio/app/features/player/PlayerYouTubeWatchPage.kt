@@ -2,6 +2,7 @@ package com.nuvio.app.features.player
 
 import com.nuvio.app.core.ui.requestFocusLogged
 import com.nuvio.app.features.settings.ThemeSettingsRepository
+import com.nuvio.app.features.settings.focusZoomScale
 import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -932,9 +933,9 @@ private const val RELATED_PREFETCH_SCREENS = 2f
 private fun SideVideoRow(video: YouTubeVideo, highlighted: Boolean, onClick: () -> Unit, onRemove: (() -> Unit)? = null) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsState()
     val thumbnailScale by animateFloatAsState(
-        targetValue = if (hovered && focusZoomEnabled) 1.04f else 1f,
+        targetValue = if (hovered) focusZoomScale(1.04f, focusZoomPercent) else 1f,
         label = "youtubeSideThumbnailHoverScale",
     )
     val shape = RoundedCornerShape(10.dp)
@@ -1018,9 +1019,9 @@ private fun WatchIconButton(icon: ImageVector, label: String, on: Boolean, badge
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val focused by interaction.collectIsFocusedAsState()
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsState()
     val scale by animateFloatAsState(
-        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        targetValue = if (focused || hovered) focusZoomScale(1.04f, focusZoomPercent) else 1f,
         label = "youtubeWatchIconZoom",
     )
     val shape = RoundedCornerShape(percent = 50)
@@ -1059,9 +1060,9 @@ private fun WatchPill(icon: ImageVector?, label: String, on: Boolean, onClick: (
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
     val focused by interaction.collectIsFocusedAsState()
-    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val focusZoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsState()
     val scale by animateFloatAsState(
-        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        targetValue = if (focused || hovered) focusZoomScale(1.04f, focusZoomPercent) else 1f,
         label = "youtubeWatchPillZoom",
     )
     val shape = RoundedCornerShape(percent = 50)

@@ -29,6 +29,7 @@ internal actual object ThemeSettingsStorage {
     private const val holdToSelectEnabledKey = "hold_to_select_enabled"
     private const val desktopNavigationLayoutKey = "desktop_navigation_layout"
     private const val desktopTopBarAlwaysVisibleKey = "desktop_top_bar_always_visible"
+    private const val desktopFocusZoomPercentKey = "desktop_focus_zoom_percent"
     private const val desktopFocusZoomEnabledKey = "desktop_focus_zoom_enabled"
     // Account-wide, not per profile: set when the account started on the pinned-bar default.
     private const val desktopTopBarPinnedByDefaultKey = "desktop_top_bar_pinned_by_default"
@@ -194,11 +195,18 @@ internal actual object ThemeSettingsStorage {
     actual fun saveDesktopTopBarAlwaysVisible(enabled: Boolean) {
         store.putBoolean(ProfileScopedKey.of(desktopTopBarAlwaysVisibleKey), enabled)
     }
-    actual fun loadDesktopFocusZoomEnabled(): Boolean? =
-        store.getBoolean(ProfileScopedKey.of(desktopFocusZoomEnabledKey))
+    actual fun loadDesktopFocusZoomPercent(): Int? {
+        store.getInt(ProfileScopedKey.of(desktopFocusZoomPercentKey))?.let { return it }
+        // The first version was a switch. Migrate it once so an existing install keeps the look it
+        // had: on was the old fixed 4%, off was no growth.
+        val legacy = store.getBoolean(ProfileScopedKey.of(desktopFocusZoomEnabledKey)) ?: return null
+        val percent = if (legacy) DEFAULT_DESKTOP_FOCUS_ZOOM_PERCENT else 0
+        store.putInt(ProfileScopedKey.of(desktopFocusZoomPercentKey), percent)
+        return percent
+    }
 
-    actual fun saveDesktopFocusZoomEnabled(enabled: Boolean) {
-        store.putBoolean(ProfileScopedKey.of(desktopFocusZoomEnabledKey), enabled)
+    actual fun saveDesktopFocusZoomPercent(percent: Int) {
+        store.putInt(ProfileScopedKey.of(desktopFocusZoomPercentKey), percent)
     }
 
     actual fun loadDesktopDiscoverTabVisible(): Boolean? =

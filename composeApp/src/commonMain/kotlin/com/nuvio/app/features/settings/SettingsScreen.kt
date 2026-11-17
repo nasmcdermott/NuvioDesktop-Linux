@@ -2767,12 +2767,12 @@ private fun DesktopSettingsSidebarRow(
     // leading edge so it reads as growing out from the icon rather than widening around itself;
     // the scale is visual only, so the row keeps its layout height and its 8dp gaps.
     var rowFocused by remember { mutableStateOf(false) }
-    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val zoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val hoverSource = remember { MutableInteractionSource() }
     val hovered by hoverSource.collectIsHoveredAsState()
     val iconScale by animateFloatAsState(
         targetValue = when {
-            (rowFocused || hovered) && zoomEnabled -> 1.18f
+            rowFocused || hovered -> focusZoomScale(1.18f, zoomPercent)
             idleZoom -> 1.10f
             else -> 1f
         },
@@ -2781,7 +2781,7 @@ private fun DesktopSettingsSidebarRow(
     )
     val labelScale by animateFloatAsState(
         targetValue = when {
-            (rowFocused || hovered) && zoomEnabled -> 1.08f
+            rowFocused || hovered -> focusZoomScale(1.08f, zoomPercent)
             idleZoom -> 1.04f
             else -> 1f
         },
@@ -2858,7 +2858,7 @@ private fun DesktopSettingsSidebarSubList(
 ) {
     val tokens = MaterialTheme.nuvio
     val guideColor = tokens.colors.borderDefault
-    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val zoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     val requesters = remember(items.size) { List(items.size) { FocusRequester() } }
     Column(
         modifier = Modifier
@@ -2888,7 +2888,7 @@ private fun DesktopSettingsSidebarSubList(
             val hovered by hoverSource.collectIsHoveredAsState()
             val scale by animateFloatAsState(
                 targetValue = when {
-                    (itemFocused || hovered) && zoomEnabled -> 1.08f
+                    itemFocused || hovered -> focusZoomScale(1.08f, zoomPercent)
                     current -> 1.04f
                     else -> 1f
                 },
@@ -3054,9 +3054,9 @@ private const val SettingsTopIconFocusScale = 1.18f
 
 @Composable
 private fun settingsFocusScale(focused: Boolean, hovered: Boolean, target: Float, label: String): Float {
-    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val zoomPercent by ThemeSettingsRepository.desktopFocusZoomPercent.collectAsStateWithLifecycle()
     return animateFloatAsState(
-        targetValue = if ((focused || hovered) && zoomEnabled) target else 1f,
+        targetValue = if (focused || hovered) focusZoomScale(target, zoomPercent) else 1f,
         animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = label,
     ).value
