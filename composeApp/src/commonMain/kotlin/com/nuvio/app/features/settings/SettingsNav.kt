@@ -356,6 +356,33 @@ internal object SettingsTopBarFocus {
 }
 
 /**
+ * The Settings top bar's first utility icon (the update bell). The global sidebar's profile row
+ * hands Right here, and this icon hands Left back to the profile row, so the two edges meet.
+ */
+internal object SettingsTopBarUtilityFocus {
+    private var entry: FocusRequester? = null
+    private var owner: FocusManager? = null
+
+    fun register(requester: FocusRequester, focusManager: FocusManager) {
+        entry = requester
+        owner = focusManager
+    }
+
+    fun unregister(requester: FocusRequester) {
+        if (entry === requester) {
+            entry = null
+            owner = null
+        }
+    }
+
+    fun requestEntry(focusManager: FocusManager): Boolean {
+        val requester = entry ?: return false
+        if (owner !== focusManager) return false
+        return runCatching { requester.requestFocus() }.getOrDefault(false)
+    }
+}
+
+/**
  * The value one step to the left ([direction] -1) or right (+1) of [value] on a settings slider.
  * A stepped slider lands on the step grid rather than drifting off it as a held key repeats; a
  * continuous one moves a twentieth of its range. Both stop at the ends.

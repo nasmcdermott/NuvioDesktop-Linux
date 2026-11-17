@@ -120,6 +120,7 @@ import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.drawscope.Stroke
 import androidx.compose.ui.draw.drawWithContent
+import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.node.requireLayoutCoordinates
 import com.nuvio.app.core.ui.KeyboardInputMode
@@ -2609,6 +2610,7 @@ private fun DesktopSettingsSidebarList(
     // Which category rows currently have a focused stop inside them, so a selected row keeps its
     // resting zoom only while the keys are elsewhere.
     var focusedCategories by remember { mutableStateOf(setOf<Int>()) }
+    val categoryCenters = remember { mutableMapOf<Int, Float>() }
     LaunchedEffect(moveToIndex) {
         if (moveToIndex < 0) return@LaunchedEffect
         val index = moveToIndex
@@ -2656,7 +2658,13 @@ private fun DesktopSettingsSidebarList(
                         event.navigationKey() == Key.DirectionLeft &&
                         com.nuvio.app.core.ui.RootNavFocus.sidebarAvailable
                     ) {
-                        com.nuvio.app.core.ui.RootNavFocus.enterSidebar()
+                        val focusedIndex = focusedCategories.firstOrNull()
+                        val windowY = focusedIndex?.let { categoryCenters[it] }
+                        if (windowY != null) {
+                            com.nuvio.app.core.ui.RootNavFocus.enterSidebarNear(windowY)
+                        } else {
+                            com.nuvio.app.core.ui.RootNavFocus.enterSidebarAtProfile()
+                        }
                     } else {
                         false
                     }
@@ -2678,7 +2686,11 @@ private fun DesktopSettingsSidebarList(
             itemsIndexed(items, key = { _, item -> item.page.name }) { index, item ->
                 ReorderableItem(reorderableLazyListState, key = item.page.name) {
                     val selected = item.page == activeSidebarPage
-                    Column {
+                    Column(
+                        Modifier.onGloballyPositioned {
+                            categoryCenters[index] = it.boundsInWindow().center.y
+                        },
+                    ) {
                         DesktopSettingsSidebarRow(
                             label = item.label,
                             icon = item.icon,
@@ -3059,6 +3071,7 @@ private fun SettingsTopBarIconButton(
     imageVector: ImageVector? = null,
     painter: Painter? = null,
     iconModifier: Modifier = Modifier,
+    buttonModifier: Modifier = Modifier,
     /** Handles Left on the row's first icon; true when it moved to the navigation bar. */
     onLeftEdge: (() -> Boolean)? = null,
 ) {
@@ -3070,15 +3083,17 @@ private fun SettingsTopBarIconButton(
         onClick = onClick,
         enabled = enabled,
         interactionSource = interaction,
-        modifier = if (onLeftEdge == null) {
-            Modifier
-        } else {
-            Modifier.onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown &&
-                    event.navigationKey() == Key.DirectionLeft &&
-                    onLeftEdge()
-            }
-        },
+        modifier = buttonModifier.then(
+            if (onLeftEdge == null) {
+                Modifier
+            } else {
+                Modifier.onPreviewKeyEvent { event ->
+                    event.type == KeyEventType.KeyDown &&
+                        event.navigationKey() == Key.DirectionLeft &&
+                        onLeftEdge()
+                }
+            },
+        ),
     ) {
         val glyphModifier = iconModifier.graphicsLayer {
             scaleX = scale
@@ -3120,11 +3135,14 @@ private fun DesktopSettingsTopBar(
     // hands the keys here, and Back on the bar itself leaves Settings for the tab it came from.
     val focusManager = LocalFocusManager.current
     val navBarEntry = remember { FocusRequester() }
+    val utilityEntry = remember { FocusRequester() }
     DisposableEffect(focusManager) {
         SettingsTopBarFocus.register(navBarEntry, focusManager)
+        SettingsTopBarUtilityFocus.register(utilityEntry, focusManager)
         com.nuvio.app.core.ui.RootNavFocus.settingsTopBarAvailable = true
         onDispose {
             SettingsTopBarFocus.unregister(navBarEntry)
+            SettingsTopBarUtilityFocus.unregister(utilityEntry)
             com.nuvio.app.core.ui.RootNavFocus.settingsTopBarAvailable = false
         }
     }
@@ -3205,12 +3223,13 @@ private fun DesktopSettingsTopBar(
                     contentDescription = null,
                     imageVector = Icons.Rounded.Notifications,
                     iconModifier = Modifier.settingsGlassGlyph(lit = onShowLatestChangelogClick != null),
+                    buttonModifier = Modifier.focusRequester(utilityEntry),
                     // The sidebar layout puts the profile on the global side navigation, so Left
                     // from this first utility icon belongs there rather than stopping at the edge.
                     onLeftEdge = if (showRootNavigation) {
                         null
                     } else {
-                        { com.nuvio.app.core.ui.RootNavFocus.enterSidebar() }
+                        { com.nuvio.app.core.ui.RootNavFocus.enterSidebarAtProfile() }
                     },
                 )
                 SettingsTopBarIconButton(

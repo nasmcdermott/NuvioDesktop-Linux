@@ -71,6 +71,8 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.onPointerEvent
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -7030,8 +7032,22 @@ private fun DesktopHoverSidebar(
     val navFocusRequester = remember { FocusRequester() }
     var navHasFocus by remember { mutableStateOf(false) }
     var navFocusIndex by remember { mutableIntStateOf(0) }
+    // Window-space centre of every drawn sidebar row, so a Settings category can enter the bar on
+    // the icon nearest its own vertical position.
+    val sidebarRowCenters = remember { mutableMapOf<Int, Float>() }
     val latestSelectedTab by rememberUpdatedState(selectedTab)
     val focusManager = LocalFocusManager.current
+    fun enterSidebarAtNearest(windowY: Float) {
+        navFocusIndex = sidebarRowCenters.entries
+            .minByOrNull { kotlin.math.abs(it.value - windowY) }
+            ?.key
+            ?: -1
+        if (!navHasFocus) {
+            if (MusicKeyboard.playerHasFocus()) RootNavFocus.forgetContentFocus()
+            else RootNavFocus.rememberContentFocus(latestSelectedTab, focusManager)
+        }
+        runCatching { navFocusRequester.requestFocus() }
+    }
     DisposableEffect(Unit) {
         RootNavFocus.sidebarAvailable = true
         onDispose { RootNavFocus.sidebarAvailable = false }
@@ -7069,6 +7085,19 @@ private fun DesktopHoverSidebar(
     }
     // The profile trigger sits above Home at index -1, so the arrow keys reach it like a tab.
     val profileNavIndex = -1
+    LaunchedEffect(navFocusRequester) {
+        RootNavFocus.profileEnterRequests.collect {
+            navFocusIndex = profileNavIndex
+            if (!navHasFocus) {
+                if (MusicKeyboard.playerHasFocus()) RootNavFocus.forgetContentFocus()
+                else RootNavFocus.rememberContentFocus(latestSelectedTab, focusManager)
+            }
+            runCatching { navFocusRequester.requestFocus() }
+        }
+    }
+    LaunchedEffect(navFocusRequester) {
+        RootNavFocus.positionEnterRequests.collect { windowY -> enterSidebarAtNearest(windowY) }
+    }
     val profileFocused = navHasFocus && navFocusIndex == profileNavIndex
     // A switch turned off, or the voice row finishing its load, changes the rows under the cursor
     // with the sidebar open. Up alone would not: it moves off the stale index and stays out of range.
@@ -7159,7 +7188,15 @@ private fun DesktopHoverSidebar(
                             }
                         }
                     },
-                    onLeave = { RootNavFocus.leaveSidebar() },
+                    onLeave = {
+                        // Right from the profile crosses into the Settings top bar's update icon
+                        // when that is where the person came from; elsewhere Right keeps its old
+                        // meaning and leaves the sidebar for the page.
+                        val reachedTopBar = navFocusIndex == profileNavIndex &&
+                            RootNavFocus.settingsTopBarAvailable &&
+                            com.nuvio.app.features.settings.SettingsTopBarUtilityFocus.requestEntry(focusManager)
+                        if (!reachedTopBar) RootNavFocus.leaveSidebar()
+                    },
                     minIndex = profileNavIndex,
                     // The profile stack owns the keys while it is open (it is drawn inside this
                     // box); the sidebar's own list must not answer the same presses underneath it.
@@ -7172,6 +7209,7 @@ private fun DesktopHoverSidebar(
                     .padding(top = profileTopPadding)
                     .fillMaxWidth()
                     .height(52.dp)
+                    .onGloballyPositioned { sidebarRowCenters[profileNavIndex] = it.boundsInWindow().center.y }
                     .padding(horizontal = 10.dp, vertical = 4.dp)
                     .then(
                         if (profileFocused) {
@@ -7228,6 +7266,10 @@ private fun DesktopHoverSidebar(
                 // Settings always comes last.
                 navEntries.forEach { entry ->
                     key(entry) {
+                        val rowIndex = navEntries.indexOf(entry)
+                        val rowCenter = Modifier.onGloballyPositioned {
+                            sidebarRowCenters[rowIndex] = it.boundsInWindow().center.y
+                        }
                         // Glyph, label and selected state from the entry's descriptor
                         // (NavBarDestination.kt); only opening the page and the Library quick menu
                         // are the sidebar's own.
@@ -7247,7 +7289,7 @@ private fun DesktopHoverSidebar(
                                     onHoverFocus = { focusSidebarRow(entry) },
                                     expanded = false,
                                     onClick = { destination.tab?.let { selectTab(it) } },
-                                    modifier = contextModifier,
+                                    modifier = contextModifier.then(rowCenter),
                                 ) { color ->
                                     entry.DestinationIcon(Modifier.size(DesktopSidebarIconSize), color)
                                 }
@@ -7283,6 +7325,7 @@ private fun DesktopHoverSidebar(
                                         else -> destination.tab?.let { selectTab(it) }
                                     }
                                 },
+                                modifier = rowCenter,
                             ) { color ->
                                 entry.DestinationIcon(Modifier.size(DesktopSidebarIconSize), color)
                             }
@@ -7296,6 +7339,9 @@ private fun DesktopHoverSidebar(
                     expanded = false,
                     onHoverFocus = { focusSidebarRow(null) },
                     onClick = { selectTab(AppScreenTab.Settings) },
+                    modifier = Modifier.onGloballyPositioned {
+                        sidebarRowCenters[navRows.lastIndex] = it.boundsInWindow().center.y
+                    },
                 ) { color ->
                     Icon(
                         imageVector = Icons.Rounded.Settings,
@@ -7306,25 +7352,33 @@ private fun DesktopHoverSidebar(
                 }
                 if (voiceRowShown) {
                     // fork:voice-control - the row under Settings, so its index is navRows.size.
-                    DesktopSidebarVoiceItem(
-                        focused = navHasFocus && navFocusIndex == navRows.size,
-                        onHoverFocus = {
-                            navFocusIndex = navRows.size
-                            runCatching { navFocusRequester.requestFocus() }
-                        },
-                    )
+                    Box(Modifier.onGloballyPositioned {
+                        sidebarRowCenters[navRows.size] = it.boundsInWindow().center.y
+                    }) {
+                        DesktopSidebarVoiceItem(
+                            focused = navHasFocus && navFocusIndex == navRows.size,
+                            onHoverFocus = {
+                                navFocusIndex = navRows.size
+                                runCatching { navFocusRequester.requestFocus() }
+                            },
+                        )
+                    }
                 }
                 if (musicRowShown) {
-                    DesktopSidebarMusicItem(
-                        focused = navHasFocus && navFocusIndex == musicRowIndex,
-                        onHoverFocus = {
-                            navFocusIndex = musicRowIndex
-                            runCatching { navFocusRequester.requestFocus() }
-                        },
-                        onClick = {
-                            com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
-                        },
-                    )
+                    Box(Modifier.onGloballyPositioned {
+                        sidebarRowCenters[musicRowIndex] = it.boundsInWindow().center.y
+                    }) {
+                        DesktopSidebarMusicItem(
+                            focused = navHasFocus && navFocusIndex == musicRowIndex,
+                            onHoverFocus = {
+                                navFocusIndex = musicRowIndex
+                                runCatching { navFocusRequester.requestFocus() }
+                            },
+                            onClick = {
+                                com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
+                            },
+                        )
+                    }
                 }
             }
             }

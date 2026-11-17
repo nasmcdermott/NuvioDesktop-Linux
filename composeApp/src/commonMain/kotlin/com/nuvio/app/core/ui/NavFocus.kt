@@ -60,10 +60,18 @@ object RootNavFocus {
     var handoffPending: Boolean = false
 
     private val enter = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val enterProfile = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
+    private val enterPosition = MutableSharedFlow<Float>(extraBufferCapacity = 1)
     private val enterTop = MutableSharedFlow<Unit>(extraBufferCapacity = 1)
     private val leave = MutableSharedFlow<Boolean>(extraBufferCapacity = 1)
 
     val enterRequests: SharedFlow<Unit> = enter.asSharedFlow()
+
+    /** Like [enterRequests], but lands on the profile row rather than the current tab's row. */
+    val profileEnterRequests: SharedFlow<Unit> = enterProfile.asSharedFlow()
+
+    /** A sidebar entry request carrying the window Y whose nearest nav row should take focus. */
+    val positionEnterRequests: SharedFlow<Float> = enterPosition.asSharedFlow()
 
     /** The top bar's counterpart of [enterRequests]. */
     val topBarEnterRequests: SharedFlow<Unit> = enterTop.asSharedFlow()
@@ -76,6 +84,12 @@ object RootNavFocus {
 
     /** Returns true when a sidebar is shown and took the request. */
     fun enterSidebar(): Boolean = sidebarAvailable && enter.tryEmit(Unit)
+
+    /** Enters the sidebar on its profile row, for the Settings top bar's update icon. */
+    fun enterSidebarAtProfile(): Boolean = sidebarAvailable && enterProfile.tryEmit(Unit)
+
+    /** Enters the sidebar on the row vertically nearest [windowY], used by the Settings category rail. */
+    fun enterSidebarNear(windowY: Float): Boolean = sidebarAvailable && enterPosition.tryEmit(windowY)
 
     /** Up reaches whichever bar across the top is drawn, so this asks for that one. */
     fun enterTopBar(): Boolean = anyTopBarDrawn && enterTop.tryEmit(Unit)
