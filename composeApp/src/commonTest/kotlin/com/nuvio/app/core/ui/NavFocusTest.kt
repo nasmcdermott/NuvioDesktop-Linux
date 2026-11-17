@@ -187,6 +187,18 @@ class NavFocusTest {
     }
 
     @Test
+    fun rightAtTheLastTopBarSlotStaysOnTheBarUnlessSideIconsExist() {
+        // Ordinary tabs: the last slot is the right edge, so Right is consumed there instead of
+        // letting focus traversal pick a poster or card below the bar.
+        assertTrue(topBarRightEdgeStaysPut(Key.DirectionRight, index = 3, count = 4, sideIconsBesideBar = false))
+        assertFalse(topBarRightEdgeStaysPut(Key.DirectionRight, index = 2, count = 4, sideIconsBesideBar = false))
+        assertFalse(topBarRightEdgeStaysPut(Key.DirectionLeft, index = 3, count = 4, sideIconsBesideBar = false))
+        assertFalse(topBarRightEdgeStaysPut(Key.DirectionRight, index = 0, count = 0, sideIconsBesideBar = false))
+        // YouTube draws its own tabs and search beside the bar, so Right still leaves for them.
+        assertFalse(topBarRightEdgeStaysPut(Key.DirectionRight, index = 3, count = 4, sideIconsBesideBar = true))
+    }
+
+    @Test
     fun theTopBarWalksSidewaysAndLeavesDownwards() {
         assertEquals(TopBarKeyAction.Move(2), topBarKeyAction(Key.DirectionRight, 1, 4))
         assertEquals(TopBarKeyAction.Move(0), topBarKeyAction(Key.DirectionLeft, 1, 4))

@@ -4466,7 +4466,9 @@ private fun MainAppContent(
                                 isTabletLayout &&
                                     !useNativeBottomTabs &&
                                     desktopNavigationLayout == DesktopNavigationLayout.Sidebar
-                            val showDesktopSidebar = useDesktopSidebar && selectedTab != AppScreenTab.Settings
+                            // Settings keeps the side navigation too; its shell is inset by the bar's
+                            // width below, so the settings icons sit to the right of it.
+                            val showDesktopSidebar = useDesktopSidebar
                             val useFloatingTopBar = isTabletLayout && !useNativeBottomTabs && !useDesktopSidebar
                             val topChromePadding = when {
                                 // A hover-only top bar floats over the page. Reserving its row on
@@ -4560,8 +4562,13 @@ private fun MainAppContent(
                                     val tonightOpen by com.nuvio.app.features.tonight.TonightController.open
                                         .collectAsStateWithLifecycle()
                                     val tonightShowing = tonightOpen &&
-                                        selectedTab == AppScreenTab.Home &&
-                                        !searchOverlayActive
+                                        !searchOverlayActive &&
+                                        !gameModeActive &&
+                                        (
+                                            selectedTab == AppScreenTab.Home ||
+                                                selectedTab == AppScreenTab.Library ||
+                                                selectedTab == AppScreenTab.Discover
+                                            )
                                     CompositionLocalProvider(
                                         LocalNuvioBottomNavigationOverlayPadding provides if (useNativeBottomTabs) 49.dp else 0.dp,
                                     ) {
@@ -7004,6 +7011,7 @@ private fun DesktopHoverSidebar(
     // cannot list different rows. Which entries show is rememberNavBarEntries()' decision, not this
     // composable's: it filters on the same switches (Discover, Live TV, YouTube, Music, Games).
     val navEntries = com.nuvio.app.features.navbar.rememberNavBarEntries()
+    val tonightOpen = com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
     val navRows: List<com.nuvio.app.features.navbar.NavBarEntry?> = navEntries + listOf(null)
     val voiceInNav by remember { com.nuvio.app.features.navbar.NavBarLayoutRepository.voiceInNav }
         .collectAsStateWithLifecycle()
@@ -7231,9 +7239,9 @@ private fun DesktopHoverSidebar(
                                     selected = when (entry) {
                                         com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
                                         com.nuvio.app.features.navbar.NavBarEntry.Tonight ->
-                                            !gameModeOn &&
-                                                com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
-                                        else -> !gameModeOn && entry.isDestinationSelected(selectedTab, searchActive = false)
+                                            !gameModeOn && tonightOpen
+                                        else -> !gameModeOn && !tonightOpen &&
+                                            entry.isDestinationSelected(selectedTab, searchActive = false)
                                     },
                                     focused = navFocused(entry),
                                     onHoverFocus = { focusSidebarRow(entry) },
@@ -7249,7 +7257,10 @@ private fun DesktopHoverSidebar(
                                 label = destination.label.resolve(),
                                 selected = when (entry) {
                                     com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
-                                    else -> !gameModeOn && entry.isDestinationSelected(selectedTab, searchActive = false)
+                                    com.nuvio.app.features.navbar.NavBarEntry.Tonight ->
+                                        !gameModeOn && tonightOpen
+                                    else -> !gameModeOn && !tonightOpen &&
+                                        entry.isDestinationSelected(selectedTab, searchActive = false)
                                 },
                                 focused = navFocused(entry),
                                 onHoverFocus = { focusSidebarRow(entry) },
@@ -7314,29 +7325,6 @@ private fun DesktopHoverSidebar(
                             com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
                         },
                     )
-                }
-                val youTubeBrowsing = com.nuvio.app.features.youtube.YouTubeWatchLayout.browsing.value
-                if (youTubeBrowsing) {
-                    DesktopSidebarItem(
-                        label = "YouTube mini-player",
-                        selected = false,
-                        focused = navHasFocus && navFocusIndex == (musicRowIndex + 1),
-                        expanded = false,
-                        onHoverFocus = {
-                            navFocusIndex = musicRowIndex + 1
-                            runCatching { navFocusRequester.requestFocus() }
-                        },
-                        onClick = {
-                            com.nuvio.app.features.youtube.YouTubeWatchLayout.stopBrowsing()
-                        },
-                    ) { color ->
-                        Icon(
-                            imageVector = Icons.Rounded.SmartDisplay,
-                            contentDescription = "YouTube mini-player",
-                            modifier = Modifier.size(DesktopSidebarIconSize),
-                            tint = color,
-                        )
-                    }
                 }
             }
             }
@@ -7492,9 +7480,10 @@ private fun DesktopSidebarItem(
     // slot is fixed and the glyph is smaller than it, so the scale stays inside the slot: the
     // column never shifts and neighbouring rows are never overlapped.
     val sidebarFocused = LocalDesktopSidebarFocused.current
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
     val iconFocusScale by animateFloatAsState(
         targetValue = when {
-            focused || hovered -> 1.18f
+            (focused || hovered) && focusZoomEnabled -> 1.18f
             selected && !sidebarFocused -> 1.10f
             else -> 1f
         },
@@ -7620,6 +7609,7 @@ private fun TabletFloatingTopBar(
     val musicTabVisible = com.nuvio.app.features.music.rememberMusicTabVisible() // fork:music
     val youTubeTabVisible = com.nuvio.app.features.youtube.rememberYouTubeTabVisible() // fork:youtube-mode
     val navEntries = com.nuvio.app.features.navbar.rememberNavBarEntries()
+    val tonightOpen = com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
     // fork:music-navbar - the now-playing/album cover, a slot after Settings like the sidebar's row.
     val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
     val musicRowShown = musicState.isActive
@@ -8069,6 +8059,18 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                             // pinning the keys to the first/last tab.
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                // At the right end of an ordinary tab's bar there is nothing beside
+                                // it to move to. Keep the key on the bar; releasing it here let
+                                // Compose's traversal jump into the poster/card rows below.
+                                if (com.nuvio.app.core.ui.topBarRightEdgeStaysPut(
+                                        key = event.navigationKey(),
+                                        index = barIndex,
+                                        count = topBarSlots,
+                                        sideIconsBesideBar = selectedTab == AppScreenTab.YouTube,
+                                    )
+                                ) {
+                                    return@onPreviewKeyEvent true
+                                }
                                 // Only the YouTube tab has icons laid out beside the bar; on the
                                 // other tabs the edge keys stay on the bar as they always did.
                                 if (selectedTab != AppScreenTab.YouTube) return@onPreviewKeyEvent false
@@ -8102,9 +8104,9 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                                 val entrySelected = when (entry) {
                                     com.nuvio.app.features.navbar.NavBarEntry.Games -> gameModeOn
                                     com.nuvio.app.features.navbar.NavBarEntry.Tonight ->
-                                        !gameModeOn &&
-                                            com.nuvio.app.features.tonight.TonightController.open.collectAsStateWithLifecycle().value
-                                    else -> !gameModeOn && entry.isDestinationSelected(selectedTab, isSearchActive)
+                                        !gameModeOn && tonightOpen
+                                    else -> !gameModeOn && !tonightOpen &&
+                                        entry.isDestinationSelected(selectedTab, isSearchActive)
                                 }
                                 NavQuadrant(
                                     selected = entrySelected,
@@ -8338,8 +8340,9 @@ private fun RowScope.NavQuadrant(
     // The bar's icons zoom on keyboard/D-pad focus and on hover, like the sidebar's icons and the
     // Settings category rows. The 40dp slot holds the 22dp glyph at 1.18x (about 26dp), so the row
     // keeps its layout and neighbouring slots are never overlapped.
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
     val iconScale by animateFloatAsState(
-        targetValue = if (focused || hovered) 1.18f else 1f,
+        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.18f else 1f,
         animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
         label = "navbarIconFocusScale",
     )

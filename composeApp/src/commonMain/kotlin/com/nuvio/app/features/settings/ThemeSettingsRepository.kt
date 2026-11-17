@@ -91,6 +91,10 @@ object ThemeSettingsRepository {
     // activation strip. Settings is unaffected — it renders its own chrome, not this bar.
     private val _desktopTopBarAlwaysVisible = MutableStateFlow(false)
     val desktopTopBarAlwaysVisible: StateFlow<Boolean> = _desktopTopBarAlwaysVisible.asStateFlow()
+    // Settings' small focus/hover growth (text, icons, toggles, sliders, dropdowns). On by default;
+    // a shared switch so people who find it distracting can turn it off in one place.
+    private val _desktopFocusZoomEnabled = MutableStateFlow(true)
+    val desktopFocusZoomEnabled: StateFlow<Boolean> = _desktopFocusZoomEnabled.asStateFlow()
 
     // Hides the Discover entry from the desktop navigation. Navigation to the tab is blocked while
     // it is off, so the tab can never be selected without a way back to it in the bar.
@@ -154,6 +158,9 @@ object ThemeSettingsRepository {
         HoldToSelect.enabled = true
         _desktopNavigationLayout.value = DesktopNavigationLayout.Default
         _desktopTopBarAlwaysVisible.value = false
+        _desktopDiscoverTabVisible.value = true
+        _desktopTopBarAlwaysVisible.value = false
+        _desktopFocusZoomEnabled.value = true
         _desktopDiscoverTabVisible.value = true
         _desktopSidebarItemsTop.value = false
         _desktopAppUiScalePercent.value = 0
@@ -225,6 +232,9 @@ object ThemeSettingsRepository {
             ThemeSettingsStorage.loadDesktopNavigationLayout(),
         )
         _desktopTopBarAlwaysVisible.value = ThemeSettingsStorage.loadDesktopTopBarAlwaysVisible() ?: false
+        _desktopDiscoverTabVisible.value = ThemeSettingsStorage.loadDesktopDiscoverTabVisible() ?: true
+        _desktopTopBarAlwaysVisible.value = ThemeSettingsStorage.loadDesktopTopBarAlwaysVisible() ?: false
+        _desktopFocusZoomEnabled.value = ThemeSettingsStorage.loadDesktopFocusZoomEnabled() ?: true
         _desktopDiscoverTabVisible.value = ThemeSettingsStorage.loadDesktopDiscoverTabVisible() ?: true
         _desktopSidebarItemsTop.value = ThemeSettingsStorage.loadDesktopSidebarItemsTop() ?: false
         _desktopAppUiScalePercent.value =
@@ -390,6 +400,12 @@ object ThemeSettingsRepository {
         if (_desktopTopBarAlwaysVisible.value == enabled) return
         _desktopTopBarAlwaysVisible.value = enabled
         ThemeSettingsStorage.saveDesktopTopBarAlwaysVisible(enabled)
+    }
+    fun setDesktopFocusZoomEnabled(enabled: Boolean) {
+        ensureLoaded()
+        if (_desktopFocusZoomEnabled.value == enabled) return
+        _desktopFocusZoomEnabled.value = enabled
+        ThemeSettingsStorage.saveDesktopFocusZoomEnabled(enabled)
     }
 
     fun setDesktopSidebarItemsTop(top: Boolean) {

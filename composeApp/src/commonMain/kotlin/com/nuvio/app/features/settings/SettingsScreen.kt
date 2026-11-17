@@ -18,6 +18,7 @@ import androidx.compose.foundation.clickable
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -362,9 +363,14 @@ fun SettingsScreen(
     val arrowKeyModifier = if (isDesktop) {
         Modifier.onKeyEvent { event ->
             val direction = arrowFocusDirection(event) ?: return@onKeyEvent false
-            val forward = direction == FocusDirection.Down || direction == FocusDirection.Right
+            // Up at the top, Left at the category rail and Right at the page's right edge are
+            // boundaries, not wraps: keep them where they are. Only Down keeps its forward
+            // fallback for lazy lists where the next row is not composed yet.
+            val fallback = settingsArrowTraversalFallback(direction)
             settingsFocusManager.moveFocus(direction) ||
-                settingsFocusManager.moveFocus(if (forward) FocusDirection.Next else FocusDirection.Previous)
+                (fallback != null && settingsFocusManager.moveFocus(fallback)) ||
+                direction == FocusDirection.Up || direction == FocusDirection.Left ||
+                direction == FocusDirection.Right
         }
             // An Enter no row used would otherwise be read by desktop Compose as "focus the first thing inside", and
             // focus would jump (see musicKeyboardRoot).
@@ -1571,14 +1577,32 @@ private fun TabletSettingsScreen(
 
     // Any page change closes the search: results replace the page in the list, so picking a
     // category with a query still typed would otherwise leave the results showing over it.
+    // A result opened from search keeps the query and remembers where it came from, so Back can
+    // bring the results back instead of leaving the person on an unsearched page.
+    var searchResultsSuspended by rememberSaveable { mutableStateOf(false) }
+    var searchOpenedTarget by remember { mutableStateOf<SettingsSearchTarget?>(null) }
+    var searchOpenedPage by rememberSaveable { mutableStateOf<String?>(null) }
+
+    fun resetSearchSession() {
+        searchResultsSuspended = false
+        searchOpenedTarget = null
+        searchOpenedPage = null
+    }
+
     fun closeSettingsSearch() {
-        if (settingsSearchQuery.isEmpty()) return
+        if (settingsSearchQuery.isEmpty() && !searchResultsSuspended) return
         settingsSearchQuery = ""
+        resetSearchSession()
         focusManager.clearFocus()
     }
 
-    fun openInlinePage(page: SettingsPage) {
-        closeSettingsSearch()
+    fun updateSearchQuery(value: String) {
+        settingsSearchQuery = value
+        if (searchResultsSuspended) resetSearchSession()
+    }
+
+    fun openInlinePage(page: SettingsPage, keepSearch: Boolean = false) {
+        if (!keepSearch) closeSettingsSearch()
         onPageChange(page)
     }
 
@@ -1631,6 +1655,15 @@ private fun TabletSettingsScreen(
             }
             var rootSearchVisible by rememberSaveable { mutableStateOf(false) }
             var rootSearchRevealAnimating by rememberSaveable { mutableStateOf(false) }
+            // Back out of a page opened from search: reveal the results again and put the keys on
+            // the exact result that was opened.
+            LaunchedEffect(page) {
+                val opened = searchOpenedPage ?: return@LaunchedEffect
+                if (!searchResultsSuspended || page.name == opened) return@LaunchedEffect
+                val target = searchOpenedTarget
+                resetSearchSession()
+                SettingsSearchResultFocus.request(target)
+            }
             val hapticFeedback = LocalHapticFeedback.current
             val hapticScope = rememberCoroutineScope()
             val searchEntries = rememberSettingsSearchEntries(
@@ -1648,10 +1681,18 @@ private fun TabletSettingsScreen(
                     settingsSearchQuery,
                     (target as? SettingsSearchTarget.Page)?.page,
                 )
-                settingsSearchQuery = ""
                 when (target) {
                     is SettingsSearchTarget.Page -> {
                         if (target.page.isEnabledByFeaturePolicy()) {
+                            // Same-page results (a row on the open page) still close search so the
+                            // anchored row is visible; a different page keeps it for Back.
+                            if (target.page == page) {
+                                closeSettingsSearch()
+                            } else {
+                                searchResultsSuspended = true
+                                searchOpenedTarget = target
+                                searchOpenedPage = target.page.name
+                            }
                             target.anchor?.let { anchor ->
                                 SettingsScrollAnchor.request(
                                     anchor = anchor,
@@ -1659,11 +1700,17 @@ private fun TabletSettingsScreen(
                                     fallbackTitle = target.fallbackTitle,
                                 )
                             }
-                            openInlinePage(target.page)
+                            openInlinePage(target.page, keepSearch = searchResultsSuspended)
                         }
                     }
-                    SettingsSearchTarget.SwitchProfile -> onSwitchProfile?.invoke()
-                    SettingsSearchTarget.CheckForUpdates -> onCheckForUpdatesClick?.invoke()
+                    SettingsSearchTarget.SwitchProfile -> {
+                        closeSettingsSearch()
+                        onSwitchProfile?.invoke()
+                    }
+                    SettingsSearchTarget.CheckForUpdates -> {
+                        closeSettingsSearch()
+                        onCheckForUpdatesClick?.invoke()
+                    }
                 }
             }
 
@@ -1726,7 +1773,7 @@ private fun TabletSettingsScreen(
                 query = settingsSearchQuery,
                 activeProfile = profileState.activeProfile,
                 profileAvatars = profileAvatars,
-                onQueryChange = { settingsSearchQuery = it },
+                onQueryChange = ::updateSearchQuery,
                 onSearchFocusChange = onSettingsSearchFocusChange,
                 // Account, not the profile selector: it is the one way into Account from the top bar,
                 // and the selector is the first row there.
@@ -1745,6 +1792,9 @@ private fun TabletSettingsScreen(
                 onNavigateToLiveTv = onNavigateToLiveTv,
                 onNavigateToMusic = onNavigateToMusic,
                 contextPanelWidth = contextPanelWidth,
+                // With the sidebar layout the global bar on the left is the navigation, so the
+                // Settings top bar keeps only its utilities and search.
+                showRootNavigation = desktopNavigationLayout != DesktopNavigationLayout.Sidebar,
             )
             if (desktopColumnGuidesVisible) {
                 Box(
@@ -1909,7 +1959,7 @@ private fun TabletSettingsScreen(
                         )
                     }
                 }
-                if (settingsSearchQuery.isNotBlank()) {
+                if (settingsSearchQuery.isNotBlank() && !searchResultsSuspended) {
                     // The top-bar search field is shown on every page in the wide layout, so a
                     // non-blank query must render results here regardless of which page is open —
                     // otherwise typing on a non-Root page (e.g. Addons) draws nothing.
@@ -1921,17 +1971,19 @@ private fun TabletSettingsScreen(
                     )
                 } else when (page) {
                     SettingsPage.Root -> {
-                        settingsSearchRootContent(
-                            query = settingsSearchQuery,
-                            entries = searchEntries,
-                            isTablet = true,
-                            showSearchField = rootSearchVisible,
-                            animateSearchField = rootSearchRevealAnimating,
-                            onQueryChange = { settingsSearchQuery = it },
-                            onSearchFocusChange = onSettingsSearchFocusChange,
-                            onTargetClick = { openSearchTarget(it) },
-                        )
-                        if (settingsSearchQuery.isBlank()) {
+                        if (!searchResultsSuspended) {
+                            settingsSearchRootContent(
+                                query = settingsSearchQuery,
+                                entries = searchEntries,
+                                isTablet = true,
+                                showSearchField = rootSearchVisible,
+                                animateSearchField = rootSearchRevealAnimating,
+                                onQueryChange = ::updateSearchQuery,
+                                onSearchFocusChange = onSettingsSearchFocusChange,
+                                onTargetClick = { openSearchTarget(it) },
+                            )
+                        }
+                        if (settingsSearchQuery.isBlank() || searchResultsSuspended) {
                             settingsRootContent(
                                 isTablet = true,
                                 onPlaybackClick = { openInlinePage(SettingsPage.Playback) },
@@ -2677,11 +2729,12 @@ private fun DesktopSettingsSidebarRow(
     // leading edge so it reads as growing out from the icon rather than widening around itself;
     // the scale is visual only, so the row keeps its layout height and its 8dp gaps.
     var rowFocused by remember { mutableStateOf(false) }
+    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
     val hoverSource = remember { MutableInteractionSource() }
     val hovered by hoverSource.collectIsHoveredAsState()
     val iconScale by animateFloatAsState(
         targetValue = when {
-            rowFocused || hovered -> 1.18f
+            (rowFocused || hovered) && zoomEnabled -> 1.18f
             idleZoom -> 1.10f
             else -> 1f
         },
@@ -2690,7 +2743,7 @@ private fun DesktopSettingsSidebarRow(
     )
     val labelScale by animateFloatAsState(
         targetValue = when {
-            rowFocused || hovered -> 1.08f
+            (rowFocused || hovered) && zoomEnabled -> 1.08f
             idleZoom -> 1.04f
             else -> 1f
         },
@@ -2715,7 +2768,7 @@ private fun DesktopSettingsSidebarRow(
             .then(if (entryRequester != null) Modifier.focusRequester(entryRequester) else Modifier)
             .then(if (moveRequester != null) Modifier.focusRequester(moveRequester) else Modifier)
             // Back leaves the categories for the navigation bar; the arrows keep their traversal.
-            .settingsBackOnly { SettingsTopBarFocus.requestEntry(focusManager) }
+            .settingsBackOnly { requestSettingsNavigationBarFocus(focusManager) }
             .clickable(onClick = onClick)
             // Leave room inside the ring for the focused icon zoom; the 22dp glyph grows about 2dp
             // each way, so without this it crossed the left border.
@@ -2767,6 +2820,7 @@ private fun DesktopSettingsSidebarSubList(
 ) {
     val tokens = MaterialTheme.nuvio
     val guideColor = tokens.colors.borderDefault
+    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
     val requesters = remember(items.size) { List(items.size) { FocusRequester() } }
     Column(
         modifier = Modifier
@@ -2796,7 +2850,7 @@ private fun DesktopSettingsSidebarSubList(
             val hovered by hoverSource.collectIsHoveredAsState()
             val scale by animateFloatAsState(
                 targetValue = when {
-                    itemFocused || hovered -> 1.08f
+                    (itemFocused || hovered) && zoomEnabled -> 1.08f
                     current -> 1.04f
                     else -> 1f
                 },
@@ -2954,6 +3008,63 @@ private fun DesktopSettingsProfileRow(
     }
 }
 
+/** The small zoom the Settings category/section rows use when the keys or pointer land on them. */
+private const val SettingsRowFocusScale = 1.08f
+
+/** The top bar's bare icons grow a little more, matching the category rail's icon zoom. */
+private const val SettingsTopIconFocusScale = 1.18f
+
+@Composable
+private fun settingsFocusScale(focused: Boolean, hovered: Boolean, target: Float, label: String): Float {
+    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    return animateFloatAsState(
+        targetValue = if ((focused || hovered) && zoomEnabled) target else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = label,
+    ).value
+}
+
+/** A top-bar icon with the Settings focus zoom, keeping the glass glyph and its enabled state. */
+@Composable
+private fun SettingsTopBarIconButton(
+    onClick: () -> Unit,
+    enabled: Boolean = true,
+    contentDescription: String?,
+    imageVector: ImageVector? = null,
+    painter: Painter? = null,
+    iconModifier: Modifier = Modifier,
+    /** Handles Left on the row's first icon; true when it moved to the navigation bar. */
+    onLeftEdge: (() -> Boolean)? = null,
+) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
+    val scale = settingsFocusScale(focused, hovered, SettingsTopIconFocusScale, "settingsTopIconScale")
+    IconButton(
+        onClick = onClick,
+        enabled = enabled,
+        interactionSource = interaction,
+        modifier = if (onLeftEdge == null) {
+            Modifier
+        } else {
+            Modifier.onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown &&
+                    event.navigationKey() == Key.DirectionLeft &&
+                    onLeftEdge()
+            }
+        },
+    ) {
+        val glyphModifier = iconModifier.graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
+        when {
+            imageVector != null -> Icon(imageVector, contentDescription, glyphModifier)
+            painter != null -> Icon(painter, contentDescription, glyphModifier)
+        }
+    }
+}
+
 @Composable
 private fun DesktopSettingsTopBar(
     query: String,
@@ -2976,6 +3087,7 @@ private fun DesktopSettingsTopBar(
     onNavigateToLiveTv: (() -> Unit)?,
     onNavigateToMusic: (() -> Unit)?,
     contextPanelWidth: Dp,
+    showRootNavigation: Boolean,
 ) {
     val tokens = MaterialTheme.nuvio
     // The row of tab icons is the Settings screen's navigation bar: Back from the category list
@@ -3002,7 +3114,14 @@ private fun DesktopSettingsTopBar(
     Box(
         modifier = Modifier
             .fillMaxWidth()
-            .height(82.dp),
+            .height(82.dp)
+            // This row is the top edge of Settings. Up has nothing above it, so stop there rather
+            // than letting the page's traversal fallback wrap onto the context panel's favourites
+            // or recent-search history. Preview so a focused search field cannot move first.
+            .onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown &&
+                    arrowFocusDirection(event) == FocusDirection.Up
+            },
         contentAlignment = Alignment.Center,
     ) {
         Row(
@@ -3013,64 +3132,90 @@ private fun DesktopSettingsTopBar(
                 modifier = Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .padding(start = 32.dp),
+                    // Sidebar layout has no profile avatar; 16dp lines the bell/update glyph up
+                    // with the category icons in the settings sidebar.
+                    .padding(start = if (showRootNavigation) 32.dp else 16.dp),
                 verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(18.dp),
             ) {
-                Box(
-                    modifier = Modifier
-                        .clickable(enabled = onProfileClick != null) { onProfileClick?.invoke() }
-                        .padding(2.dp),
-                ) {
-                    ActiveProfileMiniAvatar(
-                        profile = activeProfile,
-                        avatars = profileAvatars,
-                        selected = false,
-                        size = 34,
+                // The sidebar layout already puts the profile on the side navigation, so the
+                // Settings bar does not draw a second avatar next to the update icon.
+                if (showRootNavigation) {
+                    val profileInteraction = remember { MutableInteractionSource() }
+                    val profileFocused by profileInteraction.collectIsFocusedAsState()
+                    val profileHovered by profileInteraction.collectIsHoveredAsState()
+                    val profileScale = settingsFocusScale(
+                        profileFocused,
+                        profileHovered,
+                        SettingsRowFocusScale,
+                        "settingsProfileScale",
                     )
+                    Box(
+                        modifier = Modifier
+                            .graphicsLayer {
+                                scaleX = profileScale
+                                scaleY = profileScale
+                            }
+                            .clickable(
+                                enabled = onProfileClick != null,
+                                interactionSource = profileInteraction,
+                                indication = null,
+                            ) { onProfileClick?.invoke() }
+                            .padding(2.dp),
+                    ) {
+                        ActiveProfileMiniAvatar(
+                            profile = activeProfile,
+                            avatars = profileAvatars,
+                            selected = false,
+                            size = 34,
+                        )
+                    }
                 }
                 // Each icon drawn in the settings glass (see settingsGlassGlyph) so the bar reads as part
                 // of the page. The two toggles are clear glass when off and take the accent when on.
-                IconButton(
+                SettingsTopBarIconButton(
                     onClick = { onShowLatestChangelogClick?.invoke() },
                     enabled = onShowLatestChangelogClick != null,
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.Notifications,
-                        contentDescription = null,
-                        modifier = Modifier.settingsGlassGlyph(lit = onShowLatestChangelogClick != null),
-                    )
-                }
-                IconButton(
+                    contentDescription = null,
+                    imageVector = Icons.Rounded.Notifications,
+                    iconModifier = Modifier.settingsGlassGlyph(lit = onShowLatestChangelogClick != null),
+                    // The sidebar layout puts the profile on the global side navigation, so Left
+                    // from this first utility icon belongs there rather than stopping at the edge.
+                    onLeftEdge = if (showRootNavigation) {
+                        null
+                    } else {
+                        { com.nuvio.app.core.ui.RootNavFocus.enterSidebar() }
+                    },
+                )
+                SettingsTopBarIconButton(
                     onClick = { onColumnGuidesVisibleChange(!columnGuidesVisible) },
-                ) {
-                    Icon(
-                        imageVector = Icons.Rounded.ViewColumn,
-                        contentDescription = stringResource(Res.string.settings_desktop_toggle_column_guides),
-                        modifier = Modifier.settingsGlassGlyph(lit = columnGuidesVisible),
-                    )
-                }
+                    contentDescription = stringResource(Res.string.settings_desktop_toggle_column_guides),
+                    imageVector = Icons.Rounded.ViewColumn,
+                    iconModifier = Modifier.settingsGlassGlyph(lit = columnGuidesVisible),
+                )
                 // Centred column set vs. the whole window; lit like the guides toggle when it is on.
-                IconButton(onClick = { onFullWidthChange(!fullWidth) }) {
-                    Icon(
-                        imageVector = Icons.Rounded.WidthFull,
-                        contentDescription = stringResource(Res.string.settings_desktop_toggle_full_width),
-                        modifier = Modifier.settingsGlassGlyph(lit = fullWidth),
-                    )
-                }
-                IconButton(onClick = onQuitClick) {
-                    Icon(
-                        imageVector = Icons.Rounded.PowerSettingsNew,
-                        contentDescription = null,
-                        modifier = Modifier.settingsGlassGlyph(),
-                    )
-                }
+                SettingsTopBarIconButton(
+                    onClick = { onFullWidthChange(!fullWidth) },
+                    contentDescription = stringResource(Res.string.settings_desktop_toggle_full_width),
+                    imageVector = Icons.Rounded.WidthFull,
+                    iconModifier = Modifier.settingsGlassGlyph(lit = fullWidth),
+                )
+                SettingsTopBarIconButton(
+                    onClick = onQuitClick,
+                    contentDescription = null,
+                    imageVector = Icons.Rounded.PowerSettingsNew,
+                    iconModifier = Modifier.settingsGlassGlyph(),
+                )
                 Spacer(modifier = Modifier.weight(1f))
                 if (contextPanelWidth == 0.dp) {
                     SettingsSearchField(
                         query = query,
                         onQueryChange = onQueryChange,
                         onFocusChange = onSearchFocusChange,
+                        // With the tab row hidden the search field is the top bar's entry point:
+                        // Up from the page and Back from the category list land here rather than
+                        // on a requester that is no longer composed.
+                        focusRequester = navBarEntry.takeUnless { showRootNavigation },
                         modifier = Modifier
                             .padding(end = 18.dp)
                             .height(44.dp)
@@ -3089,6 +3234,7 @@ private fun DesktopSettingsTopBar(
                         query = query,
                         onQueryChange = onQueryChange,
                         onFocusChange = onSearchFocusChange,
+                        focusRequester = navBarEntry.takeUnless { showRootNavigation },
                         modifier = Modifier
                             .padding(horizontal = 18.dp)
                             .height(44.dp)
@@ -3097,16 +3243,18 @@ private fun DesktopSettingsTopBar(
                 }
             }
         }
-        DesktopSettingsRootNavigation(
-            entryRequester = navBarEntry,
-            onNavigateToHome = onNavigateToHome,
-            onNavigateToSearch = onNavigateToSearch,
-            onNavigateToLibrary = onNavigateToLibrary,
-            onNavigateToDiscover = onNavigateToDiscover,
-            onNavigateToCalendar = onNavigateToCalendar,
-            onNavigateToLiveTv = onNavigateToLiveTv,
-            onNavigateToMusic = onNavigateToMusic,
-        )
+        if (showRootNavigation) {
+            DesktopSettingsRootNavigation(
+                entryRequester = navBarEntry,
+                onNavigateToHome = onNavigateToHome,
+                onNavigateToSearch = onNavigateToSearch,
+                onNavigateToLibrary = onNavigateToLibrary,
+                onNavigateToDiscover = onNavigateToDiscover,
+                onNavigateToCalendar = onNavigateToCalendar,
+                onNavigateToLiveTv = onNavigateToLiveTv,
+                onNavigateToMusic = onNavigateToMusic,
+            )
+        }
     }
 }
 
@@ -3269,11 +3417,24 @@ private fun RowScope.DesktopSettingsNavIcon(
     modifier: Modifier = Modifier,
 ) {
     val enabled = onClick != null
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
+    val scale = settingsFocusScale(focused, hovered, SettingsTopIconFocusScale, "settingsNavIconScale")
     val iconModifier = Modifier
         .size(22.dp)
         .settingsGlassGlyph(lit = enabled)
+        .graphicsLayer {
+            scaleX = scale
+            scaleY = scale
+        }
     Box(modifier = Modifier.weight(1f), contentAlignment = Alignment.Center) {
-        IconButton(onClick = { onClick?.invoke() }, enabled = enabled, modifier = modifier) {
+        IconButton(
+            onClick = { onClick?.invoke() },
+            enabled = enabled,
+            modifier = modifier,
+            interactionSource = interaction,
+        ) {
             if (imageVector != null) {
                 Icon(imageVector, contentDescription, iconModifier)
             } else if (painter != null) {
@@ -3365,6 +3526,7 @@ private fun DesktopSettingsContextPanel(
                                     subtitle = target?.let { stringResource(it.titleRes) }.orEmpty(),
                                     // Right-click forgets it, as it unpins a favourite.
                                     onSecondaryClick = { SettingsSearchHistoryRepository.remove(recent.query) },
+                                    bounceOnFocus = true,
                                 ) {
                                     onRecentSearchClick(recent.query)
                                 }
@@ -3413,6 +3575,7 @@ private fun DesktopFavoritesList(
                     onSecondaryClick = {
                         SettingsFavoritesRepository.remove(favorite.anchor)
                     },
+                    bounceOnFocus = true,
                 ) {
                     if (target != null) {
                         onPageChange(target)
@@ -3528,40 +3691,62 @@ private fun DesktopActionRow(
     modifier: Modifier = Modifier,
     onSecondaryClick: (() -> Unit)? = null,
     trailingContent: (@Composable () -> Unit)? = null,
+    bounceOnFocus: Boolean = false,
     onClick: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
+    val scale = if (bounceOnFocus) {
+        settingsFocusScale(focused, hovered, SettingsRowFocusScale, "settingsActionRowScale")
+    } else {
+        1f
+    }
     Row(
         modifier = modifier
             .fillMaxWidth()
             .secondaryClick(onSecondaryClick)
-            .clickable(onClick = onClick)
+            .hoverable(interaction)
+            .clickable(interactionSource = interaction, indication = null, onClick = onClick)
             .padding(vertical = 6.dp),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(12.dp),
     ) {
-        Icon(
-            imageVector = icon,
-            contentDescription = null,
-            tint = tokens.colors.textMuted,
-            modifier = Modifier.size(22.dp),
-        )
-        Column(modifier = Modifier.weight(1f)) {
-            Text(
-                text = title,
-                modifier = settingsRowTitleAccentMask(title),
-                style = MaterialTheme.typography.bodyMedium,
-                color = settingsRowTitleColor(title),
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
+        Row(
+            modifier = Modifier
+                .weight(1f)
+                .graphicsLayer {
+                    scaleX = scale
+                    scaleY = scale
+                    transformOrigin = TransformOrigin(0f, 0.5f)
+                },
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(12.dp),
+        ) {
+            Icon(
+                imageVector = icon,
+                contentDescription = null,
+                tint = tokens.colors.textMuted,
+                modifier = Modifier.size(22.dp),
             )
-            Text(
-                text = subtitle,
-                style = MaterialTheme.typography.bodySmall,
-                color = tokens.colors.textMuted,
-                maxLines = 1,
-                overflow = TextOverflow.Ellipsis,
-            )
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = title,
+                    modifier = settingsRowTitleAccentMask(title),
+                    style = MaterialTheme.typography.bodyMedium,
+                    color = settingsRowTitleColor(title),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = subtitle,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
         }
         trailingContent?.invoke()
     }

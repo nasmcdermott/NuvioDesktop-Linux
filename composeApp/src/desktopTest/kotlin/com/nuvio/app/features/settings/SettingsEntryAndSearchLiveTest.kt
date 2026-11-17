@@ -88,7 +88,7 @@ class SettingsEntryAndSearchLiveTest {
     @Test
     fun aSearchAnchorFocusesTheRowItNames() {
         requireLive()
-        val requested = mutableStateOf<String?>(SettingsPage.Playback.name)
+        val requested = mutableStateOf<String?>(SettingsPage.Player.name)
         val focusManager = AtomicReference<FocusManager?>()
         val window = openWindow {
             focusManager.set(LocalFocusManager.current)
@@ -103,10 +103,10 @@ class SettingsEntryAndSearchLiveTest {
         try {
             val manager = awaitManager(window, focusManager) ?: return
             Thread.sleep(500)
-            // The exact request the Volume Control search result makes (Video & Audio).
-            SettingsScrollAnchor.request(SettingsScrollAnchor.searchKey("desktop-volume-control"))
+            // The exact request the Hidden Player Buttons search result makes (Player).
+            SettingsScrollAnchor.request(SettingsScrollAnchor.searchKey("x-playback-hidden-hud-buttons"))
             assertTrue(
-                awaitTrue(4_000) { focusLabel(manager).contains("volume") },
+                awaitTrue(4_000) { focusLabel(manager).contains("hidden") },
                 "the searched row did not take focus; saw '${focusLabel(manager)}'",
             )
         } finally {

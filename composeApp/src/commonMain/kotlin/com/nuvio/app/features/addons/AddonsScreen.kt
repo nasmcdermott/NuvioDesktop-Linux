@@ -6,7 +6,8 @@ import com.nuvio.app.features.settings.SettingsSectionGlassEdge
 import com.nuvio.app.features.settings.SettingsSectionGlassEdgeColor
 import com.nuvio.app.features.settings.SettingsSectionGlassFill
 import com.nuvio.app.features.settings.SettingsSectionGlassShape
-import com.nuvio.app.features.settings.settingsNavIconButton
+import com.nuvio.app.features.settings.SettingsIconAction
+import com.nuvio.app.features.settings.settingsControlZoom
 import com.nuvio.app.features.settings.settingsNavItem
 import com.nuvio.app.features.settings.SettingsMenuPanel
 import com.nuvio.app.features.settings.rememberMenuPlacement
@@ -64,6 +65,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
+import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
@@ -713,10 +716,14 @@ private fun DesktopAccentButton(
     height: Dp = 44.dp,
 ) {
     val tokens = MaterialTheme.nuvio
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
     val shape = RoundedCornerShape(12.dp)
     Surface(
         modifier = Modifier
             .height(height)
+            .settingsControlZoom(focused || hovered, "addonAccentButtonZoom")
             .alpha(if (enabled) 1f else 0.45f)
             // Painted as a brush rather than through Surface's colour so a gradient accent reaches
             // this pill too; accentFill is a SolidColor on the flat themes and renders identically.
@@ -726,7 +733,12 @@ private fun DesktopAccentButton(
                 shape = shape,
             )
             .settingsNavItem(onActivate = { if (enabled) onClick() })
-            .clickable(enabled = enabled, onClick = onClick),
+            .clickable(
+                enabled = enabled,
+                interactionSource = interaction,
+                indication = null,
+                onClick = onClick,
+            ),
         shape = shape,
         color = Color.Transparent,
     ) {
@@ -1175,12 +1187,10 @@ private fun DesktopAddonActionButton(
     tint: Color = MaterialTheme.nuvio.colors.textMuted,
     onClick: () -> Unit,
 ) {
-    IconButton(
-        enabled = enabled,
+    SettingsIconAction(
         onClick = onClick,
-        modifier = Modifier
-            .size(32.dp)
-            .settingsNavIconButton(onClick = onClick),
+        enabled = enabled,
+        modifier = Modifier.size(32.dp),
     ) {
         Icon(
             imageVector = icon,

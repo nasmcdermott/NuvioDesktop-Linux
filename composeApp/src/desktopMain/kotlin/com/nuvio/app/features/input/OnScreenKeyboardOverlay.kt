@@ -131,9 +131,10 @@ internal fun OnScreenKeyboardOverlay() {
                 KeyEvent.VK_ENTER -> {
                     OnScreenKeyboard.press(OskLayout.keyAt(OnScreenKeyboard.selection.value))
                 }
-                // Escape closes the panel instead of opening the page's server menu.
+                // Escape closes the panel instead of opening the page's server menu. Mark it so the
+                // focused field ignores the matching key-up instead of clearing its search.
                 KeyEvent.VK_ESCAPE -> {
-                    OnScreenKeyboard.dismiss()
+                    OnScreenKeyboard.dismissFromEscape()
                 }
                 else -> return@KeyEventDispatcher false
             }

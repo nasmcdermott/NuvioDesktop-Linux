@@ -3,6 +3,7 @@ package com.nuvio.app.features.settings
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
+import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
@@ -37,6 +38,7 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.text.font.FontWeight
@@ -62,6 +64,8 @@ import com.nuvio.app.isDesktop
 import kotlinx.coroutines.launch
 import nuvio.composeapp.generated.resources.Res
 import nuvio.composeapp.generated.resources.action_reset
+import nuvio.composeapp.generated.resources.settings_appearance_focus_zoom
+import nuvio.composeapp.generated.resources.settings_appearance_focus_zoom_description
 import nuvio.composeapp.generated.resources.settings_appearance_sidebar_items
 import nuvio.composeapp.generated.resources.settings_appearance_sidebar_items_centred
 import nuvio.composeapp.generated.resources.settings_appearance_sidebar_items_centred_description
@@ -374,6 +378,18 @@ internal fun LazyListScope.appearanceSettingsContent(
                             onSelected = ThemeSettingsRepository::setDesktopSidebarItemsTop,
                         )
                     }
+                    val focusZoomEnabled by remember {
+                        ThemeSettingsRepository.desktopFocusZoomEnabled
+                    }.collectAsState()
+                    SettingsGroupDivider(isTablet = isTablet)
+                    SettingsSwitchRow(
+                        title = stringResource(Res.string.settings_appearance_focus_zoom),
+                        description = stringResource(Res.string.settings_appearance_focus_zoom_description),
+                        checked = focusZoomEnabled,
+                        isTablet = isTablet,
+                        modifier = Modifier.settingsScrollAnchor(SettingsScrollAnchor.searchKey("focus-zoom")),
+                        onCheckedChange = ThemeSettingsRepository::setDesktopFocusZoomEnabled,
+                    )
                     SettingsGroupDivider(isTablet = isTablet)
                     var navigationOrderOpen by remember { mutableStateOf(false) }
                     Box(
@@ -818,15 +834,21 @@ private fun ThemeChip(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
+    var focused by remember { mutableStateOf(false) }
+    val (hoverSource, hovered) = rememberSettingsHoverState()
     SettingsSelectableColumn(
         onSelect = onClick,
-        modifier = modifier.clip(RoundedCornerShape(12.dp)),
+        modifier = modifier
+            .onFocusChanged { focused = it.hasFocus }
+            .hoverable(hoverSource)
+            .clip(RoundedCornerShape(12.dp)),
         contentModifier = Modifier.padding(horizontal = 4.dp, vertical = 8.dp),
         horizontalAlignment = Alignment.CenterHorizontally,
     ) {
         Box(
             modifier = Modifier
                 .size(56.dp)
+                .settingsControlZoom(focused || hovered, "themeChipZoom")
                 .then(
                     if (isSelected) {
                         Modifier.border(
@@ -876,7 +898,9 @@ private fun ThemeChip(
             textAlign = TextAlign.Center,
             maxLines = 2,
             overflow = TextOverflow.Ellipsis,
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                .settingsControlZoom(focused || hovered, "themeChipLabelZoom"),
         )
 
         Spacer(modifier = Modifier.height(4.dp))

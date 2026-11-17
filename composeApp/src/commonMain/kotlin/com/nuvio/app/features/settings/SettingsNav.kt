@@ -66,6 +66,18 @@ internal fun settingsRootEntersPage(
 ): Boolean = rootFocused && !textInputActive && !searchFocused &&
     action != null && action != SettingsNavKeyAction.Back
 
+/**
+ * The traversal step the Settings shell falls back to when an arrow found no control by geometry.
+ * Only Down walks forward. Left, Up and Right are boundaries and have no fallback: Up must not
+ * wrap onto the context panel, Left must not wrap from the category rail to the right, and Right
+ * at a row's or the page's right edge must not drop onto the setting below. Null means "consume
+ * the key where it is".
+ */
+internal fun settingsArrowTraversalFallback(direction: FocusDirection): FocusDirection? = when (direction) {
+    FocusDirection.Down -> FocusDirection.Next
+    else -> null
+}
+
 /** Settings keys are off while a text field has focus, so typing, Escape and Enter reach the field. */
 internal fun settingsNavKeysActive(textInputFocused: Boolean): Boolean = !textInputFocused
 
@@ -556,7 +568,7 @@ internal fun Modifier.settingsNavItem(
                                 SettingsContentFocus.requestEntry(focusManager) ||
                                     SettingsSidebarFocus.requestEntry(focusManager)
                             SettingsFocusRegion.Sidebar ->
-                                SettingsTopBarFocus.requestEntry(focusManager)
+                                requestSettingsNavigationBarFocus(focusManager)
                         }
                         if (!handled) DesktopNavigationGestureBridge.requestBack()
                     }
@@ -639,6 +651,8 @@ internal fun Modifier.settingsNavItem(
                             SettingsSidebarFocus.requestEntry(focusManager)
                         action == SettingsNavKeyAction.Left && region == SettingsFocusRegion.ContextPanel ->
                             SettingsContentFocus.requestEntry(focusManager)
+                        action == SettingsNavKeyAction.Left && region == SettingsFocusRegion.Sidebar ->
+                            requestSettingsNavigationBarFocus(focusManager)
                         action == SettingsNavKeyAction.Right && region == SettingsFocusRegion.Sidebar ->
                             SettingsContentFocus.requestEntry(focusManager)
                         action == SettingsNavKeyAction.Right && region == SettingsFocusRegion.Content ->
@@ -678,6 +692,15 @@ internal fun Modifier.settingsNavItem(
             },
         )
 }
+
+/**
+ * Enter the navigation that Settings is currently drawn under: the global side bar when the
+ * sidebar layout is on, otherwise the Settings top bar's icon row. This is what Back out of the
+ * category list and Left from it reach.
+ */
+internal fun requestSettingsNavigationBarFocus(focusManager: FocusManager): Boolean =
+    com.nuvio.app.core.ui.RootNavFocus.enterSidebar() ||
+        SettingsTopBarFocus.requestEntry(focusManager)
 
 /**
  * The category sidebar's Back handling, without taking its arrows: Back from a category row asks

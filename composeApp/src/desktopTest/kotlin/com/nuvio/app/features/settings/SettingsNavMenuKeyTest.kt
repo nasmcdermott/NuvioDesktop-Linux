@@ -163,6 +163,39 @@ class SettingsNavMenuKeyTest {
     }
 
     @Test
+    fun downFromThePrecedingRowReachesAMultiSelect() = runComposeUiTest {
+        val ticked = linkedSetOf(1)
+        val lead = FocusRequester()
+        setContent {
+            NuvioTheme(darkTheme = true, appTheme = AppTheme.CRIMSON) {
+                Column {
+                    Box(Modifier.size(60.dp).focusRequester(lead).settingsNavItem(onActivate = {}).focusable())
+                    SettingsMultiSelectRow(
+                        title = "A multi-select",
+                        description = null,
+                        options = options,
+                        selectedValues = ticked,
+                        emptyLabel = "None",
+                        isTablet = true,
+                        onToggle = { value ->
+                            if (!ticked.add(value)) ticked.remove(value)
+                        },
+                        modifier = Modifier,
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        focusTrigger(lead)
+
+        // The row is a full-width focus stop, not only its narrow right-hand trigger, so spatial
+        // Down from the row above lands on it and Enter opens its menu.
+        pressOnPage(Key.DirectionDown)
+        pressOnPage(Key.Enter)
+        assertEquals(2, onAllNodes(isRoot()).fetchSemanticsNodes().size, "Down skipped the multi-select row")
+    }
+
+    @Test
     fun enterOnAMultiSelectTicksAndStaysOpen() = runComposeUiTest {
         val ticked = linkedSetOf(1)
         val lead = FocusRequester()

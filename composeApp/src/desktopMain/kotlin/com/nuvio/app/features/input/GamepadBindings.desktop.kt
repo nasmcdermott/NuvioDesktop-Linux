@@ -34,6 +34,14 @@ actual fun resetGamepadSettings() = GamepadSettingsRepository.resetAll()
 actual fun mouseKeyboardState(): StateFlow<Boolean> = GamepadSettingsRepository.mouseKeyboardState
 actual fun setMouseKeyboard(enabled: Boolean) = GamepadSettingsRepository.setMouseKeyboard(enabled)
 
+actual fun dismissOnScreenKeyboard(): Boolean {
+    if (!OnScreenKeyboard.visible.value) return false
+    OnScreenKeyboard.dismiss()
+    return true
+}
+
+actual fun consumeOnScreenKeyboardEscapeDismissal(): Boolean = OnScreenKeyboard.consumeEscapeDismissal()
+
 actual fun gamepadMappingRows(): List<GamepadMappingRow> = GamepadButton.entries.map { button ->
     val binding = GamepadSettingsRepository.binding(button)
     GamepadMappingRow(

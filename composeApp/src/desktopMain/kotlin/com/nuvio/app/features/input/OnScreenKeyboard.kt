@@ -215,6 +215,21 @@ internal object OnScreenKeyboard {
         dismiss()
     }
 
+    @Volatile private var escapeDismissedAt = 0L
+
+    /** Escape closed the panel: mark it so the focused field swallows its key-up rather than clearing. */
+    fun dismissFromEscape() {
+        escapeDismissedAt = System.currentTimeMillis()
+        dismiss()
+    }
+
+    /** True once for an Escape that just closed the panel. */
+    fun consumeEscapeDismissal(): Boolean {
+        val at = escapeDismissedAt
+        escapeDismissedAt = 0L
+        return at != 0L && System.currentTimeMillis() - at <= 800L
+    }
+
     /** Closed by the user — stays closed until focus moves elsewhere. */
     fun dismiss() {
         dismissedWhileFocused = true
@@ -230,6 +245,7 @@ internal object OnScreenKeyboard {
         if (isVisible == value) return
         isVisible = value
         _visible.value = value
+        if (value) escapeDismissedAt = 0L
         if (!value) _caps.value = false
     }
 

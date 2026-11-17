@@ -1172,6 +1172,8 @@
     <string name="settings_appearance_sidebar_items_centred_description">Centred down the side.</string>
     <string name="settings_appearance_sidebar_items_top_description">Grouped at the top, under your profile.</string>
     <string name="settings_appearance_desktop_navigation_top_bar">Top Bar</string>
+    <string name="settings_appearance_focus_zoom">Focus zoom</string>
+    <string name="settings_appearance_focus_zoom_description">Grow focused text, icons, toggles, sliders and dropdowns slightly.</string>
     <string name="settings_appearance_desktop_top_bar_always_visible">Always Show Top Bar</string>
     <string name="settings_appearance_desktop_top_bar_always_visible_description">Keep the top bar on screen instead of fading it out.</string>
     <string name="settings_appearance_liquid_glass">Liquid Glass</string>
@@ -1275,6 +1277,7 @@
     <string name="settings_poster_highlight_border">Border</string>
     <string name="settings_poster_highlight_white">White</string>
     <string name="settings_poster_highlight_accent">Accent</string>
+    <string name="settings_poster_highlight_artwork">Artwork</string>
     <string name="settings_poster_highlight_shine">Shine</string>
     <string name="settings_poster_highlight_sweep">Sweep</string>
     <string name="settings_poster_highlight_glow">Glow</string>

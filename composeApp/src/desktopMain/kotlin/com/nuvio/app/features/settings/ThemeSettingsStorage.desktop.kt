@@ -29,6 +29,7 @@ internal actual object ThemeSettingsStorage {
     private const val holdToSelectEnabledKey = "hold_to_select_enabled"
     private const val desktopNavigationLayoutKey = "desktop_navigation_layout"
     private const val desktopTopBarAlwaysVisibleKey = "desktop_top_bar_always_visible"
+    private const val desktopFocusZoomEnabledKey = "desktop_focus_zoom_enabled"
     // Account-wide, not per profile: set when the account started on the pinned-bar default.
     private const val desktopTopBarPinnedByDefaultKey = "desktop_top_bar_pinned_by_default"
     private const val desktopDiscoverTabVisibleKey = "desktop_discover_tab_visible"
@@ -192,6 +193,12 @@ internal actual object ThemeSettingsStorage {
 
     actual fun saveDesktopTopBarAlwaysVisible(enabled: Boolean) {
         store.putBoolean(ProfileScopedKey.of(desktopTopBarAlwaysVisibleKey), enabled)
+    }
+    actual fun loadDesktopFocusZoomEnabled(): Boolean? =
+        store.getBoolean(ProfileScopedKey.of(desktopFocusZoomEnabledKey))
+
+    actual fun saveDesktopFocusZoomEnabled(enabled: Boolean) {
+        store.putBoolean(ProfileScopedKey.of(desktopFocusZoomEnabledKey), enabled)
     }
 
     actual fun loadDesktopDiscoverTabVisible(): Boolean? =

@@ -13,6 +13,7 @@ import androidx.compose.animation.AnimatedVisibility
 import androidx.compose.animation.animateColorAsState
 import androidx.compose.animation.core.animateDpAsState
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.FastOutSlowInEasing
 import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.Canvas
@@ -80,6 +81,7 @@ import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
 import androidx.compose.runtime.staticCompositionLocalOf
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
@@ -92,6 +94,8 @@ import androidx.compose.ui.graphics.BlendMode
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.CompositingStrategy
 import androidx.compose.ui.graphics.graphicsLayer
+import androidx.compose.ui.graphics.TransformOrigin
+import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.geometry.Offset
@@ -182,6 +186,55 @@ internal data class SettingsChoiceOption<T>(
     val value: T,
     val label: String,
 )
+
+private const val SettingsTextFocusScale = 1.04f
+
+/** Small icon-only actions take twice the text zoom so the movement reads at their size. */
+private const val SettingsSmallIconFocusScale = SettingsTextFocusScale * 2f
+
+/** A row's hover state, alongside the interaction source that must be attached to it. */
+@Composable
+internal fun rememberSettingsHoverState(): Pair<MutableInteractionSource, Boolean> {
+    val source = remember { MutableInteractionSource() }
+    val hovered by source.collectIsHoveredAsState()
+    return source to hovered
+}
+
+/** The small zoom the Settings category rows use, applied to a row's title and help text while it holds the keys. */
+@Composable
+internal fun Modifier.settingsRowTextZoom(focused: Boolean, label: String): Modifier {
+    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val scale by animateFloatAsState(
+        targetValue = if (focused && zoomEnabled) SettingsTextFocusScale else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = label,
+    )
+    return graphicsLayer {
+        scaleX = scale
+        scaleY = scale
+        transformOrigin = TransformOrigin(0f, 0.5f)
+    }
+}
+
+/** The same small zoom for a focused control, anchored at its centre instead of its text edge. */
+@Composable
+internal fun Modifier.settingsControlZoom(
+    focused: Boolean,
+    label: String,
+    scale: Float = SettingsTextFocusScale,
+): Modifier {
+    val zoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val animated by animateFloatAsState(
+        targetValue = if (focused && zoomEnabled) scale else 1f,
+        animationSpec = tween(durationMillis = 140, easing = FastOutSlowInEasing),
+        label = label,
+    )
+    return graphicsLayer {
+        scaleX = animated
+        scaleY = animated
+        transformOrigin = TransformOrigin(0.5f, 0.5f)
+    }
+}
 
 /**
  * Settings help text. On desktop it wraps in full, as Windows Settings does: each row is its own
@@ -1080,6 +1133,9 @@ internal fun SettingsSection(
             if (collapsed && requested?.fallbackAnchor == sectionAnchor) revealed = true
         }
         val expanded = !collapsed || revealed
+        // The section heading is a keyboard stop too; it takes the same small zoom as the rows.
+        var headingFocused by remember { mutableStateOf(false) }
+        val (headingHoverSource, headingHovered) = rememberSettingsHoverState()
         val chevronRotation by animateFloatAsState(
             targetValue = if (expanded) 0f else -90f,
             animationSpec = tween(durationMillis = 160),
@@ -1114,6 +1170,8 @@ internal fun SettingsSection(
             Row(
                 modifier = Modifier
                     .fillMaxWidth()
+                    .onFocusChanged { headingFocused = it.hasFocus }
+                    .hoverable(headingHoverSource)
                     .then(
                         if (collapsible) {
                             // A section heading is a keyboard stop too: Select collapses/expands it
@@ -1163,6 +1221,12 @@ internal fun SettingsSection(
                         modifier = sectionHighlight.modifier
                             .then(highlight.modifier)
                             .then(titleAccentMask)
+                            .then(
+                                Modifier.settingsRowTextZoom(
+                                    headingFocused || headingHovered,
+                                    "settingsSectionHeadingZoom",
+                                ),
+                            )
                             .then(
                                 if (page != null) {
                                     // Right-click the heading to pin it as a favorite.
@@ -1357,6 +1421,8 @@ internal fun SettingsTextRow(
     // like a switch or choice row: without this, a page that opens on a text field (the Collection
     // editor's Name) focuses the first *registered* row below it instead.
     val focusManager = LocalFocusManager.current
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     val fieldRequester = remember { FocusRequester() }
     DisposableEffect(fieldRequester, focusManager) {
         SettingsContentFocus.register(fieldRequester, focusManager)
@@ -1365,12 +1431,15 @@ internal fun SettingsTextRow(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .padding(horizontal = if (isTablet) 20.dp else 16.dp, vertical = 10.dp),
         verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Text(
             text = title,
-            modifier = settingsRowTitleAccentMask(title),
+            modifier = settingsRowTitleAccentMask(title)
+                .settingsRowTextZoom(rowFocused || rowHovered, "settingsTextTitle"),
             style = if (isTablet) {
                 MaterialTheme.typography.bodyMedium
             } else {
@@ -1382,6 +1451,7 @@ internal fun SettingsTextRow(
         if (description != null) {
             Text(
                 text = description,
+                modifier = Modifier.settingsRowTextZoom(rowFocused || rowHovered, "settingsTextDescription"),
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.nuvio.colors.textMuted,
             )
@@ -1422,6 +1492,8 @@ internal fun SettingsNavigationRow(
     val tokens = MaterialTheme.nuvio
     val titleColor = settingsRowTitleColor(title)
     val titleAccentMask = settingsRowTitleAccentMask(title)
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     val iconSize = if (isTablet) 34.dp else 36.dp
     val verticalPadding = if (isTablet) DesktopRowVerticalPadding else 14.dp
     val horizontalPadding = if (isTablet) 16.dp else 16.dp
@@ -1429,6 +1501,8 @@ internal fun SettingsNavigationRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .settingsNavItem(onActivate = onClick)
             .clickable(enabled = enabled, onClick = onClick)
             .padding(horizontal = horizontalPadding, vertical = verticalPadding)
@@ -1480,7 +1554,9 @@ internal fun SettingsNavigationRow(
             Column {
                 Text(
                     text = title,
-                    modifier = titleAccentMask,
+                    modifier = titleAccentMask.then(
+                        Modifier.settingsRowTextZoom(rowFocused || rowHovered, "settingsNavigationTitle"),
+                    ),
                     style = if (isTablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                     color = titleColor,
                     fontWeight = FontWeight.Medium,
@@ -1493,7 +1569,9 @@ internal fun SettingsNavigationRow(
                     SettingsSubtext(
                         text = description,
                         isTablet = isTablet,
-                        modifier = Modifier.alpha(0.92f),
+                        modifier = Modifier
+                            .alpha(0.92f)
+                            .settingsRowTextZoom(rowFocused || rowHovered, "settingsNavigationDescription"),
                     )
                 }
             }
@@ -1526,10 +1604,15 @@ internal fun SettingsGlassButton(
 ) {
     val tokens = MaterialTheme.nuvio
     val shape = SettingsSectionGlassShape
+    var buttonFocused by remember { mutableStateOf(false) }
+    val (buttonHoverSource, buttonHovered) = rememberSettingsHoverState()
     Box(
         modifier = modifier
             .width(DesktopControlWidth)
             .heightIn(min = SettingsGlassButtonHeight)
+            .onFocusChanged { buttonFocused = it.hasFocus }
+            .hoverable(buttonHoverSource)
+            .settingsControlZoom(buttonFocused || buttonHovered, "settingsGlassButtonZoom")
             .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium)
             .ditheredBackground(SettingsSectionGlassFill, shape)
             .then(
@@ -1559,7 +1642,7 @@ internal fun SettingsGlassButton(
             Text(
                 text = text,
                 style = MaterialTheme.typography.bodyMedium,
-                color = tokens.colors.textPrimary,
+                color = if (accent) tokens.colors.onAccent else tokens.colors.textPrimary,
                 fontWeight = FontWeight.SemiBold,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -1621,9 +1704,13 @@ internal fun SettingsActionRow(
     actions: @Composable ColumnScope.() -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .padding(horizontal = 16.dp, vertical = if (isTablet) DesktopRowVerticalPadding else 14.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
@@ -1635,7 +1722,8 @@ internal fun SettingsActionRow(
         ) {
             Text(
                 text = title,
-                modifier = settingsRowTitleAccentMask(title),
+                modifier = settingsRowTitleAccentMask(title)
+                    .settingsRowTextZoom(rowFocused || rowHovered, "settingsActionTitle"),
                 style = if (isTablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                 color = settingsRowTitleColor(title),
                 fontWeight = FontWeight.Medium,
@@ -1645,6 +1733,7 @@ internal fun SettingsActionRow(
                     text = description,
                     isTablet = isTablet,
                     color = descriptionColor ?: tokens.colors.textMuted,
+                    modifier = Modifier.settingsRowTextZoom(rowFocused || rowHovered, "settingsActionDescription"),
                 )
             }
         }
@@ -1680,9 +1769,14 @@ internal fun SettingsSquareSwitch(
         targetValue = if (checked) trackWidth - thumbSize - thumbInset else thumbInset,
         label = "settingsSquareSwitchThumb",
     )
+    var switchFocused by remember { mutableStateOf(false) }
+    val (switchHoverSource, switchHovered) = rememberSettingsHoverState()
     Box(
         modifier = modifier
             .size(width = trackWidth, height = trackHeight)
+            .onFocusChanged { switchFocused = it.hasFocus }
+            .hoverable(switchHoverSource)
+            .settingsControlZoom(switchFocused || switchHovered, "settingsSquareSwitchZoom")
             .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium)
             .clip(trackShape)
             .background(trackBrush)
@@ -1724,6 +1818,8 @@ internal fun SettingsSwitchRow(
     val tokens = MaterialTheme.nuvio
     val titleColor = settingsRowTitleColor(title)
     val titleAccentMask = settingsRowTitleAccentMask(title)
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     val verticalPadding = if (isTablet) DesktopRowVerticalPadding else 14.dp
     val horizontalPadding = if (isTablet) 16.dp else 16.dp
     val controlWidthModifier = if (isTablet) {
@@ -1741,6 +1837,8 @@ internal fun SettingsSwitchRow(
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .settingsNavItem(onActivate = { if (enabled) onCheckedChange(!checked) })
             .then(
                 // Desktop, as Windows Settings: the whole card flips the toggle, not only the
@@ -1799,7 +1897,9 @@ internal fun SettingsSwitchRow(
             } else {
                 Text(
                     text = title,
-                    modifier = titleAccentMask,
+                    modifier = titleAccentMask.then(
+                        Modifier.settingsRowTextZoom(rowFocused || rowHovered, "settingsSwitchTitle"),
+                    ),
                     style = if (isTablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
                     color = titleColor,
                     fontWeight = FontWeight.Medium,
@@ -1809,6 +1909,7 @@ internal fun SettingsSwitchRow(
                 SettingsSubtext(
                     text = description,
                     isTablet = isTablet,
+                    modifier = Modifier.settingsRowTextZoom(rowFocused || rowHovered, "settingsSwitchDescription"),
                 )
             }
         }
@@ -1823,6 +1924,7 @@ internal fun SettingsSwitchRow(
             modifier = controlWidthModifier
                 .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium),
             keyboardStop = false,
+            focused = rowFocused || rowHovered,
             onSelected = onCheckedChange,
         )
     }
@@ -1899,9 +2001,13 @@ internal fun <T> SettingsSegmentedChoiceRow(
     // The row is one keyboard stop. A two-option row is a toggle, so Select flips it as the switch
     // row does; Left and Right are left to focus traversal, so the row never traps focus between
     // two alternatives and Left at the page's edge still reaches the categories.
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .settingsNavItem(
                 onActivate = {
                     if (enabled) settingsNextChoiceOption(options, selectedValue)?.let(onSelected)
@@ -1917,6 +2023,7 @@ internal fun <T> SettingsSegmentedChoiceRow(
             title = title,
             description = description,
             isTablet = isTablet,
+            focused = rowFocused || rowHovered,
             trailingInset = !flushContent,
             modifier = Modifier
                 .weight(1f)
@@ -1929,6 +2036,7 @@ internal fun <T> SettingsSegmentedChoiceRow(
             isTablet = isTablet,
             modifier = controlWidthModifier,
             keyboardStop = false,
+            focused = rowFocused || rowHovered,
             onSelected = onSelected,
         )
     }
@@ -1946,9 +2054,13 @@ internal fun <T> SettingsSegmentedControl(
     modifier: Modifier = Modifier,
     /** True when the control stands alone; false when a row around it is already the keyboard stop. */
     keyboardStop: Boolean = true,
+    /** Set by a surrounding row when that row owns the keyboard stop. */
+    focused: Boolean = false,
     onSelected: (T) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
+    var controlFocused by remember { mutableStateOf(false) }
+    val (controlHoverSource, controlHovered) = rememberSettingsHoverState()
     // The settings glass, like the dropdowns beside it; the selected half is tinted glass in the
     // accent, inset by the track padding so its corners follow the track's.
     val controlShape = SettingsSectionGlassShape
@@ -1956,6 +2068,9 @@ internal fun <T> SettingsSegmentedControl(
     val selectedIndex = options.indexOfFirst { it.value == selectedValue }
     Row(
         modifier = modifier
+            .onFocusChanged { controlFocused = it.hasFocus }
+            .hoverable(controlHoverSource)
+            .settingsControlZoom(controlFocused || focused || controlHovered, "settingsSegmentedControlZoom")
             .ditheredBackground(SettingsSectionGlassFill, controlShape)
             .border(tokens.borders.thin, SettingsSectionGlassEdge, controlShape)
             // One keyboard stop. With three or more options, Left and Right step the selection and
@@ -2026,9 +2141,9 @@ internal fun <T> SettingsSegmentedControl(
                 Text(
                     text = option.label,
                     style = MaterialTheme.typography.bodyMedium,
-                    // Primary rather than onAccent: the tint is see-through, so the label sits on the
-                    // dark glass behind it, and onAccent is dark for the pale accents.
-                    color = if (selected) tokens.colors.textPrimary else tokens.colors.textSecondary,
+                    // The selected half is an accent fill, so the label follows onAccent. That is
+                    // what turns it black on the white/pale accents instead of white-on-white.
+                    color = if (selected) tokens.colors.onAccent else tokens.colors.textSecondary,
                     fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
@@ -2335,9 +2450,13 @@ internal fun <T> SettingsDropdownChoiceRow(
     val selectedLabel = options.firstOrNull { it.value == selectedValue }?.label.orEmpty()
     var expanded by remember { mutableStateOf(false) }
 
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             // The whole row is the stop, not the small trigger on the right. Spatial Up/Down from a
             // full-width row above used to choose the next full-width row over a narrow trigger
             // tucked at the right edge, so an enabled dropdown (Display Mode, Player Controls
@@ -2353,6 +2472,7 @@ internal fun <T> SettingsDropdownChoiceRow(
             title = title,
             description = description,
             isTablet = isTablet,
+            focused = rowFocused || rowHovered,
             trailingInset = !flushContent,
             modifier = Modifier
                 .weight(1f)
@@ -2375,6 +2495,7 @@ internal fun <T> SettingsDropdownChoiceRow(
                 isTablet = isTablet,
                 onClick = { expanded = true },
                 keyboardStop = false,
+                focused = rowFocused || rowHovered,
             )
             SettingsMenuPanel(
                 expanded = expanded,
@@ -2462,9 +2583,13 @@ private fun SettingsDropdownTrigger(
     onClick: () -> Unit,
     /** False when an enclosing row already owns the keyboard stop (the single-select choice row). */
     keyboardStop: Boolean = true,
+    /** Set by the enclosing row when it owns the keyboard stop. */
+    focused: Boolean = false,
 ) {
     val tokens = MaterialTheme.nuvio
     val shape = placement.triggerShape(expanded)
+    var triggerFocused by remember { mutableStateOf(false) }
+    val (triggerHoverSource, triggerHovered) = rememberSettingsHoverState()
     val chevronRotation by animateFloatAsState(
         targetValue = if (expanded) 180f else 0f,
         animationSpec = tween(durationMillis = MenuEnterMillis),
@@ -2472,6 +2597,9 @@ private fun SettingsDropdownTrigger(
     Layout(
         modifier = Modifier
             .fillMaxWidth()
+            .onFocusChanged { triggerFocused = it.hasFocus }
+            .hoverable(triggerHoverSource)
+            .settingsControlZoom(triggerFocused || focused || triggerHovered, "settingsDropdownTriggerZoom")
             .ditheredBackground(SettingsSectionGlassFill, shape)
             .border(tokens.borders.thin, SettingsSectionGlassEdge, shape)
             // Clipped after the edge: a clip is not anti-aliased here and stair-steps an edge drawn inside it.
@@ -2616,9 +2744,18 @@ internal fun <T> SettingsMultiSelectRow(
         else -> summaryForCount(selectedLabels.size)
     }
 
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
+            // As with the single-select row, the whole row is the focus stop. A narrow trigger
+            // tucked at the right edge is walked straight past by spatial Up/Down from the
+            // full-width rows above it.
+            .settingsNavItem(onActivate = { if (enabled) expanded = true })
+            .focusable(enabled = enabled)
             .padding(horizontal = 16.dp, vertical = verticalPadding)
             .alpha(if (enabled) NuvioTokens.Opacity.visible else tokens.opacity.medium),
         verticalAlignment = Alignment.CenterVertically,
@@ -2627,6 +2764,7 @@ internal fun <T> SettingsMultiSelectRow(
             title = title,
             description = description,
             isTablet = isTablet,
+            focused = rowFocused || rowHovered,
             trailingInset = true,
             modifier = Modifier
                 .weight(1f)
@@ -2646,6 +2784,8 @@ internal fun <T> SettingsMultiSelectRow(
                 enabled = enabled,
                 isTablet = isTablet,
                 onClick = { expanded = true },
+                keyboardStop = false,
+                focused = rowFocused || rowHovered,
             )
             SettingsMenuPanel(
                 expanded = expanded,
@@ -2728,6 +2868,7 @@ private fun SettingsRowText(
     description: String?,
     isTablet: Boolean,
     trailingInset: Boolean = true,
+    focused: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -2744,7 +2885,7 @@ private fun SettingsRowText(
     ) {
         Text(
             text = title,
-            modifier = titleAccentMask,
+            modifier = titleAccentMask.settingsRowTextZoom(focused, "settingsRowTextTitle"),
             style = if (isTablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
             color = titleColor,
             fontWeight = FontWeight.Medium,
@@ -2755,6 +2896,7 @@ private fun SettingsRowText(
             SettingsSubtext(
                 text = description,
                 isTablet = isTablet,
+                modifier = Modifier.settingsRowTextZoom(focused, "settingsRowTextDescription"),
             )
         }
     }
@@ -3012,12 +3154,26 @@ internal fun SettingsIconAction(
     enabled: Boolean = true,
     content: @Composable () -> Unit,
 ) {
+    val interaction = remember { MutableInteractionSource() }
+    val focused by interaction.collectIsFocusedAsState()
+    val hovered by interaction.collectIsHoveredAsState()
     IconButton(
         onClick = onClick,
         enabled = enabled,
+        interactionSource = interaction,
         modifier = modifier.settingsNavIconButton(onClick = onClick),
-        content = content,
-    )
+    ) {
+        Box(
+            modifier = Modifier.settingsControlZoom(
+                focused = focused || hovered,
+                label = "settingsIconActionZoom",
+                scale = SettingsSmallIconFocusScale,
+            ),
+            contentAlignment = Alignment.Center,
+        ) {
+            content()
+        }
+    }
 }
 
 /**
@@ -3228,6 +3384,7 @@ internal fun SettingsRowTextColumn(
     title: String,
     description: String?,
     isTablet: Boolean,
+    focused: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     Column(
@@ -3236,7 +3393,8 @@ internal fun SettingsRowTextColumn(
     ) {
         Text(
             text = title,
-            modifier = settingsRowTitleAccentMask(title),
+            modifier = settingsRowTitleAccentMask(title)
+                .settingsRowTextZoom(focused, "settingsSliderTitle"),
             style = if (isTablet) MaterialTheme.typography.bodyMedium else MaterialTheme.typography.bodyLarge,
             color = settingsRowTitleColor(title),
             fontWeight = FontWeight.Medium,
@@ -3245,6 +3403,7 @@ internal fun SettingsRowTextColumn(
             SettingsSubtext(
                 text = description,
                 isTablet = isTablet,
+                modifier = Modifier.settingsRowTextZoom(focused, "settingsSliderDescription"),
             )
         }
     }
@@ -3281,9 +3440,13 @@ internal fun SettingsSliderRow(
     val sliderRange = valueRange.first.toFloat()..valueRange.last.toFloat()
     val sliderSteps = calculateSteps(valueRange.first.toFloat(), valueRange.last.toFloat(), step.toFloat())
 
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .settingsNavItem(
                 onActivate = {
                     if (!enabled) return@settingsNavItem
@@ -3315,10 +3478,13 @@ internal fun SettingsSliderRow(
             title = title,
             description = description,
             isTablet = isTablet,
+            focused = rowFocused || rowHovered,
             modifier = Modifier.weight(1f),
         )
         Row(
-            modifier = Modifier.width(if (isTablet) DesktopControlWidth else 220.dp),
+            modifier = Modifier
+                .width(if (isTablet) DesktopControlWidth else 220.dp)
+                .settingsControlZoom(rowFocused || rowHovered, "settingsSliderControlZoom"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SettingsModernSlider(
@@ -3365,9 +3531,13 @@ internal fun SettingsRangeSliderRow(
     val sliderRange = valueRange.first.toFloat()..valueRange.last.toFloat()
     val sliderSteps = calculateSteps(valueRange.first.toFloat(), valueRange.last.toFloat(), step.toFloat())
 
+    var rowFocused by remember { mutableStateOf(false) }
+    val (rowHoverSource, rowHovered) = rememberSettingsHoverState()
     Row(
         modifier = modifier
             .fillMaxWidth()
+            .onFocusChanged { rowFocused = it.hasFocus }
+            .hoverable(rowHoverSource)
             .settingsNavItem(
                 onActivate = {
                     if (!enabled) return@settingsNavItem
@@ -3409,10 +3579,13 @@ internal fun SettingsRangeSliderRow(
             title = title,
             description = description,
             isTablet = isTablet,
+            focused = rowFocused || rowHovered,
             modifier = Modifier.weight(1f),
         )
         Row(
-            modifier = Modifier.width(if (isTablet) DesktopControlWidth else 220.dp),
+            modifier = Modifier
+                .width(if (isTablet) DesktopControlWidth else 220.dp)
+                .settingsControlZoom(rowFocused || rowHovered, "settingsRangeSliderControlZoom"),
             verticalAlignment = Alignment.CenterVertically,
         ) {
             SettingsModernRangeSlider(

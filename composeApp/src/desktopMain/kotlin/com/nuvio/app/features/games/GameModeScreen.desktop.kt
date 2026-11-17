@@ -72,6 +72,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import coil3.compose.AsyncImage
 import com.nuvio.app.DesktopApplicationExit
+import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.NuvioPosterCard
 import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.navigationKey
@@ -298,8 +299,7 @@ actual fun GameModeScreen(
             }
             // Preview phase, so the library's own single-key shortcuts win over the app-wide ones
             // (S is Search outside game mode) rather than racing them. Anything not handled here
-            // still bubbles out to the app dispatcher, which is how G gets back to the media UI
-            // and how Backspace leaves it.
+            // still bubbles out to the app dispatcher, which is how G gets back to the media UI.
             //
             // navigationKey() rather than the raw key, for the same reason every other grid in the
             // app uses it: it honours TKL mode (W/A/S/D as arrows, which then legitimately takes
@@ -369,9 +369,10 @@ actual fun GameModeScreen(
                         true
                     }
                     // Both, because a controller has one B button for the keyboard's two keys, and
-                    // game mode is an overlay a pad user can open (right stick down).
+                    // game mode is an overlay a pad user can open (right stick down). Back reaches
+                    // the navigation bar first; only when no bar is drawn does it leave game mode.
                     Key.Escape, Key.Backspace -> {
-                        onExit()
+                        if (!RootNavFocus.enterSidebar() && !RootNavFocus.enterTopBar()) onExit()
                         true
                     }
                     else -> false

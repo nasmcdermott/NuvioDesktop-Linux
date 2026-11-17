@@ -93,6 +93,8 @@ import org.jetbrains.compose.resources.StringResource
 import org.jetbrains.compose.resources.getString
 import org.jetbrains.compose.resources.stringResource
 import com.nuvio.app.core.ui.trackTextInputFocus
+import com.nuvio.app.features.input.consumeOnScreenKeyboardEscapeDismissal
+import com.nuvio.app.features.input.dismissOnScreenKeyboard
 
 internal sealed class SettingsSearchTarget {
     data class Page(
@@ -1287,6 +1289,15 @@ private fun settingsSearchEntries(
         )
         addRow(
             page = SettingsPage.Appearance,
+            key = "focus-zoom",
+            title = resolve(Res.string.settings_appearance_focus_zoom),
+            description = resolve(Res.string.settings_appearance_focus_zoom_description),
+            pageLabel = layoutPage,
+            section = resolve(Res.string.settings_appearance_section_display),
+            icon = Icons.Rounded.Palette,
+        )
+        addRow(
+            page = SettingsPage.Appearance,
             key = "navigation-order",
             title = "Navigation order",
             description = "The order of the sidebar and top bar, and which of their optional entries show.",
@@ -1768,14 +1779,6 @@ private fun settingsSearchEntries(
                 "desktop-hdr",
                 resolve(Res.string.settings_playback_desktop_hdr_mode),
                 anchor = SettingsScrollAnchor.HdrMode,
-            ) else null,
-            // Player Volume Control: searchable by name and by "volume" without a value condition,
-            // so it stays discoverable whether the switch is on or off.
-            if (isDesktop) PlaybackSearchRow(
-                "desktop-volume-control",
-                resolve(Res.string.settings_playback_volume_control),
-                resolve(Res.string.settings_playback_volume_control_description),
-                anchor = SettingsScrollAnchor.searchKey("desktop-volume-control"),
             ) else null,
             if (isDesktop && platformOffersInverseToneMapping) PlaybackSearchRow(
                 "desktop-inverse-tone-mapping",
@@ -3191,13 +3194,12 @@ internal fun LazyListScope.settingsSearchResultsContent(
         if (results.isEmpty()) {
             SettingsSearchEmptyState(isTablet = isTablet)
         } else {
-            val firstResultFocus = androidx.compose.runtime.remember { androidx.compose.ui.focus.FocusRequester() }
             val focusRequest = SettingsSearchResultFocus.requests.value
-            LaunchedEffect(focusRequest) {
-                if (focusRequest == 0) return@LaunchedEffect
-                withFrameNanos { }
-                runCatching { firstResultFocus.requestFocus() }
-            }
+            val focusTarget = SettingsSearchResultFocus.target.value
+            val requestedIndex = focusTarget
+                ?.let { target -> results.indexOfFirst { it.target == target } }
+                ?.takeIf { it >= 0 }
+                ?: 0
             SettingsSection(
                 title = stringResource(Res.string.settings_search_results_section),
                 isTablet = isTablet,
@@ -3207,12 +3209,23 @@ internal fun LazyListScope.settingsSearchResultsContent(
                         if (index > 0) {
                             SettingsGroupDivider(isTablet = isTablet)
                         }
+                        val isRequested = index == requestedIndex
+                        val rowFocus = androidx.compose.runtime.remember(entry.key, focusRequest) {
+                            androidx.compose.ui.focus.FocusRequester()
+                        }
+                        if (isRequested) {
+                            LaunchedEffect(focusRequest) {
+                                if (focusRequest == 0) return@LaunchedEffect
+                                withFrameNanos { }
+                                runCatching { rowFocus.requestFocus() }
+                            }
+                        }
                         SettingsNavigationRow(
                             title = entry.title,
                             description = entry.resultDescription(),
                             icon = entry.icon,
                             isTablet = isTablet,
-                            modifier = if (index == 0) Modifier.focusRequester(firstResultFocus) else Modifier,
+                            modifier = if (isRequested) Modifier.focusRequester(rowFocus) else Modifier,
                             onClick = {
                                 SettingsScrollAnchor.highlightTitle(entry.title)
                                 onTargetClick(entry.target)
@@ -3256,11 +3269,16 @@ private fun SettingsSearchRevealItem(
     }
 }
 
-/** Asks the visible search results to put the keys on the first result (Enter in the field). */
+/**
+ * Asks the visible search results to put the keys on a result: the first by default (Enter in the
+ * field), or the one a search opened when coming back to the results.
+ */
 internal object SettingsSearchResultFocus {
     val requests = androidx.compose.runtime.mutableStateOf(0)
+    val target = androidx.compose.runtime.mutableStateOf<SettingsSearchTarget?>(null)
 
-    fun request() {
+    fun request(target: SettingsSearchTarget? = null) {
+        this.target.value = target
         requests.value++
     }
 }
@@ -3313,10 +3331,12 @@ internal fun SettingsSearchField(
                 focused.value = it.isFocused
                 onFocusChange(it.isFocused)
             }
-            // Escape closes the search the way it closes the content search: the query goes and the
-            // field lets go of focus. Focus returns to the content the user came from rather than
-            // dropping entirely (a focusless Settings is a dead end for the arrow keys). Both halves
-            // of the key are eaten so the screen's own Escape (back) doesn't fire on the same press.
+            // Back/Escape in the field keeps the results it pulled up. First it closes the
+            // on-screen keyboard if that is up; the keyboard's own Escape handling marks the press,
+            // so the field swallows the matching key-up instead of clearing. With no keyboard the
+            // keys move to the results in the content column. Only an empty box falls back to the
+            // old leave-the-field behaviour. Both halves of the key are eaten so the screen's own
+            // Escape (back) does not fire on the same press.
             .onPreviewKeyEvent { event ->
                 if ((event.key == Key.Enter || event.key == Key.NumPadEnter) && event.type == KeyEventType.KeyDown) {
                     onSubmit?.invoke()
@@ -3324,8 +3344,15 @@ internal fun SettingsSearchField(
                 }
                 if (event.navigationKey() != Key.Escape) return@onPreviewKeyEvent false
                 if (event.type == KeyEventType.KeyUp) {
-                    onQueryChange("")
-                    returnFocusRequests.value++
+                    when {
+                        consumeOnScreenKeyboardEscapeDismissal() -> Unit
+                        dismissOnScreenKeyboard() -> Unit
+                        query.isNotBlank() -> SettingsSearchResultFocus.request()
+                        else -> {
+                            onQueryChange("")
+                            returnFocusRequests.value++
+                        }
+                    }
                 }
                 true
             },

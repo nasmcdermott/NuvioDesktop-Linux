@@ -36,6 +36,15 @@ expect fun resetGamepadSettings()
 expect fun mouseKeyboardState(): StateFlow<Boolean>
 expect fun setMouseKeyboard(enabled: Boolean)
 
+/** Closes the on-screen keyboard if it is up; true when it was. */
+expect fun dismissOnScreenKeyboard(): Boolean
+
+/**
+ * Consumes the marker left when an Escape key closed the on-screen keyboard, so the focused text
+ * field does not also treat the same press as "clear and leave" on its release.
+ */
+expect fun consumeOnScreenKeyboardEscapeDismissal(): Boolean
+
 /**
  * One row of the mapping inventory: what a button does while browsing, and what the same button
  * does during playback.

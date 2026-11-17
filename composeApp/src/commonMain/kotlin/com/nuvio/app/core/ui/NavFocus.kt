@@ -226,6 +226,19 @@ internal fun topBarKeyAction(key: Key, index: Int, count: Int): TopBarKeyAction?
 }
 
 /**
+ * Whether Right at the last slot must stay on the bar instead of stepping into the page below.
+ * The floating bar has no focusable chrome to its right on ordinary tabs, so releasing the key there
+ * lets Compose's spatial traversal pick the nearest control in the content (a poster or card row).
+ * YouTube draws its own section tabs and search beside the bar, so it keeps releasing at the edge.
+ */
+internal fun topBarRightEdgeStaysPut(
+    key: Key,
+    index: Int,
+    count: Int,
+    sideIconsBesideBar: Boolean,
+): Boolean = !sideIconsBesideBar && count > 0 && key == Key.DirectionRight && index >= count - 1
+
+/**
  * Handles the top bar's keys, the sidebar's list turned sideways. Movement and leave act on key-down
  * and are always consumed, so an arrow at either end of the bar stays on the bar instead of
  * wandering into the page. Activation acts on key-up, as the sidebar's does: a held Select fires

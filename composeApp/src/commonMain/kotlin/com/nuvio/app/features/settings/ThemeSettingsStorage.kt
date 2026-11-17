@@ -37,6 +37,8 @@ internal expect object ThemeSettingsStorage {
     fun saveDesktopNavigationLayout(layoutName: String)
     fun loadDesktopTopBarAlwaysVisible(): Boolean?
     fun saveDesktopTopBarAlwaysVisible(enabled: Boolean)
+    fun loadDesktopFocusZoomEnabled(): Boolean?
+    fun saveDesktopFocusZoomEnabled(enabled: Boolean)
     fun loadDesktopDiscoverTabVisible(): Boolean?
     fun saveDesktopDiscoverTabVisible(visible: Boolean)
     fun loadDesktopSidebarItemsTop(): Boolean?
