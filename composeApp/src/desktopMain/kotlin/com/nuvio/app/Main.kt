@@ -699,7 +699,13 @@ fun main(args: Array<String>) {
                     exitDesktopApplication()
                 }
             },
-            title = if (smokePlayerUrl == null) "Nuvio HTPC" else "Nuvio Player Smoke",
+            // fork:sports — an ordinary build and a `-Pnuvio.sports=true` build otherwise open the
+            // same window and, in a dev run, carry no build stamp to tell them apart.
+            title = if (smokePlayerUrl == null) {
+                "Nuvio HTPC" + if (com.nuvio.app.core.build.AppFeaturePolicy.sportsEnabled) " — Sports" else ""
+            } else {
+                "Nuvio Player Smoke"
+            },
             state = windowState,
             icon = painterResource(NuvioDesktopIconPath),
             // An arrow no control took (often because the control holding focus left the screen) is handled by the

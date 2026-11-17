@@ -10,4 +10,6 @@ actual object AppFeaturePolicy {
     actual val inAppUpdaterEnabled: Boolean = true
     actual val imdbRatingLogoEnabled: Boolean = true
     actual val customServerConnectionsEnabled: Boolean = true
+    // fork:sports — set by the build when launched with -Pnuvio.sports=true (build.gradle.kts).
+    actual val sportsEnabled: Boolean = System.getProperty("nuvio.sports.build") != null
 }
