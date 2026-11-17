@@ -141,10 +141,11 @@ python3() {
                                       ('workflow_dispatch', False, 'false'), ('push', True, 'false'), ('push', False, 'false')]:
             python_expression = expression.replace('github.event_name', repr(event)).replace('inputs.bootstrap_only', repr(flag))
             self.assertEqual(eval(python_expression.replace('&&', 'and').replace('||', 'or'), {'__builtins__': {}}), expected)
-        for title in ['Independently verify DEB in its pinned builder', 'Smoke-install DEB on Ubuntu 22.04',
+        for title in ['Independently verify DEB in its pinned builder', 'Independently verify RPM in its pinned builder',
+                      'Smoke-install RPM on Fedora', 'Smoke-install DEB on Ubuntu 22.04',
                       'Prepare isolated pinned Flatpak runtime', 'Export and verify Flatpak',
                       'Build and verify AppImage with private production WebKit',
-                      'Checksum available packages and evidence', 'Require all three valid packages',
+                      'Checksum available packages and evidence', 'Require all four valid packages',
                       'Report independent format results']:
             with self.subTest(title=title):
                 condition = step_field(named_step('linux-packages.yml', title), 'if')
@@ -152,7 +153,7 @@ python3() {
         release_upload = next(step for step in workflow_steps('linux-packages.yml') if 'name: nuvio-linux-x86_64-' in step)
         self.assertIn("env.BOOTSTRAP_ONLY != 'true'", step_field(release_upload, 'if'))
         self.assertNotIn('BOOTSTRAP_ONLY', named_step('linux-packages.yml', 'Build private media from pinned source'))
-        self.assertNotIn('BOOTSTRAP_ONLY', named_step('linux-packages.yml', 'Build canonical Compose image and DEB'))
+        self.assertNotIn('BOOTSTRAP_ONLY', named_step('linux-packages.yml', 'Build canonical Compose image, DEB and RPM'))
 
     def test_bootstrap_gate_requires_build_export_and_real_upload_output(self):
         step = named_step('linux-packages.yml', 'Require bootstrap seed export and upload')

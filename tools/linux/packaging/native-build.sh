@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # Inside the pinned builder. Two runs (build.build_in_builder):
 #   build    Gradle (network for dependencies), GraalVM native-image, JNI bridge, staging
-#   package  without network: native smoke gate on the staged image, then the DEB
+#   package  without network: native smoke gate on the staged image, then DEB/RPM
 set -euo pipefail
 unset DISPLAY WAYLAND_DISPLAY NUVIO_RUN_LIVE_DISPLAY_TESTS LD_PRELOAD LD_LIBRARY_PATH
 export LC_ALL=C TZ=UTC PYTHONDONTWRITEBYTECODE=1
@@ -12,8 +12,9 @@ if [[ $phase == package ]]; then
   # Launches the staged package only in this disposable container (private Xvfb,
   # D-Bus and profile, no network); fails on any failed probe or native-image error.
   python3 tools/linux/packaging/native_smoke.py /output
-  python3 tools/linux/packaging/formats.py /output --deb-only
-  python3 tools/linux/packaging/verify.py artifacts /output --formats deb
+  package_formats=${NUVIO_PACKAGE_FORMATS:-deb,rpm}
+  python3 tools/linux/packaging/formats.py /output --formats "$package_formats"
+  python3 tools/linux/packaging/verify.py artifacts /output --formats "$package_formats"
   exit 0
 fi
 [[ $phase == build ]] || { echo "Unknown phase: $phase"; exit 1; }

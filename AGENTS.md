@@ -83,13 +83,14 @@ Work in small, verifiable stages.
 6. Test application behavior on Bazzite/Wayland.
 7. Only after the application is working, add packaging.
 
-Do not start Flatpak/AppImage work before the application itself works correctly from source.
+Do not start Flatpak/AppImage/RPM work before the application itself works correctly from source.
 
 ## Packaging goal
 
-Eventually produce all three formats from the same source commit:
+Eventually produce all four formats from the same source commit:
 
 - DEB
+- RPM
 - Flatpak
 - AppImage
 

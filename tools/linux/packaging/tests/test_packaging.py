@@ -156,7 +156,7 @@ class PackagingContractTest(unittest.TestCase):
 
     def test_deb_depends_cover_the_native_executable_and_emitted_jdk_libraries(self):
         source = (packaging_build.HERE / 'formats.py').read_text()
-        depends = source[source.index("depends = ("):source.index("(deb / 'DEBIAN/control')")]
+        depends = source[source.index("DEB_DEPENDS = ("):source.index("(deb / 'DEBIAN/control')")]
         # lib/nuvio and libsplashscreen: zlib; libfontmanager: FreeType; libjsound: ALSA;
         # libawt_xawt: X11/Xext/Xi/Xrender/Xtst (ldd in the builder, 2026-10-18).
         for package in ['zlib1g', 'libfreetype6', 'libasound2', 'libx11-6', 'libxext6', 'libxi6',
@@ -164,6 +164,62 @@ class PackagingContractTest(unittest.TestCase):
             self.assertRegex(depends, r'(?<![\w.+-])' + re.escape(package) + r'(?![\w.+-])')
         self.assertIn('no Java runtime', source)
         self.assertNotIn('private libmpv and Java runtime', source)
+
+    def test_rpm_wrapper_matches_the_deb_image_and_metadata(self):
+        import formats
+        with tempfile.TemporaryDirectory() as tmp:
+            work = pathlib.Path(tmp)
+            image = work / 'canonical'
+            (image / 'share/applications').mkdir(parents=True)
+            (image / 'share/icons/hicolor/512x512/apps').mkdir(parents=True)
+            (image / 'bin').mkdir()
+            (image / 'share/applications/com.nuvio.media.desktop.desktop').write_text('[Desktop Entry]\n')
+            (image / 'share/icons/hicolor/512x512/apps/com.nuvio.media.desktop.png').write_bytes(b'png')
+            (image / 'bin/nuvio-desktop').write_text('#!/bin/sh\n')
+            info = dict(version='1.41.0', channel='stable', git_commit='a' * 40, dirty=False,
+                        source_sha256='b' * 64, source_date_epoch=1700000000)
+            (image / 'release-info.json').write_text(json.dumps(info))
+            artifacts = work / 'artifacts'
+            artifacts.mkdir()
+            calls = []
+
+            def fake_run(*args, **kwargs):
+                calls.append(([str(a) for a in args], kwargs))
+                top = pathlib.Path(str(args[args.index('--define') + 1]).split(' ', 1)[1])
+                built = top / 'RPMS/x86_64'
+                built.mkdir(parents=True)
+                (built / 'nuvio-desktop-1.41.0-1.x86_64.rpm').write_bytes(b'rpm fixture')
+
+            with patch.object(formats, 'run', side_effect=fake_run), \
+                    patch.object(formats, 'private_sonames', return_value={'libmpv.so.2', 'libwayland-client.so.0'}):
+                formats.build_rpm(work, image, info, artifacts)
+            spec = (work / 'rpmbuild/SPECS/nuvio-desktop.spec').read_text()
+            self.assertIn('Name: nuvio-desktop', spec)
+            self.assertIn('Version: 1.41.0+git.aaaaaaaaaaaa', spec)
+            self.assertIn('AutoReqProv: yes', spec)
+            self.assertIn('ln -s /opt/nuvio-desktop/bin/nuvio-desktop', spec)
+            self.assertIn('Recommends: mesa-vulkan-drivers', spec)
+            self.assertIn('%global __provides_exclude_from ^/opt/nuvio-desktop/lib/(native|runtime)/.*$', spec)
+            self.assertIn('libmpv\\.so\\.2', spec)
+            self.assertIn('libwayland\\-client\\.so\\.0', spec)
+            self.assertEqual(['rpmbuild'], [c[0][0] for c in calls])
+            self.assertEqual('1700000000', calls[0][1]['env']['SOURCE_DATE_EPOCH'])
+            self.assertTrue((image / 'bin/nuvio-desktop').is_file())
+            self.assertEqual(b'rpm fixture', (artifacts / 'nuvio-desktop-1.41.0-1.x86_64.rpm').read_bytes())
+
+    def test_rpm_belongs_to_native_and_all_artifact_sets(self):
+        from verify import wanted_formats
+        self.assertEqual(['deb', 'rpm', 'AppImage', 'flatpak'], wanted_formats('all'))
+        self.assertEqual(['deb', 'rpm'], wanted_formats('native')[:2])
+        self.assertEqual(['rpm'], wanted_formats('rpm'))
+        self.assertEqual('deb,rpm', packaging_build.package_formats('packages'))
+        self.assertEqual('rpm', packaging_build.package_formats('rpm'))
+        workflow = (packaging_build.REPO / '.github/workflows/linux-packages.yml').read_text()
+        self.assertIn('--format packages', workflow)
+        self.assertIn('verify.py artifacts /output --formats rpm', workflow)
+        self.assertIn("steps.rpm.outcome }}' == success", workflow)
+        self.assertIn("steps.rpm_smoke.outcome }}' == success", workflow)
+        self.assertIn('Require all four valid packages', workflow)
 
     def test_development_snapshot_excludes_arbitrary_untracked_files(self):
         self.assertTrue(development_source('tools/linux/packaging/build.py'))

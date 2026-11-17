@@ -184,7 +184,7 @@ def build(work, media_cache, ubuntu_cache, offline=False):
     common = [application, produced['media'], *produced['graalvm'], native_inputs[0], torrserver[0], innertubex[0],
               engine[0], whisper[0], usenet[0]]
     packages = {}
-    for pattern, kind in (('*.deb', 'deb'), ('*.flatpak', 'flatpak'), ('*.AppImage', 'appimage')):
+    for pattern, kind in (('*.deb', 'deb'), ('*.rpm', 'rpm'), ('*.flatpak', 'flatpak'), ('*.AppImage', 'appimage')):
         for package in sorted(artifacts.glob(pattern)):
             sources = common + (webkit + runtime + [produced['ubuntu']] if kind == 'appimage' else [])
             packages[package.name] = dict(sha256=sha(package), sources=[

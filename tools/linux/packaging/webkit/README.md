@@ -99,7 +99,7 @@ For this initial export, manually dispatch **Linux packages** on `linux` with
 `bootstrap_only=true`. It retains the existing pinned media and canonical
 application/DEB build needed by the seed provenance contract. It skips DEB
 smoke installation, Flatpak runtime/export, AppImage compilation, normal package
-uploads and the three-format release gate. A separate gate requires successful
+uploads and the four-format release gate. A separate gate requires successful
 media/canonical builds, seed export **and upload with an artifact ID**. Its summary
 is explicitly **BOOTSTRAP ONLY — not a validated release**. The option defaults
 to false; tag pushes always retain the normal full build and release gate.
@@ -217,8 +217,8 @@ entries, checks the current recipe, sandbox/build policy, inventory and matching
 canonical builder, then imports and verifies the exact assembly image. It publishes
 the generation only after success. AppImage receives `--webkit-generation`; any
 import failure stops that step instead of falling back to another compilation.
-The existing AppImage payload/ELF/resource/path and all-three-format gates still run.
-The mandatory three-format release gate remains unchanged for normal/tag builds;
+The existing AppImage payload/ELF/resource/path and all-four-format gates still run.
+The mandatory four-format release gate remains unchanged for normal/tag builds;
 bootstrap-only runs use the explicit non-release seed gate described above.
 
 The intentional 20-minute attempt in run 38280547370 demonstrated real reuse:

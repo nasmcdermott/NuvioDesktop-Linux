@@ -33,16 +33,34 @@ def portable_support(image, engine=None, resource_sources=None):
     stage(image, engine, resource_sources)
 
 
-def build(work, deb_only=False):
-    image = work / 'canonical'
-    info = json.loads((image / 'release-info.json').read_text())
+def package_version(info):
     suffix = '' if info['channel'] == 'stable' else '~nightly'
     version = info['version'] + suffix + '+git.' + info['git_commit'][:12]
     if info['dirty']:
         version += '.dirty.' + info['source_sha256'][:12]
-    artifacts = work / 'artifacts'
-    shutil.rmtree(artifacts, ignore_errors=True)
-    artifacts.mkdir()
+    return version
+
+
+# The native executable needs zlib; the JDK libraries native-image emits need
+# FreeType (libfontmanager), ALSA (libjsound) and X11/Xext/Xi/Xrender/Xtst (libawt_xawt).
+DEB_DEPENDS = ('libc6 (>= 2.35), libstdc++6 (>= 12), libgcc-s1, libatomic1, '
+               'libgtk-3-0, libwebkit2gtk-4.1-0, libx11-6, libxext6, libxi6, libxrender1, libxtst6, '
+               'libxrandr2, libxss1, '
+               'libxcb1, libwayland-client0, libva2, libva-drm2, libva-x11-2, libdrm2, '
+               'libasound2, libpulse0, libfontconfig1, libfreetype6, libfribidi0, libharfbuzz0b, '
+               'libssl3, zlib1g, liblcms2-2, libudev1, libgl1, ca-certificates, xdg-utils, '
+               # The player only renders through Vulkan: without a driver there is no video.
+               'mesa-vulkan-drivers | vulkan-icd')
+
+# RPM resolves the ELF/SONAME requirements automatically from the packaged
+# libraries. Only non-ELF dependencies are named here: Fedora-family names, as
+# the RPM format is aimed at Fedora/Bazzite. The Vulkan ICD is recommended, not
+# required, so a system-provided driver remains usable.
+RPM_REQUIRES = ['ca-certificates', 'xdg-utils', 'hicolor-icon-theme']
+
+
+def build_deb(work, image, info, artifacts):
+    version = package_version(info)
     deb = work / 'deb-root'
     shutil.rmtree(deb, ignore_errors=True)
     shutil.copytree(image, deb / 'opt/nuvio-desktop', symlinks=True)
@@ -52,21 +70,11 @@ def build(work, deb_only=False):
     (deb / 'usr/bin/nuvio-desktop').chmod(0o755)
     for category in ['applications', 'icons']:
         shutil.copytree(image / 'share' / category, deb / 'usr/share' / category, dirs_exist_ok=True)
-    # The native executable needs zlib; the JDK libraries native-image emits need
-    # FreeType (libfontmanager), ALSA (libjsound) and X11/Xext/Xi/Xrender/Xtst (libawt_xawt).
-    depends = ('libc6 (>= 2.35), libstdc++6 (>= 12), libgcc-s1, libatomic1, '
-               'libgtk-3-0, libwebkit2gtk-4.1-0, libx11-6, libxext6, libxi6, libxrender1, libxtst6, '
-               'libxrandr2, libxss1, '
-               'libxcb1, libwayland-client0, libva2, libva-drm2, libva-x11-2, libdrm2, '
-               'libasound2, libpulse0, libfontconfig1, libfreetype6, libfribidi0, libharfbuzz0b, '
-               'libssl3, zlib1g, liblcms2-2, libudev1, libgl1, ca-certificates, xdg-utils, '
-               # The player only renders through Vulkan: without a driver there is no video.
-               'mesa-vulkan-drivers | vulkan-icd')
     (deb / 'DEBIAN/control').write_text(f'''Package: {CONFIG['package_name']}
 Version: {version}
 Architecture: amd64
 Maintainer: Nuvio Media
-Depends: {depends}
+Depends: {DEB_DEPENDS}
 Recommends: ffmpeg
 Section: video
 Priority: optional
@@ -75,6 +83,115 @@ Description: {CONFIG['display_name']}
  no Java runtime is installed or required.
 ''')
     run('dpkg-deb', '--root-owner-group', '--build', deb, artifacts / f'nuvio-desktop_{version}_amd64.deb')
+
+
+def private_sonames(image):
+    """SONAMEs of the libraries the image carries and resolves through its own RUNPATH."""
+    names = set()
+    for directory in ['lib/native', 'lib/runtime']:
+        root = image / directory
+        if not root.is_dir():
+            continue
+        for path in root.rglob('*'):
+            if not path.is_file() or path.is_symlink():
+                continue
+            try:
+                dynamic = subprocess.check_output(['readelf', '-d', str(path)], text=True,
+                                                  stderr=subprocess.DEVNULL)
+            except (OSError, subprocess.CalledProcessError):
+                continue
+            match = re.search(r'\(SONAME\).*?\[(.*?)\]', dynamic)
+            if match:
+                names.add(match.group(1))
+    return names
+
+
+def build_rpm(work, image, info, artifacts):
+    """Direct RPM wrapper around the same canonical image as the DEB.
+
+    Built in the digest-pinned Ubuntu package builder with its pinned rpmbuild.
+    The package carries the native executable, never a JVM or application JAR.
+    """
+    version = package_version(info)
+    top = work / 'rpmbuild'
+    shutil.rmtree(top, ignore_errors=True)
+    for directory in ['BUILD', 'BUILDROOT', 'RPMS', 'SOURCES', 'SPECS', 'SRPMS']:
+        (top / directory).mkdir(parents=True, exist_ok=True)
+    source = top / 'SOURCES'
+    shutil.copytree(image, source / 'canonical', symlinks=True)
+    shutil.copy2(image / 'share/applications/com.nuvio.media.desktop.desktop', source / 'com.nuvio.media.desktop.desktop')
+    shutil.copy2(image / 'share/icons/hicolor/512x512/apps/com.nuvio.media.desktop.png', source / 'com.nuvio.media.desktop.png')
+    requires = '\n'.join('Requires: ' + name for name in RPM_REQUIRES)
+    # Private libraries are resolved through the image's own RUNPATH and must not
+    # shadow (provide) or require the distribution's same-SONAME packages.
+    private = private_sonames(image)
+    private_exclude = ''
+    if private:
+        pattern = '^(?:' + '|'.join(re.escape(name) for name in sorted(private)) + r')(\(|$)'
+        private_exclude = ('%global __provides_exclude_from ^/opt/nuvio-desktop/lib/(native|runtime)/.*$\n'
+                           '%global __requires_exclude ' + pattern + '\n')
+    spec = top / 'SPECS/nuvio-desktop.spec'
+    spec.write_text(f'''%global debug_package %{{nil}}
+%global __os_install_post %{{nil}}
+%global _build_id_links none
+{private_exclude}
+
+Name: {CONFIG['package_name']}
+Version: {version}
+Release: 1
+Summary: {CONFIG['display_name']}
+License: Proprietary
+URL: https://nuvio.tv
+BuildArch: x86_64
+{requires}
+Recommends: ffmpeg
+Recommends: mesa-vulkan-drivers
+AutoReqProv: yes
+
+%description
+Integrated desktop media player with a private libmpv. Native executable;
+no Java runtime is installed or required.
+
+%prep
+
+%build
+
+%install
+mkdir -p %{{buildroot}}/opt
+cp -a %{{_sourcedir}}/canonical %{{buildroot}}/opt/nuvio-desktop
+mkdir -p %{{buildroot}}/usr/bin %{{buildroot}}/usr/share/applications \\
+  %{{buildroot}}/usr/share/icons/hicolor/512x512/apps
+ln -s /opt/nuvio-desktop/bin/nuvio-desktop %{{buildroot}}/usr/bin/nuvio-desktop
+cp %{{_sourcedir}}/com.nuvio.media.desktop.desktop %{{buildroot}}/usr/share/applications/
+cp %{{_sourcedir}}/com.nuvio.media.desktop.png \\
+  %{{buildroot}}/usr/share/icons/hicolor/512x512/apps/
+
+%files
+/opt/nuvio-desktop
+/usr/bin/nuvio-desktop
+/usr/share/applications/com.nuvio.media.desktop.desktop
+/usr/share/icons/hicolor/512x512/apps/com.nuvio.media.desktop.png
+
+%changelog
+''')
+    env = dict(os.environ, SOURCE_DATE_EPOCH=str(info['source_date_epoch']))
+    run('rpmbuild', '-bb', '--define', '_topdir ' + str(top), spec, env=env)
+    built = sorted((top / 'RPMS/x86_64').glob('*.rpm'))
+    if len(built) != 1:
+        raise ValueError('Expected exactly one built RPM, found ' + repr([p.name for p in built]))
+    shutil.copy2(built[0], artifacts / built[0].name)
+
+
+def build(work, formats=('deb', 'rpm')):
+    image = work / 'canonical'
+    info = json.loads((image / 'release-info.json').read_text())
+    artifacts = work / 'artifacts'
+    shutil.rmtree(artifacts, ignore_errors=True)
+    artifacts.mkdir()
+    if 'deb' in formats:
+        build_deb(work, image, info, artifacts)
+    if 'rpm' in formats:
+        build_rpm(work, image, info, artifacts)
     shutil.copy2(image / 'release-info.json', artifacts / 'release-info.json')
     archive_application_source(work, artifacts, info)
     # TorrServer's corresponding source (GPL-3.0): the pinned tag, its vendored Go modules and
@@ -97,8 +214,8 @@ Description: {CONFIG['display_name']}
     # record; also the material needed to rebuild/relink the executable.
     native_evidence.archive(work, artifacts / f'Nuvio-native-image-inputs-{info["git_commit"][:12]}.tar',
                             info['source_date_epoch'])
-    run('python3', HERE / 'verify.py', 'artifacts', work, '--formats', 'deb')
-    if not deb_only:
+    run('python3', HERE / 'verify.py', 'artifacts', work, '--formats', ','.join(formats))
+    if 'appimage' in formats:
         build_appimage(work)
 
 
@@ -214,5 +331,21 @@ def build_appimage(work, engine=None):
         env=dict(os.environ, ARCH='x86_64', VERSION=version))
 
 
+def parse_formats(value):
+    names = [name.strip() for name in value.split(',') if name.strip()]
+    if not names:
+        raise ValueError('At least one package format is required')
+    allowed = {'deb', 'rpm'}
+    unknown = sorted(set(names) - allowed)
+    if unknown:
+        raise ValueError('Unknown package format(s): ' + ', '.join(unknown))
+    return tuple(names)
+
+
 if __name__ == '__main__':
-    build(pathlib.Path(sys.argv[1]), deb_only='--deb-only' in sys.argv[2:])
+    import argparse
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('work', type=pathlib.Path)
+    parser.add_argument('--formats', default='deb,rpm')
+    args = parser.parse_args()
+    build(args.work, parse_formats(args.formats))

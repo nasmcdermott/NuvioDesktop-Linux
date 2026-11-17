@@ -3,9 +3,9 @@
 This pipeline reuses Compose Desktop `createDistributable`, compiles its JARs with
 GraalVM native-image (the Linux tasks in `composeApp/native-image-linux.gradle.kts`)
 and adds the canonical [private media recipe](../media-runtime/README.md). Packages
-ship the native executable only: no application JAR and no Java runtime. DEB and
-AppImage are independent wrappers of that application image; Flatpak consumes the
-same source-built image, never either final native package. No package is built
+ship the native executable only: no application JAR and no Java runtime. DEB,
+RPM and AppImage are independent wrappers of that application image; Flatpak
+consumes the same source-built image, never any final native package. No package is built
 unless the [native smoke gate](#native-image-and-smoke-gate) passes. Windows/macOS
 distribution settings and player behavior are unchanged.
 
@@ -39,8 +39,9 @@ from verified source. The media builder image ID recorded in that artifact is
 the packaging container's base, so it must still exist in the local Podman store.
 If missing, rebuild media; never substitute an arbitrary host image.
 
-`--format deb` builds the canonical application image and DEB. `--format native`
-also builds AppImage. `--format flatpak` exports an already completed canonical
+`--format deb` builds the canonical application image and DEB; `--format rpm`
+builds it and RPM; `--format packages` builds both native packages. `--format
+native` also builds AppImage. `--format flatpak` exports an already completed canonical
 image. `--format webkit` builds/resumes only the pinned AppImage engine;
 `--format appimage` reuses the canonical application/media and builds that engine
 if necessary. Neither AppImage-only command rebuilds media or modifies an existing
@@ -51,8 +52,8 @@ cache, Gradle initialization scripts and local.properties are not copied.
 The disposable snapshot supplies the reviewed
 [public client properties](public-client.properties) to upstream's existing
 `GenerateRuntimeConfigsTask`: `https://api.nuvio.tv` and the official publishable
-key documented in the pinned Nuvio self-host example. DEB, Flatpak and AppImage
-verification reads the generated `SupabaseConfig` fields from the exact native-image
+key documented in the pinned Nuvio self-host example. DEB, RPM, Flatpak and
+AppImage verification reads the generated `SupabaseConfig` fields from the exact native-image
 input JARs and requires both values verbatim in the shipped `lib/nuvio`; missing,
 empty or different defaults fail. Runtime custom/self-hosted
 server selection remains unchanged. No developer properties or private/service-role
@@ -61,15 +62,17 @@ optional service defaults described below remain unavailable.
 Gradle build-cache reuse is disabled. A git-file source snapshot prevents
 accidentally packaging the developer checkout, personal data or native caches.
 
-Output is ignored `build/linux-packaging/`: `canonical/`, `Nuvio.AppDir/`,
-`flatpak-build/`, `artifacts/`, dependency reports and `SHA256SUMS`.
+Output is ignored `build/linux-packaging/`: `canonical/`, `deb-root/`,
+`rpmbuild/`, `Nuvio.AppDir/`, `flatpak-build/`, `artifacts/`, dependency
+reports and `SHA256SUMS`.
 The build lock prevents concurrent replacement. A failed format never becomes a
 placeholder; missing/empty/malformed formats fail final verification.
 
 ## Identity and reproducibility boundary
 
 Application ID: `com.nuvio.media.desktop` (existing macOS bundle identity).
-Display name: **Nuvio Desktop**. DEB name/portable command: `nuvio-desktop`.
+Display name: **Nuvio Desktop**. DEB/RPM name and portable command:
+`nuvio-desktop`.
 `composeApp/Configuration/DesktopVersion.properties` supplies version and code;
 there is no separate Linux release version. `release-info.json` and the existing
 `lib/app/build-info.properties` carry the full Git commit, channel, source epoch,
@@ -84,7 +87,10 @@ and GLIBC 2.35 / GLIBCXX 3.4.30 floor. Packaging extends that builder with
 GTK3/WebKitGTK4.1 (plus Xvfb and Mesa lavapipe for the smoke gate), verifies pinned
 Temurin 21.0.12.1+1 (build JDK: Gradle, Kotlin, jpackage), GraalVM CE **25.0.2**
 (`/opt/graalvm`, native-image) and CMake 3.31.6 inputs, and records complete package
-versions. Neither JDK is copied into a package. AppImage tool **1.9.1** is SHA-256 pinned. The type-2
+versions. The builder also carries `rpmbuild` and `cpio` for the RPM wrapper;
+the RPM records auto-generated ELF/SONAME provides and requires, plus Fedora-family
+non-ELF requirements (`ca-certificates`, `xdg-utils`, `hicolor-icon-theme`).
+Neither JDK is copied into a package. AppImage tool **1.9.1** is SHA-256 pinned. The type-2
 runtime is not downloaded: `appimage_runtime.py build --output DIR` compiles it
 from pinned sources (`appimage-runtime/manifest.json`, digest-pinned Alpine,
 `--network=none`), reproducibly, and `--runtime-file` embeds only a runtime equal
@@ -457,7 +463,7 @@ must use the installed ref's origin, not a fixed name.
 
 [linux-packages.yml](../../../.github/workflows/linux-packages.yml) runs on manual
 dispatch/version tags, checks out one commit, rebuilds private media, builds
-native packages and exports Flatpak, checks all three outputs and uploads
+native packages (DEB and RPM) and exports Flatpak, checks all four outputs and uploads
 artifacts/checksums. Verified downloads, Gradle module artifacts and a bounded
 WebKit ccache are cached; native/final package outputs are checked anew. Engine
 cache reuse requires matching source/recipe/base-image identity, build policy,
@@ -469,17 +475,18 @@ Manual `bootstrap_only=true` runs retain the media/canonical build and require
 successful immutable WebKit builder-seed export/upload. They skip Flatpak,
 AppImage and normal package release checks/uploads, and report **BOOTSTRAP ONLY**.
 They are not validated releases. The option defaults to false and never applies
-to tag pushes; the normal three-format release gate remains mandatory.
+to tag pushes; the normal four-format release gate remains mandatory.
 
-DEB static verification/smoke installation, Flatpak preparation/export and
-AppImage engine/assembly report separate outcomes. The mandatory all-three-format
-gate still fails if any format or required verification fails. `--format all`
+DEB and RPM static verification, DEB smoke installation, Flatpak
+preparation/export and AppImage engine/assembly report separate outcomes. The
+mandatory all-four-format gate still fails if any format or required
+verification fails. `--format all`
 also continues independent exports and returns failure if any format fails.
 The user confirmed DEB build/audit/smoke-install on Ubuntu 22.04 in Actions run
 **38137016659**, and Flatpak real playback on Bazzite. The custom-engine attempt
 in run **38188755529** timed out after four hours. The
 [dedicated manual WebKit workflow and verified builder bootstrap](webkit/README.md#independent-manual-ci-and-builder-bootstrap)
-separate engine retries from application/media/DEB/Flatpak builds. Compiler
+separate engine retries from application/media/DEB/RPM/Flatpak builds. Compiler
 output streams live, resources are reported and only stopped-container cache
 snapshots upload. Run 38280547370's final compiler statistics demonstrate 370
 cache hits after restoring a previous attempt, despite its intentional timeout.

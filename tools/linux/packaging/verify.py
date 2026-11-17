@@ -419,11 +419,27 @@ def flatpak_native_image(repository, ref, tree, work, evidence):
     return audit, native_evidence.verify(audit, evidence)
 
 
+def wanted_formats(formats):
+    aliases = {'deb': ['deb'], 'rpm': ['rpm'], 'appimage': ['AppImage'], 'flatpak': ['flatpak'],
+               'native': ['deb', 'rpm', 'AppImage'],
+               'all': ['deb', 'rpm', 'AppImage', 'flatpak']}
+    wanted = []
+    for name in formats.split(','):
+        name = name.strip()
+        if not name:
+            continue
+        if name not in aliases:
+            raise ValueError('Unknown package format: ' + name)
+        wanted.extend(aliases[name])
+    if not wanted:
+        raise ValueError('At least one package format is required')
+    return wanted
+
+
 def artifacts(work, formats):
     dest = work / 'artifacts'
     evidence = work / 'native-image'
-    wanted = {'deb': ['deb'], 'appimage': ['AppImage'], 'native': ['deb', 'AppImage'],
-              'flatpak': ['flatpak'], 'all': ['deb', 'AppImage', 'flatpak']}[formats]
+    wanted = wanted_formats(formats)
     archives = sorted(dest.glob('Nuvio-native-image-inputs-*.tar'))
     if len(archives) != 1:
         raise ValueError('Missing/ambiguous native-image evidence archive in artifacts')
@@ -456,6 +472,29 @@ def artifacts(work, formats):
                                      require_smoke=True, smoke_identity=True)
                 report['native_image_evidence'] = evidence_archive
                 (dest / 'deb-audit.json').write_text(json.dumps(report, indent=2) + '\n')
+        elif suffix == 'rpm':
+            subprocess.run(['rpm', '-qip', str(path)], check=True)
+            metadata = subprocess.check_output(
+                ['rpm', '-qp', '--qf', '%{NAME}\t%{VERSION}\t%{RELEASE}\t%{ARCH}', str(path)], text=True)
+            name, version, release, arch = metadata.split('\t')
+            if (name, arch) != ('nuvio-desktop', 'x86_64'):
+                raise ValueError('Unexpected RPM identity: ' + metadata)
+            info = json.loads((work / 'canonical/release-info.json').read_text())
+            if info['version'] not in version:
+                raise ValueError('RPM version differs from canonical image: ' + version)
+            with tempfile.TemporaryDirectory(dir=work) as tmp:
+                root = pathlib.Path(tmp)
+                subprocess.run(['sh', '-c', 'rpm2cpio "$1" | cpio -idm --quiet', 'sh', str(path)],
+                               cwd=root, check=True)
+                launcher = root / 'usr/bin/nuvio-desktop'
+                if not launcher.is_symlink() or os.readlink(launcher) != '/opt/nuvio-desktop/bin/nuvio-desktop':
+                    raise ValueError('Missing/different RPM launcher: usr/bin/nuvio-desktop')
+                # The RPM payload must be byte-identical to the image the smoke gate launched.
+                report = check_image(root / 'opt/nuvio-desktop', evidence,
+                                     require_smoke=True, smoke_identity=True)
+                report['rpm'] = dict(name=name, version=version, release=release, arch=arch)
+                report['native_image_evidence'] = evidence_archive
+                (dest / 'rpm-audit.json').write_text(json.dumps(report, indent=2) + '\n')
         elif suffix == 'AppImage':
             # Runtime inspection/extraction only: never executes AppRun/the app.
             with tempfile.TemporaryDirectory(dir=work) as tmp:
@@ -534,7 +573,8 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('kind', choices=['image', 'artifacts'])
     parser.add_argument('path', type=pathlib.Path)
-    parser.add_argument('--formats', choices=['deb', 'appimage', 'native', 'flatpak', 'all'], default='all')
+    parser.add_argument('--formats', default='all',
+                        help='Comma-separated output: deb, rpm, appimage, flatpak, native or all')
     parser.add_argument('--native-evidence', type=pathlib.Path,
                         help='image: <work>/native-image with the retained native-image inputs (required)')
     parser.add_argument('--require-smoke', action='store_true', help='image: require the passing smoke record')

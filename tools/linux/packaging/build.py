@@ -120,16 +120,30 @@ def native(args, work):
             src = pathlib.Path(args.gradle_cache) / directory
             if src.is_dir():
                 shutil.copytree(src, work / 'gradle' / directory, dirs_exist_ok=True)
-    build_in_builder(image, info, args.channel, args.jobs, args.offline, work, runtime, inputs)
+    build_in_builder(image, info, args.channel, args.jobs, args.offline, work, runtime, inputs,
+                      package_formats=package_formats(getattr(args, 'format', 'packages')))
 
 
-def builder_command(info, channel, jobs, offline, work, runtime, inputs, network):
+def package_formats(build_format):
+    """Package formats produced inside the pinned builder for a build.py --format."""
+    return {
+        'deb': 'deb',
+        'rpm': 'rpm',
+        'packages': 'deb,rpm',
+        'native': 'deb,rpm',
+        'all': 'deb,rpm',
+        'flatpak': 'deb,rpm',
+        'appimage': 'deb,rpm',
+    }[build_format]
+
+
+def builder_command(info, channel, jobs, offline, work, runtime, inputs, network, package_formats='deb,rpm'):
     command = ['podman', 'run', '--rm', '--network=' + network, '--userns=keep-id',
                '--security-opt', 'label=disable', '--cap-drop=all', '--security-opt', 'no-new-privileges',
                '--env', 'HOME=/tmp/nuvio-build', '--env', 'GRADLE_USER_HOME=/gradle',
                '--env', 'SOURCE_DATE_EPOCH=' + str(info['source_date_epoch']),
                '--env', 'NUVIO_BUILD_CHANNEL=' + channel,
-               '--env', 'NUVIO_PACKAGE_FORMAT=deb',
+               '--env', 'NUVIO_PACKAGE_FORMATS=' + package_formats,
                '--env', 'NUVIO_BUILD_JOBS=' + str(jobs),
                # native-image peaks at ~9-11 GB RSS with a 9 GB heap; the 16 GB CI runner fits one.
                '--env', 'NUVIO_NATIVE_BUILDER_HEAP=' + os.environ.get('NUVIO_NATIVE_BUILDER_HEAP', '9g')]
@@ -142,7 +156,8 @@ def builder_command(info, channel, jobs, offline, work, runtime, inputs, network
     return command
 
 
-def build_in_builder(image, info, channel, jobs, offline, work, runtime, inputs, runner=None):
+def build_in_builder(image, info, channel, jobs, offline, work, runtime, inputs, runner=None,
+                     package_formats='deb,rpm'):
     """Compile with network (Gradle dependencies), then gate and package without it.
 
     The second run launches the staged native image (private Xvfb, D-Bus and profile)
@@ -151,7 +166,8 @@ def build_in_builder(image, info, channel, jobs, offline, work, runtime, inputs,
     runner = runner or run
     script = '/source/tools/linux/packaging/native-build.sh'
     for network, phase in [('host', 'build'), ('none', 'package')]:
-        runner(*builder_command(info, channel, jobs, offline, work, runtime, inputs, network), image, 'bash', script, phase)
+        runner(*builder_command(info, channel, jobs, offline, work, runtime, inputs, network, package_formats),
+               image, 'bash', script, phase)
 
 
 def appimage(args, work):
@@ -171,7 +187,8 @@ def appimage(args, work):
 
 def main():
     p = argparse.ArgumentParser(description=__doc__)
-    p.add_argument('--format', choices=['native', 'deb', 'flatpak', 'all', 'webkit', 'appimage'], default='all')
+    p.add_argument('--format', choices=['native', 'deb', 'rpm', 'packages', 'flatpak', 'all', 'webkit', 'appimage'],
+                   default='all')
     p.add_argument('--runtime', help='Previously audited private runtime; omitted: build from canonical recipe')
     p.add_argument('--work-dir', default=str(REPO / 'build/linux-packaging'))
     p.add_argument('--channel', choices=['stable', 'nightly'], default='nightly')
@@ -201,7 +218,7 @@ def main():
                 command += ['--source-archive', args.webkit_source_archive]
             run(*command)
             return
-        if args.format in ['native', 'deb', 'all']:
+        if args.format in ['native', 'deb', 'rpm', 'packages', 'all']:
             try:
                 native(args, work)
             except (subprocess.CalledProcessError, ValueError) as error:

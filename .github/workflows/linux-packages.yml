@@ -40,7 +40,7 @@ jobs:
     runs-on: ubuntu-22.04
     timeout-minutes: 360
     env:
-      # Tag pushes always retain the complete three-format build/release gate.
+      # Tag pushes always retain the complete four-format build/release gate.
       BOOTSTRAP_ONLY: ${{ github.event_name == 'workflow_dispatch' && inputs.bootstrap_only && 'true' || 'false' }}
       ENGINE_RUN: ${{ inputs.webkit_run_id }}
       ENGINE_SHA: ${{ inputs.webkit_sha256 }}
@@ -82,7 +82,7 @@ jobs:
           # digest/snapshot/hash-pinned disposable builder in the repository.
           # Wait for the runner's own apt-daily/unattended-upgrades instead of failing on its dpkg lock.
           sudo apt-get -o DPkg::Lock::Timeout=300 -o Acquire::Retries=3 update
-          sudo apt-get -o DPkg::Lock::Timeout=300 install -y podman gh jq flatpak ostree desktop-file-utils libwebkit2gtk-4.1-0 libva2 libva-drm2 libva-x11-2 libxss1 libasound2 libpulse0 liblcms2-2
+          sudo apt-get -o DPkg::Lock::Timeout=300 install -y podman gh jq flatpak ostree desktop-file-utils rpm cpio libwebkit2gtk-4.1-0 libva2 libva-drm2 libva-x11-2 libxss1 libasound2 libpulse0 liblcms2-2
           dpkg-query -W > "$RUNNER_TEMP/runner-packages.tsv"
       - name: Download trusted engine and its canonical builder seed
         if: ${{ env.ENGINE_RUN != '' }}
@@ -135,7 +135,7 @@ jobs:
         run: |
           unset DISPLAY WAYLAND_DISPLAY NUVIO_RUN_LIVE_DISPLAY_TESTS
           tools/linux/media-runtime/build.sh --jobs 2
-      - name: Build canonical Compose image and DEB
+      - name: Build canonical Compose image, DEB and RPM
         id: native
         continue-on-error: true # Preserve independent Flatpak evidence on a format failure.
         shell: bash
@@ -152,7 +152,7 @@ jobs:
               --builder-seed build/webkit-builder-seed --builder-seed-sha256 "$SEED_SHA" \
               --channel "$channel" --jobs 2
           else
-            python3 tools/linux/packaging/build.py --format deb --channel "$channel" --jobs 2
+            python3 tools/linux/packaging/build.py --format packages --channel "$channel" --jobs 2
           fi
       - name: Export immutable WebKit builder bootstrap
         id: builder_seed
@@ -192,6 +192,48 @@ jobs:
             --mount "type=bind,src=$PWD/tools/linux/packaging,dst=/packaging,ro" \
             --mount "type=bind,src=$PWD/composeApp/src,dst=/repository/composeApp/src,ro" \
             "$builder" python3 /packaging/verify.py artifacts /output --formats deb
+      - name: Independently verify RPM in its pinned builder
+        id: rpm
+        if: ${{ env.BOOTSTRAP_ONLY != 'true' }}
+        continue-on-error: true
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset DISPLAY WAYLAND_DISPLAY NUVIO_RUN_LIVE_DISPLAY_TESTS
+          builder=$(jq -er '.builder_image_id' build/linux-packaging/canonical/release-info.json)
+          podman run --rm --network=none --userns=keep-id --cap-drop=all \
+            --security-opt label=disable --security-opt no-new-privileges \
+            --env PYTHONDONTWRITEBYTECODE=1 --env NUVIO_REPOSITORY=/repository \
+            --mount "type=bind,src=$PWD/build/linux-packaging,dst=/output" \
+            --mount "type=bind,src=$PWD/tools/linux/packaging,dst=/packaging,ro" \
+            --mount "type=bind,src=$PWD/composeApp/src,dst=/repository/composeApp/src,ro" \
+            "$builder" python3 /packaging/verify.py artifacts /output --formats rpm
+      - name: Smoke-install RPM on Fedora
+        id: rpm_smoke
+        if: ${{ !cancelled() && env.BOOTSTRAP_ONLY != 'true' && steps.rpm.outcome == 'success' }}
+        continue-on-error: true
+        timeout-minutes: 20
+        shell: bash
+        run: |
+          set -euo pipefail
+          unset DISPLAY WAYLAND_DISPLAY NUVIO_RUN_LIVE_DISPLAY_TESTS
+          rpms=(build/linux-packaging/artifacts/*.rpm)
+          [[ ${#rpms[@]} -eq 1 && -s "${rpms[0]}" ]]
+          podman run --rm --network=host --userns=keep-id --security-opt label=disable \
+            --mount "type=bind,src=$PWD/build/linux-packaging/artifacts,dst=/rpms,ro" \
+            registry.fedoraproject.org/fedora:41 bash -c '
+              set -euo pipefail
+              dnf -y --setopt=install_weak_deps=False install /rpms/*.rpm
+              rpm --verify nuvio-desktop
+              test -x /usr/bin/nuvio-desktop
+              test -x /opt/nuvio-desktop/lib/nuvio
+              test -s /opt/nuvio-desktop/share/nuvio-native-image/inputs.json
+              test ! -e /opt/nuvio-desktop/lib/runtime/lib/server
+              [[ -z "$(find /opt/nuvio-desktop -name "*.jar" -type f -print -quit)" ]]
+              test -s /opt/nuvio-desktop/lib/native/libplayer_bridge.so
+              test -s /opt/nuvio-desktop/lib/native/libmpv.so.2
+            '
+          echo "RPM Fedora install smoke test PASSED"
       - name: Smoke-install DEB on Ubuntu 22.04
         id: deb_smoke
         if: ${{ !cancelled() && env.BOOTSTRAP_ONLY != 'true' && steps.deb.outcome == 'success' }}
@@ -311,7 +353,7 @@ jobs:
           sha256sum -- * > "$RUNNER_TEMP/SHA256SUMS"
           mv "$RUNNER_TEMP/SHA256SUMS" SHA256SUMS
           sha256sum -c SHA256SUMS
-      - name: Require all three valid packages
+      - name: Require all four valid packages
         if: ${{ always() && env.BOOTSTRAP_ONLY != 'true' }}
         shell: bash
         run: |
@@ -320,6 +362,8 @@ jobs:
           [[ '${{ steps.native.outcome }}' == success ]]
           [[ '${{ steps.appimage.outcome }}' == success ]]
           [[ '${{ steps.deb.outcome }}' == success ]]
+          [[ '${{ steps.rpm.outcome }}' == success ]]
+          [[ '${{ steps.rpm_smoke.outcome }}' == success ]]
           [[ '${{ steps.deb_smoke.outcome }}' == success ]]
           [[ '${{ steps.flatpak.outcome }}' == success ]]
           [[ '${{ steps.evidence.outcome }}' == success ]]
@@ -339,7 +383,7 @@ jobs:
             echo 'BOOTSTRAP ONLY — not a validated release'
             echo "Media: $MEDIA_RESULT; canonical build: $NATIVE_RESULT"
             echo "Seed export: $SEED_RESULT; seed upload: $UPLOAD_RESULT"
-            echo 'Flatpak/AppImage and the normal three-format release gate were intentionally skipped.'
+            echo 'Flatpak/AppImage and the normal four-format release gate were intentionally skipped.'
           } >> "$GITHUB_STEP_SUMMARY"
           [[ "$MEDIA_RESULT" == success && "$NATIVE_RESULT" == success ]]
           [[ "$SEED_RESULT" == success && "$UPLOAD_RESULT" == success ]]
@@ -350,6 +394,8 @@ jobs:
           NATIVE_RESULT: ${{ steps.native.outcome }}
           APPIMAGE_RESULT: ${{ steps.appimage.outcome }}
           DEB_RESULT: ${{ steps.deb.outcome }}
+          RPM_RESULT: ${{ steps.rpm.outcome }}
+          RPM_SMOKE_RESULT: ${{ steps.rpm_smoke.outcome }}
           DEB_SMOKE_RESULT: ${{ steps.deb_smoke.outcome }}
           FLATPAK_RESULT: ${{ steps.flatpak.outcome }}
           FLATPAK_RUNTIME_RESULT: ${{ steps.flatpak_runtime.outcome }}
@@ -361,15 +407,17 @@ jobs:
             echo '| Check | Outcome |'
             echo '| --- | --- |'
             echo "| DEB static verification | $DEB_RESULT |"
+            echo "| RPM static verification | $RPM_RESULT |"
+            echo "| RPM Fedora install | $RPM_SMOKE_RESULT |"
             echo "| DEB Ubuntu install | $DEB_SMOKE_RESULT |"
-            echo "| Canonical native image, smoke gate and DEB build | $NATIVE_RESULT |"
+            echo "| Canonical native image, smoke gate, DEB and RPM build | $NATIVE_RESULT |"
             echo "| Private WebKit and AppImage | $APPIMAGE_RESULT |"
             echo "| Flatpak runtime preparation | $FLATPAK_RUNTIME_RESULT |"
             echo "| Flatpak export and static verification | $FLATPAK_RESULT |"
             echo "| Corresponding third-party source | $SOURCES_RESULT |"
             echo "| Available artifact checksums | $EVIDENCE_RESULT |"
             echo
-            echo 'Q02 remains partial. All three verified formats are mandatory; independent successes and a compiled engine do not establish release or manual acceptance.'
+            echo 'Q02 remains partial. All four verified formats are mandatory; independent successes and a compiled engine do not establish release or manual acceptance.'
           } >> "$GITHUB_STEP_SUMMARY"
       - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4
         if: ${{ always() && env.BOOTSTRAP_ONLY != 'true' }}

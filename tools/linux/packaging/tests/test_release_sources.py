@@ -31,7 +31,7 @@ class ReleaseSourcesTest(unittest.TestCase):
                  inputs=[dict(filename='foo.dsc', sha256='d' * 64, size=1, url='https://x')])])
         self.runtime(packages=['libfoo1'])
         self.engine({'libfoo1': '1', 'libgtk-3-0': '1', 'libunbundled0': '9'})
-        for name in ('app.deb', 'app.flatpak', 'app.AppImage', 'Nuvio-source-aaaaaaaaaaaa.tar.gz',
+        for name in ('app.deb', 'app.rpm', 'app.flatpak', 'app.AppImage', 'Nuvio-source-aaaaaaaaaaaa.tar.gz',
                      'Nuvio-AppImage-runtime-source-y.tar.gz', 'Nuvio-native-image-inputs-aaaaaaaaaaaa.tar',
                      'Nuvio-TorrServer-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-InnerTubeX-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Engine-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Whisper-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Usenet-source-aaaaaaaaaaaa.tar.gz'):
             (self.artifacts / name).write_bytes(name.encode())
@@ -135,12 +135,13 @@ class ReleaseSourcesTest(unittest.TestCase):
             result = rs.build(self.work, self.work / 'media', self.work / 'ubuntu')
         written = json.loads((self.artifacts / 'SOURCE-MAP.json').read_text())
         self.assertEqual(result, written)
-        self.assertEqual({'app.deb', 'app.flatpak', 'app.AppImage'}, set(written['packages']))
+        self.assertEqual({'app.deb', 'app.rpm', 'app.flatpak', 'app.AppImage'}, set(written['packages']))
         names = lambda package: {s['name'] for s in written['packages'][package]['sources']}
         common = {'Nuvio-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-media-source-aaaaaaaaaaaa.tar.gz',
                   'Nuvio-native-image-inputs-aaaaaaaaaaaa.tar', 'Nuvio-TorrServer-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-InnerTubeX-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Engine-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Whisper-source-aaaaaaaaaaaa.tar.gz', 'Nuvio-Usenet-source-aaaaaaaaaaaa.tar.gz',
                   *(Path(spec['path']).name for spec in rs.graalvm_source_specs())}
         self.assertEqual(common, names('app.deb'))
+        self.assertEqual(common, names('app.rpm'))
         self.assertFalse(any('jdk-sources' in name for name in names('app.deb')))
         self.assertEqual(common, names('app.flatpak'))
         self.assertEqual(common | {'Nuvio-WebKit-source-x.tar.gz', 'Nuvio-AppImage-runtime-source-y.tar.gz',
