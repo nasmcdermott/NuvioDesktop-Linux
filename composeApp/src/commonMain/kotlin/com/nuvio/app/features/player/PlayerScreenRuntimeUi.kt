@@ -1306,6 +1306,9 @@ private fun PlayerScreenRuntime.handlePlayerControlsAction(action: PlayerControl
             }
             // fork:pip-browse - in the corner box Back belongs to the app around it; the box's X closes it.
             if (PlayerBrowsePip.active.value) return true
+            // The watch page's own open controls close first: a playlist chooser, an expanded
+            // description, or a comment reply. Only then does Back leave the page/video.
+            if (handleYouTubeWatchPageBack()) return true
             // fork:youtube-mini-player - a YouTube tab video goes to the corner, the tab around it.
             if (handleYouTubeMiniPlayerBack()) return true
             flushWatchProgress()

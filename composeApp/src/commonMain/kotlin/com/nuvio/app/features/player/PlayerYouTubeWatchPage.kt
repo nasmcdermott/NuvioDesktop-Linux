@@ -157,6 +157,30 @@ private val THEATER_PEEK = 120.dp
 /** What is left of the window under the video in each layout, so the title shows without scrolling. */
 private val DEFAULT_VIDEO_CLEARANCE = 150.dp
 
+/** Innermost open controls on the watch page, so Back closes them before leaving the video. */
+private object YouTubeWatchBack {
+    private val stack = mutableListOf<() -> Boolean>()
+
+    fun push(handler: () -> Boolean) {
+        stack.remove(handler)
+        stack.add(handler)
+    }
+
+    fun remove(handler: () -> Boolean) {
+        stack.remove(handler)
+    }
+
+    fun handle(): Boolean {
+        while (stack.isNotEmpty()) {
+            if (stack.removeAt(stack.lastIndex)()) return true
+        }
+        return false
+    }
+}
+
+/** Called by the player's Back action before the mini-player/leave decisions. */
+internal fun handleYouTubeWatchPageBack(): Boolean = YouTubeWatchBack.handle()
+
 /**
  * The player laid out: filling the screen, or in its box on the watch page ([YouTubeWatchLayout]).
  * [player] keeps its place in the composition either way, so switching between the two never restarts
@@ -446,6 +470,11 @@ private fun WatchActions(current: YouTubeVideo, details: YouTubeVideoDetails?, s
     val queued = queue.any { it.videoId == current.videoId }
     val fastStream by YouTubeFastStreamState.status.collectAsState()
     var choosingPlaylist by remember(current.videoId) { mutableStateOf(false) }
+    val closePlaylist: () -> Boolean = { choosingPlaylist = false; true }
+    androidx.compose.runtime.DisposableEffect(choosingPlaylist) {
+        if (choosingPlaylist) YouTubeWatchBack.push(closePlaylist)
+        onDispose { YouTubeWatchBack.remove(closePlaylist) }
+    }
     fun failed() {
         status = "YouTube didn't take that. Try again shortly."
     }
@@ -630,6 +659,11 @@ private fun PlaylistChooser(current: YouTubeVideo, onFailed: () -> Unit) {
 @Composable
 private fun WatchDescription(views: String?, published: String?, description: String?) {
     var expanded by remember { mutableStateOf(false) }
+    val collapseDescription: () -> Boolean = { expanded = false; true }
+    androidx.compose.runtime.DisposableEffect(expanded) {
+        if (expanded) YouTubeWatchBack.push(collapseDescription)
+        onDispose { YouTubeWatchBack.remove(collapseDescription) }
+    }
     val headline = listOfNotNull(views, published).joinToString(" • ")
     if (headline.isEmpty() && description == null) return
     val shape = RoundedCornerShape(12.dp)
@@ -697,6 +731,11 @@ private fun WatchComments(comments: YouTubeWatchComments, signedIn: Boolean) {
 @Composable
 private fun CommentThread(comment: YouTubeComment, comments: YouTubeWatchComments, signedIn: Boolean) {
     var replying by remember(comment.id) { mutableStateOf(false) }
+    val closeReply: () -> Boolean = { replying = false; true }
+    androidx.compose.runtime.DisposableEffect(replying) {
+        if (replying) YouTubeWatchBack.push(closeReply)
+        onDispose { YouTubeWatchBack.remove(closeReply) }
+    }
     val open = comments.repliesOpen[comment.id] == true
     Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
         CommentRow(
