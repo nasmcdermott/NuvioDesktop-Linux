@@ -7099,19 +7099,8 @@ private fun DesktopHoverSidebar(
     }
     fun navFocused(entry: com.nuvio.app.features.navbar.NavBarEntry) =
         navHasFocus && latestNavRows.getOrNull(navFocusIndex) == entry
-    // Hovering a row takes the keys, exactly as walking onto it with the D-pad does, so the zoom
-    // and the focus ring follow the pointer too.
-    fun focusSidebarRow(entry: com.nuvio.app.features.navbar.NavBarEntry?) {
-        val index = if (entry == null) latestNavRows.lastIndex else latestNavRows.indexOf(entry)
-        if (index < 0) return
-        navFocusIndex = index
-        runCatching { navFocusRequester.requestFocus() }
-    }
-    fun focusSidebarRowAt(index: Int) {
-        if (index < 0) return
-        navFocusIndex = index
-        runCatching { navFocusRequester.requestFocus() }
-    }
+    // Hover only zooms the row. It must not take the keys: requesting focus on pointer enter is
+    // what drew the keyboard ring under the mouse.
     // The profile trigger sits above Home at index -1, so the arrow keys reach it like a tab.
     val profileNavIndex = -1
     LaunchedEffect(navFocusRequester) {
@@ -7321,7 +7310,6 @@ private fun DesktopHoverSidebar(
                                             entry.isDestinationSelected(selectedTab, searchActive = false)
                                     },
                                     focused = navFocused(entry),
-                                    onHoverFocus = { focusSidebarRow(entry) },
                                     expanded = false,
                                     onClick = { destination.tab?.let { selectTab(it) } },
                                     modifier = contextModifier.then(rowCenter),
@@ -7340,7 +7328,6 @@ private fun DesktopHoverSidebar(
                                         entry.isDestinationSelected(selectedTab, searchActive = false)
                                 },
                                 focused = navFocused(entry),
-                                onHoverFocus = { focusSidebarRow(entry) },
                                 expanded = false,
                                 onClick = {
                                     // Two entries are not tabs: game mode opens over the app
@@ -7372,7 +7359,6 @@ private fun DesktopHoverSidebar(
                     selected = selectedTab == AppScreenTab.Settings,
                     focused = navHasFocus && navFocusIndex == navRows.lastIndex,
                     expanded = false,
-                    onHoverFocus = { focusSidebarRow(null) },
                     onClick = { selectTab(AppScreenTab.Settings) },
                     modifier = Modifier.onGloballyPositioned {
                         sidebarRowCenters[navRows.lastIndex] = it.boundsInWindow().center.y
@@ -7393,7 +7379,6 @@ private fun DesktopHoverSidebar(
                     }) {
                         DesktopSidebarCalendarItem(
                             focused = navHasFocus && navFocusIndex == calendarRowIndex,
-                            onHoverFocus = { focusSidebarRowAt(calendarRowIndex) },
                             onClick = {
                                 onNavigateToCalendar?.invoke()
                                 RootNavFocus.leaveSidebar(restoreContent = false)
@@ -7408,7 +7393,6 @@ private fun DesktopHoverSidebar(
                     }) {
                         DesktopSidebarVoiceItem(
                             focused = navHasFocus && navFocusIndex == voiceRowIndex,
-                            onHoverFocus = { focusSidebarRowAt(voiceRowIndex) },
                         )
                     }
                 }
@@ -7418,10 +7402,6 @@ private fun DesktopHoverSidebar(
                     }) {
                         DesktopSidebarMusicItem(
                             focused = navHasFocus && navFocusIndex == musicRowIndex,
-                            onHoverFocus = {
-                                navFocusIndex = musicRowIndex
-                                runCatching { navFocusRequester.requestFocus() }
-                            },
                             onClick = {
                                 com.nuvio.app.features.music.MusicPlayback.requestBarFocus()
                             },
@@ -7443,7 +7423,6 @@ private fun DesktopHoverSidebar(
 @Composable
 private fun DesktopSidebarVoiceItem(
     focused: Boolean = false,
-    onHoverFocus: (() -> Unit)? = null,
 ) {
     val session by com.nuvio.app.features.voice.VoiceControlRepository.session.collectAsStateWithLifecycle()
     val active = session is com.nuvio.app.features.voice.VoiceSessionState.Listening ||
@@ -7453,7 +7432,6 @@ private fun DesktopSidebarVoiceItem(
         selected = active,
         focused = focused,
         expanded = false,
-        onHoverFocus = onHoverFocus,
         onClick = com.nuvio.app.features.voice.VoiceControlRepository::toggleListening,
     ) { color ->
         Icon(
@@ -7473,7 +7451,6 @@ private fun DesktopSidebarVoiceItem(
 @Composable
 private fun DesktopSidebarCalendarItem(
     focused: Boolean,
-    onHoverFocus: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     DesktopSidebarItem(
@@ -7481,7 +7458,6 @@ private fun DesktopSidebarCalendarItem(
         selected = false,
         focused = focused,
         expanded = false,
-        onHoverFocus = onHoverFocus,
         onClick = onClick,
     ) { color ->
         Icon(
@@ -7500,7 +7476,6 @@ private fun DesktopSidebarCalendarItem(
 @Composable
 private fun DesktopSidebarMusicItem(
     focused: Boolean,
-    onHoverFocus: (() -> Unit)? = null,
     onClick: () -> Unit,
 ) {
     val state by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
@@ -7510,7 +7485,6 @@ private fun DesktopSidebarMusicItem(
         selected = false,
         focused = focused,
         expanded = false,
-        onHoverFocus = onHoverFocus,
         onClick = onClick,
     ) { color ->
         if (cover != null) {
@@ -7595,14 +7569,11 @@ private fun DesktopSidebarItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focused: Boolean = false,
-    /** Hovering takes the keys too, so the zoom follows the pointer; the ring stays keyboard-only. */
-    onHoverFocus: (() -> Unit)? = null,
     icon: @Composable (Color) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
     val hoverSource = remember { MutableInteractionSource() }
     val hovered by hoverSource.collectIsHoveredAsState()
-    LaunchedEffect(hovered) { if (hovered) onHoverFocus?.invoke() }
     val contentColor = if (selected) tokens.colors.textPrimary else tokens.colors.textMuted
     val iconColor = if (selected) tokens.colors.onAccent else contentColor
     // A subtle zoom while the row holds keyboard/D-pad focus, and a smaller resting zoom on the
