@@ -50,8 +50,9 @@ class BundledNoticesTest(unittest.TestCase):
         directory = RESOURCES / 'player-shaders'
         public_domain = {'Anime4K_AutoDownscalePre_x2.glsl', 'Anime4K_AutoDownscalePre_x4.glsl'}
         amd_cas = 'Nuvio_CAS_Sharpen.glsl'
+        chroma_realign = 'Nuvio_Chroma_Realign.glsl'
         shaders = sorted(directory.glob('*.glsl'))
-        self.assertEqual(len(shaders), 17)
+        self.assertEqual(len(shaders), 18)
         mit = []
         for shader in shaders:
             text = shader.read_text()
@@ -59,6 +60,10 @@ class BundledNoticesTest(unittest.TestCase):
                 self.assertIn('Copyright (c) 2020 Advanced Micro Devices, Inc.', text)
                 self.assertIn('Permission is hereby granted', text)
                 self.assertIn('THE SOFTWARE IS PROVIDED "AS IS"', text)
+            elif shader.name == chroma_realign:
+                # Nuvio-authored chroma-from-luma pass; no third-party notice applies.
+                self.assertIn('Nuvio chroma realign', text)
+                self.assertNotIn('Copyright (c)', text)
             elif shader.name in public_domain:
                 self.assertIn('This is free and unencumbered software released into the public domain.', text)
                 self.assertIn('For more information, please refer to <https://unlicense.org>', text)
@@ -76,6 +81,7 @@ class BundledNoticesTest(unittest.TestCase):
         self.assertIn('MIT notice below\ndoes not replace those terms', notice)
         self.assertIn(amd_cas, notice)
         self.assertIn('Copyright (c) 2020 Advanced Micro Devices, Inc.', notice)
+        self.assertIn(chroma_realign, notice)
 
 
 if __name__ == '__main__':

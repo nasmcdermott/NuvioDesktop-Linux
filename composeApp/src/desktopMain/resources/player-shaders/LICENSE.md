@@ -16,6 +16,9 @@ does not replace those terms.
 Adaptive Sharpening (`ffx_cas.h`). It carries AMD's MIT License notice, reproduced
 at the end of this file and retained at the start of the shader.
 
+`Nuvio_Chroma_Realign.glsl` is Nuvio's own chroma-from-luma pass. It contains no
+third-party code and no separate third-party notice applies.
+
 The anime enhancement presets that chain these shaders (Optimized / Fast / HQ) follow the
 shader selection used by **Stremio-Kai** by Allecsc (https://github.com/allecsc/Stremio-Kai),
 whose developer encouraged porting Kai's anime pipeline into Nuvio Desktop.
