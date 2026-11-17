@@ -18,21 +18,15 @@ class PosterCardStyleComposeTest {
     }
 
     @Test
-    fun `tv mode hides poster labels regardless of saved preference`() {
-        assertTrue(
-            effectiveHomePosterCardStyle(
-                base = PosterCardStyleUiState(hideLabelsEnabled = false),
-                tvModeEnabled = true,
-            ).hideLabelsEnabled,
-        )
-    }
-
-    @Test
-    fun `non tv mode preserves saved poster label preference`() {
+    fun `saved poster label preference is preserved in every display mode`() {
         assertFalse(
             effectiveHomePosterCardStyle(
                 base = PosterCardStyleUiState(hideLabelsEnabled = false),
-                tvModeEnabled = false,
+            ).hideLabelsEnabled,
+        )
+        assertTrue(
+            effectiveHomePosterCardStyle(
+                base = PosterCardStyleUiState(hideLabelsEnabled = true),
             ).hideLabelsEnabled,
         )
     }
@@ -45,7 +39,6 @@ class PosterCardStyleComposeTest {
                     catalogLandscapeModeEnabled = true,
                     collectionsPortraitPostersEnabled = true,
                 ),
-                tvModeEnabled = false,
                 isCollectionsSurface = true,
             ).catalogLandscapeModeEnabled,
         )
@@ -59,7 +52,6 @@ class PosterCardStyleComposeTest {
                     catalogLandscapeModeEnabled = true,
                     collectionsPortraitPostersEnabled = false,
                 ),
-                tvModeEnabled = false,
                 isCollectionsSurface = true,
             ).catalogLandscapeModeEnabled,
         )
@@ -73,7 +65,6 @@ class PosterCardStyleComposeTest {
                     catalogLandscapeModeEnabled = true,
                     collectionsPortraitPostersEnabled = true,
                 ),
-                tvModeEnabled = false,
                 isCollectionsSurface = false,
             ).catalogLandscapeModeEnabled,
         )

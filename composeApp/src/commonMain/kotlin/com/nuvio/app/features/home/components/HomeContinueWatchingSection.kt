@@ -82,6 +82,7 @@ import com.nuvio.app.core.ui.NuvioCardDepthSurface
 import com.nuvio.app.core.ui.nuvioCardDepth
 import com.nuvio.app.core.ui.NuvioShelfSection
 import com.nuvio.app.core.ui.PosterLandscapeAspectRatio
+import com.nuvio.app.core.ui.posterHeightForWidth
 import com.nuvio.app.core.ui.PosterLandscapeWidthScale
 import com.nuvio.app.core.ui.ExtraLargePosterCardWidthDp
 import com.nuvio.app.core.ui.landscapePosterHeightForWidth
@@ -443,6 +444,19 @@ private fun HomeContinueWatchingSectionContent(
     val fittedPosterWidthDpOverride = basePosterWidthDpOverride
         ?: maxCardHeight?.let(::continueWatchingCardBaseWidthDpFillingHeight)
     val fittedLayout = maxCardHeight?.let { layout.fillingPosterCardHeight(it) } ?: layout
+    // The Poster style is a poster card like any Library/Discover row's, so it takes the same
+    // rectangle: the saved card width (or the row's explicit override) and the shared aspect
+    // ratio. Only a TV shelf, which asks these cards to fill its height, keeps the fitted size.
+    val posterCardWidth = if (maxCardHeight != null) {
+        fittedLayout.posterCardWidth
+    } else {
+        basePosterWidthDpOverride?.let { it.dp } ?: posterCardStyle.widthDp.dp
+    }
+    val posterCardHeight = if (maxCardHeight != null) {
+        fittedLayout.posterCardHeight
+    } else {
+        posterHeightForWidth(posterCardWidth)
+    }
 
     val itemOrderKey = remember(items) {
         items.joinToString(separator = "|") { item -> item.continueWatchingRowOrderKey() }
@@ -508,6 +522,8 @@ private fun HomeContinueWatchingSectionContent(
                     ContinueWatchingSectionStyle.Poster -> ContinueWatchingPosterCard(
                         item = item,
                         layout = fittedLayout,
+                        cardWidth = posterCardWidth,
+                        cardHeight = posterCardHeight,
                         useEpisodeThumbnails = useEpisodeThumbnails,
                         blurNextUp = blurNextUp,
                         onClick = onItemClick?.let { { it(item) } },
@@ -1493,6 +1509,8 @@ private fun ContinueWatchingWideCard(
 private fun ContinueWatchingPosterCard(
     item: ContinueWatchingItem,
     layout: ContinueWatchingLayout,
+    cardWidth: Dp,
+    cardHeight: Dp,
     useEpisodeThumbnails: Boolean,
     blurNextUp: Boolean,
     onClick: (() -> Unit)?,
@@ -1502,23 +1520,24 @@ private fun ContinueWatchingPosterCard(
     val (posterArtworkUrl, onArtworkLoadFailed) = rememberContinueWatchingArtwork(
         item.continueWatchingDisplayArtworkChain(ContinueWatchingSectionStyle.Poster, useEpisodeThumbnails),
     )
+    val posterCardStyle = rememberHomePosterCardStyleUiState()
     Column(
-        modifier = Modifier.width(layout.posterCardWidth),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+        modifier = Modifier.width(cardWidth),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
     ) {
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(layout.posterCardHeight)
-                .nuvioPosterHighlight(layout.cardRadius, artworkUrl = posterArtworkUrl)
-                .clip(RoundedCornerShape(layout.cardRadius))
+                .height(cardHeight)
+                .nuvioPosterHighlight(posterCardStyle.cornerRadiusDp.dp, artworkUrl = posterArtworkUrl)
+                .clip(RoundedCornerShape(posterCardStyle.cornerRadiusDp.dp))
                 .background(MaterialTheme.colorScheme.surfaceVariant)
-                .nuvioCardDepth(RoundedCornerShape(layout.cardRadius), NuvioCardDepthSurface.ContinueWatching)
+                .nuvioCardDepth(RoundedCornerShape(posterCardStyle.cornerRadiusDp.dp), NuvioCardDepthSurface.ContinueWatching)
                 .posterCardClickable(
                     onClick = onClick,
                     onLongClick = onLongClick,
                     zoomImageUrl = posterArtworkUrl?.let(::cloudLibraryDisplayArtworkUrl),
-                    zoomCornerRadius = layout.cardRadius,
+                    zoomCornerRadius = posterCardStyle.cornerRadiusDp.dp,
                 ),
         ) {
             val imageUrl = posterArtworkUrl
@@ -1574,45 +1593,45 @@ private fun ContinueWatchingPosterCard(
             )
         }
 
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .padding(horizontal = 4.dp),
-            horizontalArrangement = Arrangement.SpaceBetween,
-            verticalAlignment = Alignment.Top,
-        ) {
-            Box(
-                modifier = Modifier
-                    .weight(1f)
-                    .height(layout.posterTitleBlockHeight),
+        if (!posterCardStyle.hideLabelsEnabled) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.Top,
             ) {
-                Text(
-                    text = item.title,
-                    modifier = Modifier.fillMaxWidth(),
-                    style = MaterialTheme.typography.bodyMedium.copy(
-                        fontSize = layout.posterTitleSize,
-                        fontWeight = FontWeight.SemiBold,
-                        lineHeight = 18.sp,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurface,
-                    maxLines = 2,
-                    overflow = TextOverflow.Ellipsis,
-                )
-            }
-            if (item.seasonNumber != null && item.episodeNumber != null) {
-                Text(
-                    text = stringResource(
-                        Res.string.streams_episode_badge,
-                        item.seasonNumber,
-                        item.episodeNumber,
-                    ),
-                    modifier = Modifier.padding(start = 6.dp),
-                    style = MaterialTheme.typography.labelSmall.copy(
-                        fontSize = layout.posterMetaSize,
-                        fontWeight = FontWeight.SemiBold,
-                    ),
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                )
+                Box(
+                    modifier = Modifier
+                        .weight(1f)
+                        .height(layout.posterTitleBlockHeight),
+                ) {
+                    Text(
+                        text = item.title,
+                        modifier = Modifier.fillMaxWidth(),
+                        style = MaterialTheme.typography.bodyMedium.copy(
+                            fontSize = layout.posterTitleSize,
+                            fontWeight = FontWeight.SemiBold,
+                            lineHeight = 18.sp,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurface,
+                        maxLines = 2,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                if (item.seasonNumber != null && item.episodeNumber != null) {
+                    Text(
+                        text = stringResource(
+                            Res.string.streams_episode_badge,
+                            item.seasonNumber,
+                            item.episodeNumber,
+                        ),
+                        modifier = Modifier.padding(start = 6.dp),
+                        style = MaterialTheme.typography.labelSmall.copy(
+                            fontSize = layout.posterMetaSize,
+                            fontWeight = FontWeight.SemiBold,
+                        ),
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
             }
         }
     }

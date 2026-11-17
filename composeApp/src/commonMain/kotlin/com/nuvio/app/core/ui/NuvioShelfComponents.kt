@@ -1053,7 +1053,7 @@ private fun NuvioViewAllPill(
 
 private val NuvioPosterShape.aspectRatio: Float
     get() = when (this) {
-        NuvioPosterShape.Poster -> 0.675f
+        NuvioPosterShape.Poster -> PosterAspectRatio
         NuvioPosterShape.Square -> 1f
         NuvioPosterShape.Landscape -> PosterLandscapeAspectRatio
     }

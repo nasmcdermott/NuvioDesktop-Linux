@@ -158,7 +158,7 @@ internal object ArtworkPrewarmer {
                 ContinueWatchingPreferencesRepository.uiState,
                 TmdbSettingsRepository.uiState,
             ) { cardStyle, (tvMode, frameHeroBackdrops), cwPreferences, tmdb ->
-                val homeCardStyle = effectiveHomePosterCardStyle(cardStyle, tvModeEnabled = tvMode)
+                val homeCardStyle = effectiveHomePosterCardStyle(cardStyle)
                 PrewarmDisplay(
                     cardStyle = homeCardStyle,
                     continueWatchingStyle = effectiveContinueWatchingStyle(

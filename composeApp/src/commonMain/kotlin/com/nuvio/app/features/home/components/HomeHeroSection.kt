@@ -270,7 +270,7 @@ private const val IMMERSIVE_HERO_SYNOPSIS_MIN_LINES = 2
  * [IMMERSIVE_HERO_CONTENT_COMFORTABLE_HEIGHT] — the column at its smallest logo slot and three
  * synopsis lines — the panel drops to a single row (two people rather than four) first.
  */
-private val IMMERSIVE_HERO_PEOPLE_PANEL_TOP = 30.dp
+private val IMMERSIVE_HERO_PEOPLE_PANEL_TOP = 50.dp
 /**
  * Width of the people panel (Starring / Production): a fraction of the hero, capped so it does not
  * run away on a very wide window. The cap is expressed in dp at 100% UI scale, but divided by the
@@ -3917,8 +3917,9 @@ private fun HeroGenreLine(
     }
     val title = MaterialTheme.typography.titleMedium
     // Slightly smaller so the genre/year/runtime line stops competing with the title and leaves
-    // room for the rating badge beside it.
-    val style = title.copy(fontSize = title.fontSize * 0.90f)
+    // room for the rating badge beside it. This is intentionally 10% below the previous 0.90
+    // size: the line still reads as metadata, not as a second title.
+    val style = title.copy(fontSize = title.fontSize * 0.81f)
     val color = MaterialTheme.colorScheme.onBackground.copy(alpha = 0.76f)
     Row(modifier = modifier, verticalAlignment = Alignment.CenterVertically) {
         shownParts.forEachIndexed { index, part ->
