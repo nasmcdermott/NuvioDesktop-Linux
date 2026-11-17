@@ -349,25 +349,44 @@ internal fun leftLeavesRowForSidebar(itemIndex: Int): Boolean = itemIndex <= 0
 
 /**
  * The sidebar's rows below the profile trigger: one per shown navigation entry, then Settings, then
- * the voice row while voice control is on with a model. The draw loop and the arrow keys both walk
- * this count, so a row that is drawn always has an index and no index exists without a row.
+ * Calendar while the sidebar can open it, then the voice row while voice control is on with a
+ * model. The draw loop and the arrow keys both walk this count, so a row that is drawn always has an
+ * index and no index exists without a row.
  */
 internal fun sidebarRowCount(
     entryCount: Int,
     voiceRowShown: Boolean,
     musicRowShown: Boolean = false,
-): Int = entryCount + 1 + (if (voiceRowShown) 1 else 0) + (if (musicRowShown) 1 else 0)
+    calendarRowShown: Boolean = false,
+): Int = entryCount + 1 +
+    (if (calendarRowShown) 1 else 0) +
+    (if (voiceRowShown) 1 else 0) +
+    (if (musicRowShown) 1 else 0)
+
+/** Calendar's row, just below Settings, or -1 when the sidebar has no way to open it. */
+internal fun sidebarCalendarRowIndex(entryCount: Int, calendarRowShown: Boolean): Int =
+    if (calendarRowShown) entryCount + 1 else -1
 
 /** The row the voice item takes, or -1 when it is not drawn. Settings takes [entryCount]. */
-internal fun sidebarVoiceRowIndex(entryCount: Int, voiceRowShown: Boolean): Int =
-    if (voiceRowShown) entryCount + 1 else -1
+internal fun sidebarVoiceRowIndex(
+    entryCount: Int,
+    voiceRowShown: Boolean,
+    calendarRowShown: Boolean = false,
+): Int = if (voiceRowShown) entryCount + 1 + (if (calendarRowShown) 1 else 0) else -1
 
-/** The album-cover row, after Settings and the optional voice row, or -1 when nothing is playing. */
+/** The album-cover row, after Settings and the optional calendar and voice rows, or -1. */
 internal fun sidebarMusicRowIndex(
     entryCount: Int,
     voiceRowShown: Boolean,
     musicRowShown: Boolean,
-): Int = if (musicRowShown) entryCount + 1 + (if (voiceRowShown) 1 else 0) else -1
+    calendarRowShown: Boolean = false,
+): Int = if (musicRowShown) {
+    entryCount + 1 +
+        (if (calendarRowShown) 1 else 0) +
+        (if (voiceRowShown) 1 else 0)
+} else {
+    -1
+}
 
 /** Keeps the focused row on a row that still exists after the shown set changes under it. */
 internal fun clampSidebarIndex(index: Int, rowCount: Int, minIndex: Int): Int =

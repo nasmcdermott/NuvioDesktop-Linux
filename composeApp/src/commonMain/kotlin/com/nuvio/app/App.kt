@@ -50,6 +50,7 @@ import androidx.compose.foundation.text.BasicTextField
 import androidx.compose.runtime.collectAsState
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
+import androidx.compose.material.icons.rounded.DateRange
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.MusicNote // fork:music
 import androidx.compose.material.icons.rounded.SmartDisplay // fork:youtube-mode
@@ -225,6 +226,7 @@ import com.nuvio.app.core.ui.TopBarLeaveRestoresContent
 import com.nuvio.app.core.ui.topBarKeyNavigation
 import com.nuvio.app.core.ui.sidebarKeyNavigation
 import com.nuvio.app.core.ui.sidebarRowCount
+import com.nuvio.app.core.ui.sidebarCalendarRowIndex
 import com.nuvio.app.core.ui.sidebarVoiceRowIndex
 import com.nuvio.app.core.ui.sidebarMusicRowIndex
 import com.nuvio.app.core.ui.clampSidebarIndex
@@ -4045,6 +4047,9 @@ private fun MainAppContent(
                                                 onTabSelected = leaveForTab,
                                                 onProfileSelected = switchProfile,
                                                 onAddProfileRequested = onSwitchProfile,
+                                                onNavigateToCalendar = {
+                                                    navController.navigateIfResumed(CalendarRoute)
+                                                },
                                             )
                                         }
                                         if (miniTopBar) {
@@ -4831,6 +4836,7 @@ private fun MainAppContent(
                                             onTabSelected = ::handleRootTabClick,
                                             onProfileSelected = onProfileSelected,
                                             onAddProfileRequested = onSwitchProfile,
+                                            onNavigateToCalendar = { navController.navigateIfResumed(CalendarRoute) },
                                         )
                                     }
                                     val homeHeroPickerDocked by remember {
@@ -6978,6 +6984,8 @@ private fun DesktopHoverSidebar(
     onProfileSelected: (NuvioProfile) -> Unit,
     onAddProfileRequested: () -> Unit,
     modifier: Modifier = Modifier,
+    /** The pushed Calendar route, which has no tab of its own. Null hides its row. */
+    onNavigateToCalendar: (() -> Unit)? = null,
 ) {
     val gameModeOn = GameModeController.active.collectAsStateWithLifecycle().value
     val tokens = MaterialTheme.nuvio
@@ -7022,11 +7030,26 @@ private fun DesktopHoverSidebar(
     val voiceRowShown = voiceInNav
     val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
     val musicRowShown = musicState.isActive
+    // Calendar is a pushed route rather than a tab, so the row is drawn only when the sidebar has
+    // somewhere to send it: under Settings, before the voice and now-playing rows.
+    val calendarRowShown = onNavigateToCalendar != null
     // sidebarRowCount/sidebarVoiceRowIndex count the nav entries themselves and add Settings (and
-    // the optional voice and now-playing rows) on top; navRows.size already includes the Settings
-    // slot, so passing it double-counts Settings and leaves a phantom row for Down to walk into.
-    val navRowCount = sidebarRowCount(navEntries.size, voiceRowShown, musicRowShown)
-    val musicRowIndex = sidebarMusicRowIndex(navEntries.size, voiceRowShown, musicRowShown)
+    // the optional calendar, voice and now-playing rows) on top; navRows.size already includes the
+    // Settings slot, so passing it double-counts Settings and leaves a phantom row for Down.
+    val navRowCount = sidebarRowCount(
+        navEntries.size,
+        voiceRowShown,
+        musicRowShown,
+        calendarRowShown,
+    )
+    val calendarRowIndex = sidebarCalendarRowIndex(navEntries.size, calendarRowShown)
+    val voiceRowIndex = sidebarVoiceRowIndex(navEntries.size, voiceRowShown, calendarRowShown)
+    val musicRowIndex = sidebarMusicRowIndex(
+        navEntries.size,
+        voiceRowShown,
+        musicRowShown,
+        calendarRowShown,
+    )
     val latestNavRows by rememberUpdatedState(navRows)
     val latestNavRowCount by rememberUpdatedState(navRowCount)
     fun navTabOf(entry: com.nuvio.app.features.navbar.NavBarEntry?): AppScreenTab? = navBarTab(entry)
@@ -7080,6 +7103,11 @@ private fun DesktopHoverSidebar(
     // and the focus ring follow the pointer too.
     fun focusSidebarRow(entry: com.nuvio.app.features.navbar.NavBarEntry?) {
         val index = if (entry == null) latestNavRows.lastIndex else latestNavRows.indexOf(entry)
+        if (index < 0) return
+        navFocusIndex = index
+        runCatching { navFocusRequester.requestFocus() }
+    }
+    fun focusSidebarRowAt(index: Int) {
         if (index < 0) return
         navFocusIndex = index
         runCatching { navFocusRequester.requestFocus() }
@@ -7144,8 +7172,14 @@ private fun DesktopHoverSidebar(
                             profileStackVisible = !profileStackVisible
                             return@sidebarKeyNavigation
                         }
-                        // The voice row, drawn under Settings: the same thing its own click does.
-                        if (navFocusIndex == sidebarVoiceRowIndex(navEntries.size, voiceRowShown)) {
+                        // Calendar, drawn under Settings: open the pushed route as its own click does.
+                        if (navFocusIndex == calendarRowIndex) {
+                            onNavigateToCalendar?.invoke()
+                            RootNavFocus.leaveSidebar(restoreContent = false)
+                            return@sidebarKeyNavigation
+                        }
+                        // The voice row, drawn under Calendar: the same thing its own click does.
+                        if (navFocusIndex == voiceRowIndex) {
                             com.nuvio.app.features.voice.VoiceControlRepository.toggleListening()
                             return@sidebarKeyNavigation
                         }
@@ -7351,17 +7385,30 @@ private fun DesktopHoverSidebar(
                         tint = color,
                     )
                 }
-                if (voiceRowShown) {
-                    // fork:voice-control - the row under Settings, so its index is navRows.size.
+                if (calendarRowShown) {
+                    // Calendar, a pushed route rather than a tab. It sits directly under Settings so
+                    // the sidebar carries the same entry the Settings top bar shows.
                     Box(Modifier.onGloballyPositioned {
-                        sidebarRowCenters[navRows.size] = it.boundsInWindow().center.y
+                        sidebarRowCenters[calendarRowIndex] = it.boundsInWindow().center.y
+                    }) {
+                        DesktopSidebarCalendarItem(
+                            focused = navHasFocus && navFocusIndex == calendarRowIndex,
+                            onHoverFocus = { focusSidebarRowAt(calendarRowIndex) },
+                            onClick = {
+                                onNavigateToCalendar?.invoke()
+                                RootNavFocus.leaveSidebar(restoreContent = false)
+                            },
+                        )
+                    }
+                }
+                if (voiceRowShown) {
+                    // fork:voice-control - the row under Calendar, so its index is voiceRowIndex.
+                    Box(Modifier.onGloballyPositioned {
+                        sidebarRowCenters[voiceRowIndex] = it.boundsInWindow().center.y
                     }) {
                         DesktopSidebarVoiceItem(
-                            focused = navHasFocus && navFocusIndex == navRows.size,
-                            onHoverFocus = {
-                                navFocusIndex = navRows.size
-                                runCatching { navFocusRequester.requestFocus() }
-                            },
+                            focused = navHasFocus && navFocusIndex == voiceRowIndex,
+                            onHoverFocus = { focusSidebarRowAt(voiceRowIndex) },
                         )
                     }
                 }
@@ -7412,6 +7459,34 @@ private fun DesktopSidebarVoiceItem(
         Icon(
             imageVector = Icons.Rounded.Mic,
             contentDescription = "Voice command",
+            modifier = Modifier.size(DesktopSidebarIconSize),
+            tint = color,
+        )
+    }
+}
+
+/**
+ * Calendar's navigation row. The route is pushed rather than being a tab, so it has no
+ * [com.nuvio.app.features.navbar.NavBarEntry]; the sidebar draws it under Settings, matching the
+ * Calendar icon the Settings top bar carries.
+ */
+@Composable
+private fun DesktopSidebarCalendarItem(
+    focused: Boolean,
+    onHoverFocus: (() -> Unit)? = null,
+    onClick: () -> Unit,
+) {
+    DesktopSidebarItem(
+        label = stringResource(Res.string.calendar_title),
+        selected = false,
+        focused = focused,
+        expanded = false,
+        onHoverFocus = onHoverFocus,
+        onClick = onClick,
+    ) { color ->
+        Icon(
+            imageVector = Icons.Rounded.DateRange,
+            contentDescription = stringResource(Res.string.calendar_title),
             modifier = Modifier.size(DesktopSidebarIconSize),
             tint = color,
         )

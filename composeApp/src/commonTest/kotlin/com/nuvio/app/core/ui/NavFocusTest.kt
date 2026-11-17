@@ -104,6 +104,49 @@ class NavFocusTest {
     }
 
     @Test
+    fun calendarKeepsTheVoiceAndMusicRowsBelowIt() {
+        for (entryCount in 1..8) {
+            for (voiceRowShown in listOf(false, true)) {
+                for (musicRowShown in listOf(false, true)) {
+                    val count = sidebarRowCount(
+                        entryCount,
+                        voiceRowShown,
+                        musicRowShown,
+                        calendarRowShown = true,
+                    )
+                    assertEquals(
+                        entryCount + 2 +
+                            (if (voiceRowShown) 1 else 0) +
+                            (if (musicRowShown) 1 else 0),
+                        count,
+                    )
+                    // Calendar sits directly under Settings, which takes entryCount.
+                    assertEquals(entryCount + 1, sidebarCalendarRowIndex(entryCount, true))
+                    assertEquals(-1, sidebarCalendarRowIndex(entryCount, false))
+                    // Voice and music keep their order behind it instead of colliding with it.
+                    assertEquals(
+                        if (voiceRowShown) entryCount + 2 else -1,
+                        sidebarVoiceRowIndex(entryCount, voiceRowShown, calendarRowShown = true),
+                    )
+                    assertEquals(
+                        if (musicRowShown) {
+                            entryCount + 2 + (if (voiceRowShown) 1 else 0)
+                        } else {
+                            -1
+                        },
+                        sidebarMusicRowIndex(
+                            entryCount,
+                            voiceRowShown,
+                            musicRowShown,
+                            calendarRowShown = true,
+                        ),
+                    )
+                }
+            }
+        }
+    }
+
+    @Test
     fun arrowsStopAtTheEndsOfEveryRowSet() {
         for (entryCount in 1..8) {
             for (voiceRowShown in listOf(false, true)) {
