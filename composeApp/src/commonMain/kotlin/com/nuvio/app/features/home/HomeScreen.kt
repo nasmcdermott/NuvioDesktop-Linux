@@ -256,6 +256,7 @@ import com.nuvio.app.features.home.components.homeHeroLayout
 import com.nuvio.app.features.home.components.homeTvLazyScrollTarget
 import androidx.compose.foundation.lazy.LazyListState
 import com.nuvio.app.features.watchprogress.ContinueWatchingSectionStyle
+import com.nuvio.app.features.watchprogress.isUpcoming
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
@@ -697,6 +698,18 @@ fun HomeScreen(
         stringResource(Res.string.compose_catalog_subtitle_library)
     }
 
+    // Media servers' libraries as Library rows (upstream's server shelves), read from each server
+    // while the Library tab is open; a server that cannot be reached simply has no row.
+    var libraryServerSections by remember { mutableStateOf<List<HomeCatalogSection>>(emptyList()) }
+    val libraryServersRevision by remember {
+        com.nuvio.app.features.servers.ServerRepository.ensureLoaded()
+        com.nuvio.app.features.servers.ServerRepository.uiState
+    }.collectAsStateWithLifecycle()
+    LaunchedEffect(contentMode is HomeContentMode.Library, libraryServersRevision.revision) {
+        if (contentMode !is HomeContentMode.Library) return@LaunchedEffect
+        libraryServerSections = loadLibraryServerSections()
+    }
+
     // Compute effective sections and hero items based on content mode.
     val effectiveSections: List<HomeCatalogSection> = remember(
         displayMode, contentMode, searchQuery, discoverUiState, discoverRecommendations,
@@ -711,6 +724,7 @@ fun HomeScreen(
         watchedUiState.watchedKeys,
         homeUiState.sections, searchUiState.sections, libraryUiState.sections, libraryDisplaySettings.sortOption,
         libraryPlaylists, filteredLibrarySections, libraryTitleFacts, libraryFiltersActive,
+        libraryServerSections,
     ) {
         when (displayMode) {
             is HomeContentMode.Normal -> buildList {
@@ -800,6 +814,9 @@ fun HomeScreen(
                 } else {
                     sections
                 }
+            }.let { sections ->
+                // The filter bar narrows saved titles only; server rows step aside while it is on.
+                if (libraryFiltersActive) sections else sections + libraryServerSections
             }.ensureUniqueKeys()
             is HomeContentMode.Catalogs -> displayMode.sections.ensureUniqueKeys()
             // Row 1 is the addon catalog browser lifted out of Search; the generated
@@ -1835,7 +1852,12 @@ fun HomeScreen(
             .sorted()
     }
 
-    val catalogRefreshKey = remember(availableManifests) {
+    val serversUiState by remember {
+        com.nuvio.app.features.servers.ServerRepository.ensureLoaded()
+        com.nuvio.app.features.servers.ServerRepository.uiState
+    }.collectAsStateWithLifecycle()
+    val hasServerLibraries = serversUiState.enabledConnections.any { it.selectedLibraries.isNotEmpty() }
+    val catalogRefreshKey = remember(availableManifests, serversUiState.revision) {
         availableManifests
             .map { manifest ->
                 buildString {
@@ -1850,6 +1872,8 @@ fun HomeScreen(
                 }
             }
             .sorted()
+            // A server added, removed or given other libraries changes Home's rows too.
+            .let { keys -> if (hasServerLibraries) keys + "servers:${serversUiState.revision}" else keys }
     }
 
     LaunchedEffect(catalogRefreshKey) {
@@ -4466,7 +4490,7 @@ fun HomeScreen(
             }
 
             when {
-                !hasActiveAddons && !hasRenderableCollectionRows -> {
+                !hasActiveAddons && !hasServerLibraries && !hasRenderableCollectionRows -> {
                     if (isShowingHomeContent && continueWatchingPreferences.isVisible && continueWatchingRowItems.isNotEmpty()) {
                         item(key = HOME_CONTINUE_WATCHING_SECTION_KEY) {
                             HomeContinueWatchingSection(
@@ -6090,10 +6114,7 @@ internal fun splitContinueWatchingRows(
     nowEpochMs: Long = WatchProgressClock.nowEpochMs(),
 ): HomeContinueWatchingRows {
     val (upcoming, watchable) = if (separateUpcomingRow) {
-        items.partition { item ->
-            item.isNextUp && com.nuvio.app.features.watchprogress.parseReleaseDateToEpochMs(item.released)
-                ?.let { releaseEpochMs -> releaseEpochMs > nowEpochMs } == true
-        }
+        items.partition { item -> item.isUpcoming(nowEpochMs) }
     } else {
         emptyList<ContinueWatchingItem>() to items
     }

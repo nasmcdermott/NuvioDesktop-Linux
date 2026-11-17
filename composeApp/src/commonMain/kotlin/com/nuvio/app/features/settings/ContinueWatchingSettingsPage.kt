@@ -91,6 +91,7 @@ import nuvio.composeapp.generated.resources.settings_advanced_section_cache
 import nuvio.composeapp.generated.resources.settings_continue_watching_resume_prompt_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_resume_prompt_title
 import nuvio.composeapp.generated.resources.settings_continue_watching_click_action_details
+import nuvio.composeapp.generated.resources.settings_continue_watching_click_action_details_upcoming
 import nuvio.composeapp.generated.resources.settings_continue_watching_click_action_description
 import nuvio.composeapp.generated.resources.settings_continue_watching_click_action_play
 import nuvio.composeapp.generated.resources.settings_continue_watching_click_action_title
@@ -239,6 +240,10 @@ internal fun LazyListScope.continueWatchingSettingsContent(
                         SettingsChoiceOption(
                             ContinueWatchingClickAction.DETAILS,
                             stringResource(Res.string.settings_continue_watching_click_action_details),
+                        ),
+                        SettingsChoiceOption(
+                            ContinueWatchingClickAction.DETAILS_FOR_UPCOMING,
+                            stringResource(Res.string.settings_continue_watching_click_action_details_upcoming),
                         ),
                     ),
                     selectedValue = clickAction,

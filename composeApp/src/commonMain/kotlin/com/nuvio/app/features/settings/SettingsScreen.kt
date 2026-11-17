@@ -228,6 +228,10 @@ import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesRepositor
 import com.nuvio.app.features.watchprogress.ContinueWatchingPreferencesUiState
 import com.nuvio.app.isDesktop
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.compose_settings_page_media_servers
+import nuvio.composeapp.generated.resources.compose_settings_page_usenet
+import androidx.compose.material.icons.rounded.Dns
+import androidx.compose.material.icons.rounded.Newspaper
 import nuvio.composeapp.generated.resources.*
 import nuvio.composeapp.generated.resources.collections_header
 import nuvio.composeapp.generated.resources.compose_nav_home
@@ -1229,6 +1233,15 @@ private fun MobileSettingsScreen(
                     state = localLibraryUiState,
                     titlesState = localLibraryTitlesState,
                 )
+                SettingsPage.MediaServers -> mediaServersSettingsContent(
+                    isTablet = false,
+                    onServerClick = { onPageChange(SettingsPage.MediaServer) },
+                )
+                SettingsPage.MediaServer -> mediaServerSettingsContent(
+                    isTablet = false,
+                    onBack = { onPageChange(SettingsPage.MediaServers) },
+                )
+                SettingsPage.Usenet -> usenetSettingsContent(isTablet = false)
                 SettingsPage.AutoDownloads -> libraryDownloadsSection(
                     isTablet = false,
                     onDownloadsClick = { onPageChange(SettingsPage.Downloads) },
@@ -2108,6 +2121,15 @@ private fun TabletSettingsScreen(
                         state = localLibraryUiState,
                         titlesState = localLibraryTitlesState,
                     )
+                    SettingsPage.MediaServers -> mediaServersSettingsContent(
+                        isTablet = true,
+                        onServerClick = { openInlinePage(SettingsPage.MediaServer) },
+                    )
+                    SettingsPage.MediaServer -> mediaServerSettingsContent(
+                        isTablet = true,
+                        onBack = { openInlinePage(SettingsPage.MediaServers) },
+                    )
+                    SettingsPage.Usenet -> usenetSettingsContent(isTablet = true)
                     SettingsPage.AutoDownloads -> {
                         withSettingsPage(SettingsPage.Downloads) {
                             downloadsSummaryContent(
@@ -2483,6 +2505,16 @@ private fun desktopSettingsSidebarDefaultItems(): List<DesktopSettingsSidebarIte
         page = SettingsPage.LocalLibrary,
     ),
     DesktopSettingsSidebarItem(
+        label = stringResource(Res.string.compose_settings_page_media_servers),
+        icon = Icons.Rounded.Dns,
+        page = SettingsPage.MediaServers,
+    ),
+    DesktopSettingsSidebarItem(
+        label = stringResource(Res.string.compose_settings_page_usenet),
+        icon = Icons.Rounded.Newspaper,
+        page = SettingsPage.Usenet,
+    ),
+    DesktopSettingsSidebarItem(
         label = stringResource(Res.string.compose_settings_root_downloads_title),
         icon = SettingsCategoryIcons.Downloads,
         page = SettingsPage.AutoDownloads,
@@ -2526,6 +2558,9 @@ private fun SettingsPage.desktopSidebarPage(): SettingsPage = when (this) {
     SettingsPage.Plugins -> SettingsPage.Addons
     SettingsPage.Streams -> SettingsPage.Streams
     SettingsPage.LocalLibrary -> SettingsPage.LocalLibrary
+    SettingsPage.MediaServers -> SettingsPage.MediaServers
+    SettingsPage.MediaServer -> SettingsPage.MediaServers
+    SettingsPage.Usenet -> SettingsPage.Usenet
     SettingsPage.Games -> SettingsPage.Games
     SettingsPage.Iptv -> SettingsPage.Iptv
     SettingsPage.AutoDownloads -> SettingsPage.AutoDownloads
