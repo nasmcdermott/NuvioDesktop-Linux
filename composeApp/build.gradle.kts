@@ -2469,6 +2469,9 @@ apply(from = "native-image-linux.gradle.kts")
 // The Linux development AppImage tasks (packageReleaseAppImage, packageAppImage).
 apply(from = "appimage-linux.gradle.kts")
 
+// The Linux development RPM task (packageDevRpm), for Fedora/Bazzite hosts.
+apply(from = "rpm-linux.gradle.kts")
+
 // The Linux native player runtime that a jpackage app image must carry in lib/native.
 apply(from = "linux-native-runtime.gradle.kts")
 

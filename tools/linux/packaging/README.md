@@ -62,6 +62,18 @@ optional service defaults described below remain unavailable.
 Gradle build-cache reuse is disabled. A git-file source snapshot prevents
 accidentally packaging the developer checkout, personal data or native caches.
 
+For a Fedora/Bazzite workstation that only needs an installable RPM to test, neither the release
+pipeline nor Podman is required: `./gradlew :composeApp:packageDevRpm` packs the jpackage app image
+`createReleaseDistributable` already built into
+`composeApp/build/rpm-linux/nuvio-desktop-<version>-dev-x86_64.rpm` with the host's own rpmbuild, in
+about a minute. [dev_rpm.py](dev_rpm.py) states the trade: the image carries a JDK and the
+application JARs and uses the host's WebKitGTK, and no release check reads the result (`verify.py`
+has no dev format). It still refuses an app image without `lib/native` (the package would start and
+play nothing), writes the release layout (`/opt/nuvio-desktop`, `/usr/bin/nuvio-desktop`, the
+canonical .desktop entry and a 512px icon), owns every file `root:root`, and requires the Fedora
+names for what it does not bundle, WebKitGTK 4.1 and the GStreamer/GLib networking pieces
+included. Install it with `sudo dnf install <path>`.
+
 Output is ignored `build/linux-packaging/`: `canonical/`, `deb-root/`,
 `rpmbuild/`, `Nuvio.AppDir/`, `flatpak-build/`, `artifacts/`, dependency
 reports and `SHA256SUMS`.
@@ -117,7 +129,7 @@ recorded separately; application/native build inputs live in the pinned builder.
    focused JVM tests, then a second Gradle run of `createLinuxNativeDistributable`
    (`-Pnuvio.graalvm.home=/opt/graalvm`, never `-Pnuvio.native.qa`) so native-image
    runs in the Ubuntu 22.04 builder (glibc floor 2.34 for the executable) with
-   `NUVIO_NATIVE_BUILDER_HEAP` (default `9g`; ~9-11 GB peak RSS, one build on the
+   `NUVIO_NATIVE_BUILDER_HEAP` (default `10g`; ~10-12 GB peak RSS, one build on the
    16 GB runner). The JNI bridge and HDR helper are built from this source, then
    `stage.py` lays out the canonical image from the native layout and
    `native_evidence.py` retains the evidence in `<work>/native-image/`: the exact

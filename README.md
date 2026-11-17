@@ -246,6 +246,9 @@ Platform-specific packaging:
 
 # Linux
 ./gradlew :composeApp:packageReleaseDeb
+
+# Fedora/Bazzite: an installable development RPM from the same app image, in about a minute
+./gradlew :composeApp:packageDevRpm
 ```
 
 ## Upstream - Project Structure
