@@ -467,6 +467,7 @@ internal fun NuvioShelfItemSlot(
     Box(
         modifier = modifier
             .zIndex(if (focused) 1f else 0f)
+            .trackSidebarEntryFocusY()
             .graphicsLayer {
                 // dealProgress is already clamped to 0..1 per card; 1 means "fully dealt", which is
                 // also what a shelf that never shuffles reports.

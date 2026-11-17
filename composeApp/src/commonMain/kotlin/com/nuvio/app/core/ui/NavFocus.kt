@@ -2,6 +2,14 @@ package com.nuvio.app.core.ui
 
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
+import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
+import androidx.compose.runtime.setValue
+import androidx.compose.ui.composed
+import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.layout.boundsInWindow
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusManager
@@ -82,8 +90,23 @@ object RootNavFocus {
      */
     val leaveRequests: SharedFlow<Boolean> = leave.asSharedFlow()
 
-    /** Returns true when a sidebar is shown and took the request. */
-    fun enterSidebar(): Boolean = sidebarAvailable && enter.tryEmit(Unit)
+    private var pendingContentFocusY: Float? = null
+
+    /** Remembers where the focused content element is, for the sidebar's nearest-icon hand-off. */
+    fun rememberContentFocusY(windowY: Float) {
+        pendingContentFocusY = windowY
+    }
+
+    /**
+     * Returns true when a sidebar is shown and took the request. A content element that registered
+     * its position is entered at the nav icon nearest that height; otherwise the current tab's row
+     * is used, as before.
+     */
+    fun enterSidebar(): Boolean {
+        val y = pendingContentFocusY
+        pendingContentFocusY = null
+        return if (y != null) enterSidebarNear(y) else sidebarAvailable && enter.tryEmit(Unit)
+    }
 
     /** Enters the sidebar on its profile row, for the Settings top bar's update icon. */
     fun enterSidebarAtProfile(): Boolean = sidebarAvailable && enterProfile.tryEmit(Unit)
@@ -406,6 +429,22 @@ internal fun dismissToBarOr(fallback: () -> Unit): Boolean {
     val took = RootNavFocus.enterSidebar() || RootNavFocus.enterFloatingTopBar()
     if (!took) fallback()
     return took
+}
+
+/**
+ * Marks a focusable content element as the place a sidebar hand-off should come from. When it holds
+ * the keys, its window-space centre is recorded; [RootNavFocus.enterSidebar] then picks the nav icon
+ * nearest that height instead of always returning to the current tab's row.
+ */
+fun Modifier.trackSidebarEntryFocusY(): Modifier = composed {
+    var focused by remember { mutableStateOf(false) }
+    var centerY by remember { mutableStateOf(0f) }
+    LaunchedEffect(focused, centerY) {
+        if (focused) RootNavFocus.rememberContentFocusY(centerY)
+    }
+    this
+        .onFocusChanged { focused = it.isFocused }
+        .onGloballyPositioned { centerY = it.boundsInWindow().center.y }
 }
 
 /**

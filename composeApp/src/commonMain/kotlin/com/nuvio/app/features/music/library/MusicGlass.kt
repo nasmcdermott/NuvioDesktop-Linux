@@ -1,5 +1,6 @@
 package com.nuvio.app.features.music.library
 
+import com.nuvio.app.core.ui.trackSidebarEntryFocusY
 import com.nuvio.app.core.ui.smoothBorder
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -74,6 +75,7 @@ internal fun Modifier.musicKeyFocusRing(
     var focused by remember { mutableStateOf(false) }
     val ring = MaterialTheme.nuvio.colors.borderFocus
     return this
+        .trackSidebarEntryFocusY()
         .onFocusChanged { focused = it.hasFocus }
         .then(if (focused && (always || KeyboardInputMode.active)) Modifier.smoothBorder(2.dp, ring, shape) else Modifier)
 }

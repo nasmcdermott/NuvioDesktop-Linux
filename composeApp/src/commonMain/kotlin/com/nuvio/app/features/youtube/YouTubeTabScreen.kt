@@ -1,5 +1,6 @@
 package com.nuvio.app.features.youtube
 
+import com.nuvio.app.core.ui.trackSidebarEntryFocusY
 import com.nuvio.app.core.ui.keyLayer
 import com.nuvio.app.core.ui.requestFocusLogged
 import androidx.compose.animation.core.animateFloatAsState
@@ -1981,6 +1982,7 @@ private fun YouTubeVideoCard(
             .fillMaxWidth()
             // Keep the lifted thumbnail above the cards beside/below it while it zooms.
             .zIndex(if (highlight) 1f else 0f)
+            .trackSidebarEntryFocusY()
             .onGloballyPositioned { cardBounds = it.boundsInWindow() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             // Select plays; holding it (Enter, or a pad's A) opens the menu beside the card, as
