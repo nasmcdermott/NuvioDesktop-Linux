@@ -2645,7 +2645,33 @@ private fun DesktopSettingsSidebarList(
 
     CompositionLocalProvider(LocalSettingsFocusRegion provides SettingsFocusRegion.Sidebar) {
         LazyColumn(
-            modifier = Modifier.fillMaxWidth(),
+            modifier = Modifier
+                .fillMaxWidth()
+                // Left from the rail goes straight to the global navigation bar's profile icon.
+                // Without this preview, spatial traversal lands on the Settings top bar's update
+                // icon first, so it took two presses to reach the bar. Up still reaches the top bar
+                // icons (including the update icon) and Left from those icons keeps its own walk.
+                .onPreviewKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        event.navigationKey() == Key.DirectionLeft &&
+                        com.nuvio.app.core.ui.RootNavFocus.sidebarAvailable
+                    ) {
+                        com.nuvio.app.core.ui.RootNavFocus.enterSidebar()
+                    } else {
+                        false
+                    }
+                }
+                // The rail itself, or its "Categories" header, can hold focus with no row to
+                // consume Left. From there the navigation bar is the next stop too.
+                .onKeyEvent { event ->
+                    if (event.type == KeyEventType.KeyDown &&
+                        event.navigationKey() == Key.DirectionLeft
+                    ) {
+                        requestSettingsNavigationBarFocus(focusManager)
+                    } else {
+                        false
+                    }
+                },
             state = listState,
             verticalArrangement = Arrangement.spacedBy(8.dp),
         ) {

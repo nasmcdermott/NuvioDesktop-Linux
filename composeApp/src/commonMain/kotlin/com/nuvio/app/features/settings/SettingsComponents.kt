@@ -189,8 +189,8 @@ internal data class SettingsChoiceOption<T>(
 
 private const val SettingsTextFocusScale = 1.04f
 
-/** Small icon-only actions take twice the text zoom so the movement reads at their size. */
-private const val SettingsSmallIconFocusScale = SettingsTextFocusScale * 2f
+/** Small icon-only actions take the same small zoom as text, not the doubled version tried before. */
+private const val SettingsSmallIconFocusScale = SettingsTextFocusScale
 
 /** A row's hover state, alongside the interaction source that must be attached to it. */
 @Composable
