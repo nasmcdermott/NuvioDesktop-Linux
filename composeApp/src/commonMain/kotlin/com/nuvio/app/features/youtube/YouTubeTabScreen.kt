@@ -2,6 +2,7 @@ package com.nuvio.app.features.youtube
 
 import com.nuvio.app.core.ui.keyLayer
 import com.nuvio.app.core.ui.requestFocusLogged
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -70,8 +71,10 @@ import androidx.compose.material.icons.rounded.VisibilityOff
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.foundation.layout.Spacer
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.nuvioPosterHighlight
 import com.nuvio.app.features.music.library.musicKeyFocusRing
 import com.nuvio.app.features.settings.settingsSkyBackground
+import com.nuvio.app.features.settings.ThemeSettingsRepository
 import androidx.compose.material.icons.rounded.Search
 import androidx.compose.material.icons.rounded.ThumbUp
 import androidx.compose.material.icons.rounded.Block
@@ -136,6 +139,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.boundsInWindow
 import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.IntOffset
+import androidx.compose.ui.zIndex
 import kotlin.math.roundToInt
 import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import com.nuvio.app.features.player.PlayerLaunch
@@ -992,7 +996,9 @@ fun YouTubeTabScreen(
                 columns = GridCells.Adaptive(minSize = 300.dp),
                 state = gridState,
                 modifier = Modifier.fillMaxSize().gridColumnKeys(columnFocus) { videos.size },
-                contentPadding = PaddingValues(bottom = 48.dp),
+                // Room inside the grid's own clip for the focus zoom, so the first row's raised
+                // thumbnail is not cut by the grid's top edge (or the outer columns by its sides).
+                contentPadding = PaddingValues(start = 8.dp, top = 8.dp, end = 8.dp, bottom = 48.dp),
                 horizontalArrangement = Arrangement.spacedBy(20.dp),
                 verticalArrangement = Arrangement.spacedBy(24.dp),
             ) {
@@ -1892,6 +1898,12 @@ private fun YouTubeVideoCard(
     val focused by interaction.collectIsKeyboardFocusedAsState()
     val hovered by interaction.collectIsHoveredAsState()
     val highlight = focused || hovered
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    // The same small lift the Home/Explore/Library cards take when the keys or cursor land on them.
+    val thumbnailScale by animateFloatAsState(
+        targetValue = if (highlight && focusZoomEnabled) 1.04f else 1f,
+        label = "youtubeThumbnailFocusScale",
+    )
     val shape = RoundedCornerShape(12.dp)
     // Whether this account likes the video: asked when the menu opens, so its first row can offer to
     // take a like back. Until YouTube answers it reads "Like", and turns into "Remove like" in place.
@@ -1965,6 +1977,8 @@ private fun YouTubeVideoCard(
     Column(
         modifier = modifier
             .fillMaxWidth()
+            // Keep the lifted thumbnail above the cards beside/below it while it zooms.
+            .zIndex(if (highlight && focusZoomEnabled) 1f else 0f)
             .onGloballyPositioned { cardBounds = it.boundsInWindow() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
             // Select plays; holding it (Enter, or a pad's A) opens the menu beside the card, as
@@ -1998,13 +2012,15 @@ private fun YouTubeVideoCard(
             modifier = Modifier
                 .fillMaxWidth()
                 .aspectRatio(16f / 9f)
+                .graphicsLayer {
+                    scaleX = thumbnailScale
+                    scaleY = thumbnailScale
+                }
+                // The same poster highlight setting as Home/Explore/Library, including the
+                // artwork-coloured border; ahead of the clip so the ring is not cut.
+                .nuvioPosterHighlight(12.dp, artworkUrl = thumbnail, highlightedOverride = highlight)
                 .clip(shape)
-                .background(MaterialTheme.colorScheme.surfaceVariant)
-                .border(
-                    width = 2.dp,
-                    color = if (highlight) MaterialTheme.colorScheme.primary else Color.Transparent,
-                    shape = shape,
-                ),
+                .background(MaterialTheme.colorScheme.surfaceVariant),
         ) {
             NuvioAsyncImage(
                 model = thumbnail,
@@ -2238,11 +2254,17 @@ private fun CardGlassButton(
 ) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val scale by animateFloatAsState(
+        targetValue = if (hovered && focusZoomEnabled) 1.08f else 1f,
+        label = "youtubeGlassButtonHoverScale",
+    )
     val shape = androidx.compose.foundation.shape.CircleShape
     com.nuvio.app.core.ui.NuvioPosterHoverTooltip(title = label) {
         Box(
             modifier = Modifier
                 .size(size)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
                 .clip(shape)
                 .background(
                     when {
@@ -2301,6 +2323,12 @@ private fun YouTubeSectionTabPill(
     val tokens = MaterialTheme.nuvio
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsStateWithLifecycle()
+    val scale by animateFloatAsState(
+        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        label = "youtubeSectionPillZoom",
+    )
     val shape = RoundedCornerShape(percent = 50)
     val tint = when {
         on -> tokens.colors.accent
@@ -2310,6 +2338,7 @@ private fun YouTubeSectionTabPill(
     Row(
         modifier = modifier
             .height(36.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(shape)
             .background(
                 when {

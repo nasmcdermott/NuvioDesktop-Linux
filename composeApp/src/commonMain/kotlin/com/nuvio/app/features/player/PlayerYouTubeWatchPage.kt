@@ -1,6 +1,8 @@
 package com.nuvio.app.features.player
 
 import com.nuvio.app.core.ui.requestFocusLogged
+import com.nuvio.app.features.settings.ThemeSettingsRepository
+import androidx.compose.animation.core.animateFloatAsState
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -8,6 +10,7 @@ import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.compose.foundation.hoverable
 import androidx.compose.foundation.interaction.MutableInteractionSource
+import androidx.compose.foundation.interaction.collectIsFocusedAsState
 import androidx.compose.foundation.interaction.collectIsHoveredAsState
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
@@ -73,6 +76,7 @@ import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.PathFillType
@@ -902,6 +906,11 @@ private const val RELATED_PREFETCH_SCREENS = 2f
 private fun SideVideoRow(video: YouTubeVideo, highlighted: Boolean, onClick: () -> Unit, onRemove: (() -> Unit)? = null) {
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val thumbnailScale by animateFloatAsState(
+        targetValue = if (hovered && focusZoomEnabled) 1.04f else 1f,
+        label = "youtubeSideThumbnailHoverScale",
+    )
     Row(
         Modifier
             .fillMaxWidth()
@@ -918,7 +927,14 @@ private fun SideVideoRow(video: YouTubeVideo, highlighted: Boolean, onClick: () 
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        Box(Modifier.width(196.dp).aspectRatio(16f / 9f).clip(RoundedCornerShape(8.dp)).background(MaterialTheme.colorScheme.surfaceVariant)) {
+        Box(
+            Modifier
+                .width(196.dp)
+                .aspectRatio(16f / 9f)
+                .graphicsLayer { scaleX = thumbnailScale; scaleY = thumbnailScale }
+                .clip(RoundedCornerShape(8.dp))
+                .background(MaterialTheme.colorScheme.surfaceVariant),
+        ) {
             NuvioAsyncImage(model = video.thumbnailUrl, contentDescription = null, modifier = Modifier.fillMaxSize(), contentScale = ContentScale.Crop)
             video.duration?.let {
                 Text(
@@ -973,12 +989,19 @@ private fun WatchIconButton(icon: ImageVector, label: String, on: Boolean, badge
     val tokens = MaterialTheme.nuvio
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val scale by animateFloatAsState(
+        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        label = "youtubeWatchIconZoom",
+    )
     val shape = RoundedCornerShape(percent = 50)
     val tint = if (on) tokens.colors.accent else Color.White
     NuvioPosterHoverTooltip(title = label) {
         Row(
             Modifier
                 .height(40.dp)
+                .graphicsLayer { scaleX = scale; scaleY = scale }
                 .musicKeyFocusRing(shape)
                 .clip(shape)
                 .background(
@@ -1007,12 +1030,19 @@ private fun WatchPill(icon: ImageVector?, label: String, on: Boolean, onClick: (
     val tokens = MaterialTheme.nuvio
     val interaction = remember { MutableInteractionSource() }
     val hovered by interaction.collectIsHoveredAsState()
+    val focused by interaction.collectIsFocusedAsState()
+    val focusZoomEnabled by ThemeSettingsRepository.desktopFocusZoomEnabled.collectAsState()
+    val scale by animateFloatAsState(
+        targetValue = if ((focused || hovered) && focusZoomEnabled) 1.04f else 1f,
+        label = "youtubeWatchPillZoom",
+    )
     val shape = RoundedCornerShape(percent = 50)
     val tint = if (on) tokens.colors.accent else Color.White
     Row(
         Modifier
             .musicKeyFocusRing(shape)
             .height(36.dp)
+            .graphicsLayer { scaleX = scale; scaleY = scale }
             .clip(shape)
             .background(
                 when {
