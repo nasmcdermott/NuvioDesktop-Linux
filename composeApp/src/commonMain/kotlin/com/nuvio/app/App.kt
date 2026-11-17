@@ -7144,9 +7144,9 @@ private fun DesktopHoverSidebar(
     val voiceRowShown = voiceInNav
     val musicState by com.nuvio.app.features.music.MusicPlayback.player.state.collectAsStateWithLifecycle()
     val musicRowShown = musicState.isActive
-    // Calendar is a pushed route rather than a tab, so the row is drawn only when the sidebar has
-    // somewhere to send it: under Settings, before the voice and now-playing rows.
-    val calendarRowShown = onNavigateToCalendar != null
+    // Calendar is a pushed route rather than a tab. Its icon belongs to the Settings page in the
+    // top bar, so the sidebar mirrors that: under Settings, only while Settings is the open page.
+    val calendarRowShown = onNavigateToCalendar != null && selectedTab == AppScreenTab.Settings
     // sidebarRowCount/sidebarVoiceRowIndex count the nav entries themselves and add Settings (and
     // the optional calendar, voice and now-playing rows) on top; navRows.size already includes the
     // Settings slot, so passing it double-counts Settings and leaves a phantom row for Down.
