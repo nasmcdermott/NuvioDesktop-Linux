@@ -7,6 +7,9 @@ unset DISPLAY WAYLAND_DISPLAY NUVIO_RUN_LIVE_DISPLAY_TESTS LD_PRELOAD LD_LIBRARY
 export LC_ALL=C TZ=UTC PYTHONDONTWRITEBYTECODE=1
 mkdir -p "$HOME"
 cd /source
+# The media runtime is mounted read-only at /media. The Gradle app-image tasks
+# depend on buildLinuxPlayerBridge, which needs the private mpv headers/library.
+export MPV_ROOT=/media
 phase=${1:?usage: native-build.sh build|package}
 if [[ $phase == package ]]; then
   # Launches the staged package only in this disposable container (private Xvfb,

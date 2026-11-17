@@ -221,6 +221,11 @@ class PackagingContractTest(unittest.TestCase):
         self.assertIn("steps.rpm_smoke.outcome }}' == success", workflow)
         self.assertIn('Require all four valid packages', workflow)
 
+    def test_pinned_builder_exports_the_private_media_root_for_the_bridge(self):
+        script = (packaging_build.HERE / 'native-build.sh').read_text()
+        self.assertIn('export MPV_ROOT=/media', script)
+        self.assertIn('buildLinuxPlayerBridge', (packaging_build.REPO / 'composeApp/linux-native-runtime.gradle.kts').read_text())
+
     def test_development_snapshot_excludes_arbitrary_untracked_files(self):
         self.assertTrue(development_source('tools/linux/packaging/build.py'))
         self.assertTrue(development_source('.github/workflows/linux-packages.yml'))
