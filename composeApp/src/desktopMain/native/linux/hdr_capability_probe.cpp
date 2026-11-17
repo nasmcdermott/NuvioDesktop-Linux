@@ -113,10 +113,17 @@ void imageReady(void *data, wp_image_description_v1 *image, uint32_t identity) {
     d.info = wp_image_description_v1_get_information(image);
     wp_image_description_info_v1_add_listener(d.info, &infoListener, &d);
 }
-// The manager is bound at version 1, so the version-2 ready2 event can never fire.
-// It is still initialised explicitly because the generated listener struct carries it and
-// -Wmissing-field-initializers is an error in this build.
-const wp_image_description_v1_listener imageListener = {imageFailed, imageReady, nullptr};
+// Value-initialise first: newer wayland-protocols releases add version-2 fields to the
+// generated listener struct, and naming only the fields we use trips
+// -Wmissing-field-initializers in the packaged build. The manager is bound at version 1,
+// so those newer events can never fire.
+wp_image_description_v1_listener makeImageListener() {
+    wp_image_description_v1_listener listener{};
+    listener.failed = imageFailed;
+    listener.ready = imageReady;
+    return listener;
+}
+const wp_image_description_v1_listener imageListener = makeImageListener();
 
 struct Output {
     wl_output *proxy = nullptr;
@@ -190,9 +197,14 @@ void preferredChanged(void *data, wp_color_management_surface_feedback_v1 *, uin
     if (w.preferredIdentity && w.preferredIdentity != identity) w.descriptionChanged = true;
     w.preferredIdentity = identity;
 }
-// Version 1 of the protocol has only preferred_changed; preferred_changed2 is version 2 and
-// can never fire because the object is bound at version 1.
-const wp_color_management_surface_feedback_v1_listener feedbackListener = {preferredChanged, nullptr};
+// Value-initialise for the same reason as imageListener. preferred_changed2 is version 2,
+// and the feedback object is bound at version 1.
+wp_color_management_surface_feedback_v1_listener makeFeedbackListener() {
+    wp_color_management_surface_feedback_v1_listener listener{};
+    listener.preferred_changed = preferredChanged;
+    return listener;
+}
+const wp_color_management_surface_feedback_v1_listener feedbackListener = makeFeedbackListener();
 
 void global(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
     auto &w = *static_cast<Wayland *>(data);
