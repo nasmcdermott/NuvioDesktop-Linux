@@ -532,6 +532,7 @@ private fun ChannelBlock(
         Row(
             Modifier
                 .weight(1f, fill = false)
+                .musicKeyFocusRing(RoundedCornerShape(24.dp))
                 .clip(RoundedCornerShape(24.dp))
                 .then(if (openChannel != null) Modifier.clickable(onClick = openChannel) else Modifier)
                 .padding(end = 8.dp),
@@ -585,6 +586,7 @@ private fun PlaylistChooser(current: YouTubeVideo, onFailed: () -> Unit) {
     Column(
         Modifier
             .fillMaxWidth()
+            .arrowKeyFocusNavigation(releaseWhenStuck = true)
             .clip(RoundedCornerShape(12.dp))
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .padding(vertical = 6.dp),
@@ -596,6 +598,7 @@ private fun PlaylistChooser(current: YouTubeVideo, onFailed: () -> Unit) {
                 Row(
                     Modifier
                         .fillMaxWidth()
+                        .musicKeyFocusRing(RoundedCornerShape(8.dp))
                         .clickable {
                             val add = !option.containsVideo
                             scope.launch {
@@ -628,10 +631,12 @@ private fun WatchDescription(views: String?, published: String?, description: St
     var expanded by remember { mutableStateOf(false) }
     val headline = listOfNotNull(views, published).joinToString(" • ")
     if (headline.isEmpty() && description == null) return
+    val shape = RoundedCornerShape(12.dp)
     Column(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(12.dp))
+            .musicKeyFocusRing(shape)
+            .clip(shape)
             .background(MaterialTheme.colorScheme.surfaceVariant)
             .clickable { expanded = !expanded }
             .padding(14.dp),
@@ -673,7 +678,11 @@ private fun WatchComments(comments: YouTubeWatchComments, signedIn: Boolean) {
                 "Couldn't load the comments. Click to try again.",
                 style = MaterialTheme.typography.bodyMedium,
                 color = MaterialTheme.colorScheme.error,
-                modifier = Modifier.clickable { comments.retry() },
+                modifier = Modifier
+                    .musicKeyFocusRing(RoundedCornerShape(8.dp))
+                    .clip(RoundedCornerShape(8.dp))
+                    .clickable { comments.retry() }
+                    .padding(4.dp),
             )
             comments.loaded && comments.comments.isEmpty() -> Text(
                 "No comments.",
@@ -705,7 +714,12 @@ private fun CommentThread(comment: YouTubeComment, comments: YouTubeWatchComment
             }
             if (comment.repliesToken != null && comment.replies != null) {
                 Row(
-                    Modifier.offset(x = (-8).dp).clip(RoundedCornerShape(50)).clickable { comments.toggleReplies(comment) }.padding(horizontal = 8.dp, vertical = 6.dp),
+                    Modifier
+                        .offset(x = (-8).dp)
+                        .musicKeyFocusRing(RoundedCornerShape(50))
+                        .clip(RoundedCornerShape(50))
+                        .clickable { comments.toggleReplies(comment) }
+                        .padding(horizontal = 8.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
                     horizontalArrangement = Arrangement.spacedBy(6.dp),
                 ) {
@@ -728,7 +742,11 @@ private fun CommentThread(comment: YouTubeComment, comments: YouTubeWatchComment
                         "Show more replies",
                         style = MaterialTheme.typography.labelLarge,
                         color = MaterialTheme.colorScheme.primary,
-                        modifier = Modifier.clickable { comments.moreReplies(comment) }.padding(4.dp),
+                        modifier = Modifier
+                            .musicKeyFocusRing(RoundedCornerShape(50))
+                            .clip(RoundedCornerShape(50))
+                            .clickable { comments.moreReplies(comment) }
+                            .padding(4.dp),
                     )
                 }
             }
@@ -789,6 +807,7 @@ private fun CommentRow(
                     val tint = if (liked) MaterialTheme.colorScheme.primary else muted
                     Row(
                         Modifier
+                            .musicKeyFocusRing(RoundedCornerShape(50))
                             .clip(RoundedCornerShape(50))
                             .then(if (canLike) Modifier.clickable { comments.toggleLike(comment) } else Modifier)
                             .padding(horizontal = 8.dp, vertical = 5.dp),
@@ -810,7 +829,11 @@ private fun CommentRow(
                         style = CommentMetaStyle,
                         fontWeight = FontWeight.SemiBold,
                         color = MaterialTheme.colorScheme.onSurface,
-                        modifier = Modifier.clip(RoundedCornerShape(50)).clickable(onClick = it).padding(horizontal = 12.dp, vertical = 6.dp),
+                        modifier = Modifier
+                            .musicKeyFocusRing(RoundedCornerShape(50))
+                            .clip(RoundedCornerShape(50))
+                            .clickable(onClick = it)
+                            .padding(horizontal = 12.dp, vertical = 6.dp),
                     )
                 }
             }
@@ -858,7 +881,10 @@ private fun CommentBox(placeholder: String, autoFocus: Boolean = false, onSend: 
 private fun PlayerScreenRuntime.SideColumn(modifier: Modifier) {
     val queue by YouTubeWatchQueue.videos.collectAsState()
     val playingId = youTubeVideoId
-    Column(modifier, verticalArrangement = Arrangement.spacedBy(10.dp)) {
+    Column(
+        modifier.arrowKeyFocusNavigation(releaseWhenStuck = true),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
         if (queue.isNotEmpty()) {
             SectionHeading("Queue · ${queue.size}")
             queue.forEach { video ->
@@ -911,10 +937,12 @@ private fun SideVideoRow(video: YouTubeVideo, highlighted: Boolean, onClick: () 
         targetValue = if (hovered && focusZoomEnabled) 1.04f else 1f,
         label = "youtubeSideThumbnailHoverScale",
     )
+    val shape = RoundedCornerShape(10.dp)
     Row(
         Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(10.dp))
+            .musicKeyFocusRing(shape)
+            .clip(shape)
             .background(
                 when {
                     highlighted -> MaterialTheme.nuvio.colors.accent.copy(alpha = 0.16f)
