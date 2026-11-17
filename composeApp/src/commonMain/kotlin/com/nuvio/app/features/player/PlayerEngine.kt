@@ -500,6 +500,8 @@ data class PlayerHudSettings(
     val officialHudEnabled: Boolean = false,
     val seekHandleEnabled: Boolean = true,
     val hudVignetteEnabled: Boolean = true,
+    /** False when the user hid the volume control from the player HUD. */
+    val volumeControlEnabled: Boolean = true,
     // Comma-separated controls.html `data-command`s the user hid from the HUD.
     val hiddenHudButtons: String = "",
     // Comma-separated action-row `data-command`s in the user's order; empty keeps the authored order.

@@ -108,6 +108,7 @@ import com.nuvio.app.features.player.IosHardwareDecoderMode
 import com.nuvio.app.features.player.localizedLabel
 import com.nuvio.app.features.player.IosTargetPrimaries
 import com.nuvio.app.features.player.IosTargetTransfer
+import com.nuvio.app.features.player.DesktopHudVolumeCommand
 import com.nuvio.app.features.player.PlayerSettingsRepository
 import com.nuvio.app.features.player.SEEK_STEP_SECONDS_RANGE
 import com.nuvio.app.features.player.STREAM_AUTO_PLAY_TIMEOUT_VALUES
@@ -1218,17 +1219,6 @@ private fun PlaybackSettingsSection(
                     isTablet = isTablet,
                 ) {
                     SettingsGroup(isTablet = isTablet) {
-                        SettingsSwitchRow(
-                            title = stringResource(Res.string.settings_playback_volume_control),
-                            description = stringResource(Res.string.settings_playback_volume_control_description),
-                            checked = autoPlayPlayerSettings.desktopVolumeControlEnabled,
-                            isTablet = isTablet,
-                            modifier = Modifier.settingsScrollAnchor(
-                                SettingsScrollAnchor.searchKey("desktop-volume-control"),
-                            ),
-                            onCheckedChange = PlayerSettingsRepository::setDesktopVolumeControlEnabled,
-                        )
-                        SettingsGroupDivider(isTablet = isTablet)
                         SettingsChoiceRow(
                             title = stringResource(Res.string.settings_playback_desktop_hdr_mode),
                             description = stringResource(autoPlayPlayerSettings.desktopHdrMode.descriptionRes),
@@ -5036,6 +5026,7 @@ private fun HiddenHudButtonsRow(hidden: Set<String>, isTablet: Boolean) {
     // The transport first, then the action row (shared with the order editor, so a button added to the
     // HUD only has to be listed once), then the header buttons.
     val options = listOf(
+        SettingsChoiceOption(DesktopHudVolumeCommand, stringResource(Res.string.settings_playback_zone_action_volume)),
         SettingsChoiceOption("previousEpisode", stringResource(Res.string.settings_playback_hud_button_previous_episode)),
         SettingsChoiceOption("seekBack", stringResource(Res.string.settings_playback_hud_button_seek_back)),
         SettingsChoiceOption("seekForward", stringResource(Res.string.settings_playback_hud_button_seek_forward)),
@@ -5053,6 +5044,9 @@ private fun HiddenHudButtonsRow(hidden: Set<String>, isTablet: Boolean) {
         emptyLabel = stringResource(Res.string.settings_playback_hidden_hud_buttons_none),
         summaryForCount = { stringResource(Res.string.settings_playback_hidden_hud_buttons_count, it) },
         isTablet = isTablet,
+        modifier = Modifier.settingsScrollAnchor(
+            SettingsScrollAnchor.searchKey("x-playback-hidden-hud-buttons"),
+        ),
         onToggle = { command -> PlayerSettingsRepository.setDesktopHudButtonHidden(command, command !in hidden) },
     )
 }

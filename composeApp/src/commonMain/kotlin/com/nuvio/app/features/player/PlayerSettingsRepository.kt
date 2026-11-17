@@ -42,6 +42,9 @@ const val STREAM_FAILOVER_DEFAULT_TIMEOUT_SECONDS = 10
  */
 val HERO_TV_TRAILER_DELAY_VALUES: List<Int> = listOf(1, 2, 3, 5, 8, 10, 15)
 
+/** controls.html data-command for the HUD volume wrapper. Hidden means no volume UI. */
+internal const val DesktopHudVolumeCommand = "volume"
+
 /** Snaps [value] to the nearest allowed delay in [HERO_TV_TRAILER_DELAY_VALUES]. */
 fun snapToHeroTvTrailerDelay(value: Int): Int =
     HERO_TV_TRAILER_DELAY_VALUES.minByOrNull { abs(it - value) } ?: 5
@@ -316,7 +319,6 @@ object PlayerSettingsRepository {
     private var desktopHiddenHudButtons: Set<String> = emptySet()
     private var desktopHudButtonOrder: List<String> = emptyList()
     private var desktopAlwaysShowClockEnabled = false
-    private var desktopVolumeControlEnabled = false
     private var desktopPauseOverlaySourceEnabled = false
     private var desktopPauseOverlayEnabled = true
     private var desktopPlaybackSpeedFineIncrementsEnabled = false
@@ -474,10 +476,9 @@ object PlayerSettingsRepository {
         desktopDockPanelFromBarEnabled = false
         desktopSeekHandleEnabled = true
         desktopHudVignetteEnabled = true
-        desktopHiddenHudButtons = emptySet()
+        desktopHiddenHudButtons = setOf(DesktopHudVolumeCommand)
         desktopHudButtonOrder = emptyList()
         desktopAlwaysShowClockEnabled = false
-        desktopVolumeControlEnabled = false
         desktopPauseOverlaySourceEnabled = false
         desktopPauseOverlayEnabled = true
         desktopPlaybackSpeedFineIncrementsEnabled = false
@@ -642,6 +643,18 @@ object PlayerSettingsRepository {
             ?.filter(String::isNotEmpty)
             ?.toSet()
             .orEmpty()
+        // The volume control used to be a standalone switch. Move that choice into the hidden
+        // buttons set once, keeping its old default (hidden for TVs/receivers). Afterwards the set
+        // is authoritative; saving the legacy key as true stops this migration from re-hiding a
+        // volume control the user has since restored.
+        val legacyVolumeControlEnabled = PlayerSettingsStorage.loadDesktopVolumeControlEnabled()
+        if (DesktopHudVolumeCommand !in desktopHiddenHudButtons && legacyVolumeControlEnabled != true) {
+            desktopHiddenHudButtons = desktopHiddenHudButtons + DesktopHudVolumeCommand
+            PlayerSettingsStorage.saveDesktopHiddenHudButtons(desktopHiddenHudButtons.sorted().joinToString(","))
+        }
+        if (legacyVolumeControlEnabled != true) {
+            PlayerSettingsStorage.saveDesktopVolumeControlEnabled(true)
+        }
         // Four stored flags, one layout: official beats ultra beats minimal beats legacy if several
         // were ever set.
         if (desktopOfficialHudEnabled) desktopUltraHudEnabled = false
@@ -650,7 +663,6 @@ object PlayerSettingsRepository {
             desktopLegacyHudEnabled = false
         }
         desktopAlwaysShowClockEnabled = PlayerSettingsStorage.loadDesktopAlwaysShowClockEnabled() ?: false
-        desktopVolumeControlEnabled = PlayerSettingsStorage.loadDesktopVolumeControlEnabled() ?: false
         desktopPauseOverlaySourceEnabled = PlayerSettingsStorage.loadDesktopPauseOverlaySourceEnabled() ?: false
         desktopPauseOverlayEnabled = PlayerSettingsStorage.loadDesktopPauseOverlayEnabled() ?: true
         desktopPlaybackSpeedFineIncrementsEnabled =
@@ -1065,12 +1077,9 @@ object PlayerSettingsRepository {
         PlayerSettingsStorage.saveDesktopAlwaysShowClockEnabled(enabled)
     }
 
+    /** Compatibility alias: the hidden-buttons set now owns the volume control. */
     fun setDesktopVolumeControlEnabled(enabled: Boolean) {
-        ensureLoaded()
-        if (desktopVolumeControlEnabled == enabled) return
-        desktopVolumeControlEnabled = enabled
-        publish()
-        PlayerSettingsStorage.saveDesktopVolumeControlEnabled(enabled)
+        setDesktopHudButtonHidden(DesktopHudVolumeCommand, hidden = !enabled)
     }
 
     fun setDesktopPauseOverlaySourceEnabled(enabled: Boolean) {
@@ -1902,7 +1911,7 @@ object PlayerSettingsRepository {
             desktopHiddenHudButtons = desktopHiddenHudButtons,
             desktopHudButtonOrder = desktopHudButtonOrder,
             desktopAlwaysShowClockEnabled = desktopAlwaysShowClockEnabled,
-            desktopVolumeControlEnabled = desktopVolumeControlEnabled,
+            desktopVolumeControlEnabled = DesktopHudVolumeCommand !in desktopHiddenHudButtons,
             desktopPauseOverlaySourceEnabled = desktopPauseOverlaySourceEnabled,
             desktopPauseOverlayEnabled = desktopPauseOverlayEnabled,
             desktopPlaybackSpeedFineIncrementsEnabled = desktopPlaybackSpeedFineIncrementsEnabled,

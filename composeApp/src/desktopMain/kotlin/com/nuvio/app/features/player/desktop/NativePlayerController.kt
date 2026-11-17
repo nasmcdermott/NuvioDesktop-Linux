@@ -4022,6 +4022,8 @@ internal fun PlayerControlsState.toControlsJson(
         append(',')
         appendJsonField("hudVignetteEnabled", hud.hudVignetteEnabled)
         append(',')
+        appendJsonField("volumeControlEnabled", hud.volumeControlEnabled)
+        append(',')
         appendJsonField("hiddenHudButtons", hud.hiddenHudButtons)
         append(',')
         appendJsonField("hudButtonOrder", hud.hudButtonOrder)

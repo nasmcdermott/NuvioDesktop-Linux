@@ -553,6 +553,7 @@ internal fun PlayerScreenRuntime.RenderPlayerRuntimeUi() {
             officialHudEnabled = playerSettingsUiState.desktopOfficialHudEnabled,
             seekHandleEnabled = playerSettingsUiState.desktopSeekHandleEnabled,
             hudVignetteEnabled = playerSettingsUiState.desktopHudVignetteEnabled,
+            volumeControlEnabled = playerSettingsUiState.desktopVolumeControlEnabled,
             hiddenHudButtons = playerSettingsUiState.desktopHiddenHudButtons.sorted().joinToString(","),
             hudButtonOrder = playerSettingsUiState.desktopHudButtonOrder.joinToString(","),
             alwaysShowClock = playerSettingsUiState.desktopAlwaysShowClockEnabled,
