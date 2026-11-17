@@ -113,9 +113,10 @@ void imageReady(void *data, wp_image_description_v1 *image, uint32_t identity) {
     d.info = wp_image_description_v1_get_information(image);
     wp_image_description_info_v1_add_listener(d.info, &infoListener, &d);
 }
-// The manager is bound at version 1 and the pinned wayland-protocols 1.42
-// defines only the version-1 failed/ready events.
-const wp_image_description_v1_listener imageListener = {imageFailed, imageReady};
+// The manager is bound at version 1, so the version-2 ready2 event can never fire.
+// It is still initialised explicitly because the generated listener struct carries it and
+// -Wmissing-field-initializers is an error in this build.
+const wp_image_description_v1_listener imageListener = {imageFailed, imageReady, nullptr};
 
 struct Output {
     wl_output *proxy = nullptr;
@@ -189,8 +190,9 @@ void preferredChanged(void *data, wp_color_management_surface_feedback_v1 *, uin
     if (w.preferredIdentity && w.preferredIdentity != identity) w.descriptionChanged = true;
     w.preferredIdentity = identity;
 }
-// Version 1 of the pinned 1.42 protocol has only preferred_changed.
-const wp_color_management_surface_feedback_v1_listener feedbackListener = {preferredChanged};
+// Version 1 of the protocol has only preferred_changed; preferred_changed2 is version 2 and
+// can never fire because the object is bound at version 1.
+const wp_color_management_surface_feedback_v1_listener feedbackListener = {preferredChanged, nullptr};
 
 void global(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
     auto &w = *static_cast<Wayland *>(data);
