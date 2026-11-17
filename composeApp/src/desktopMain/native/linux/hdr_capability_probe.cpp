@@ -113,7 +113,9 @@ void imageReady(void *data, wp_image_description_v1 *image, uint32_t identity) {
     d.info = wp_image_description_v1_get_information(image);
     wp_image_description_info_v1_add_listener(d.info, &infoListener, &d);
 }
-const wp_image_description_v1_listener imageListener = {imageFailed, imageReady, nullptr};
+// The manager is bound at version 1 and the pinned wayland-protocols 1.42
+// defines only the version-1 failed/ready events.
+const wp_image_description_v1_listener imageListener = {imageFailed, imageReady};
 
 struct Output {
     wl_output *proxy = nullptr;
@@ -187,7 +189,8 @@ void preferredChanged(void *data, wp_color_management_surface_feedback_v1 *, uin
     if (w.preferredIdentity && w.preferredIdentity != identity) w.descriptionChanged = true;
     w.preferredIdentity = identity;
 }
-const wp_color_management_surface_feedback_v1_listener feedbackListener = {preferredChanged, nullptr};
+// Version 1 of the pinned 1.42 protocol has only preferred_changed.
+const wp_color_management_surface_feedback_v1_listener feedbackListener = {preferredChanged};
 
 void global(void *data, wl_registry *registry, uint32_t name, const char *interface, uint32_t version) {
     auto &w = *static_cast<Wayland *>(data);
