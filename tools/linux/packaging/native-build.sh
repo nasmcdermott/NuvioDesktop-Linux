@@ -55,7 +55,7 @@ gradle_flags=(-Pnuvio.desktop.channel="$NUVIO_BUILD_CHANNEL" -Pnuvio.innertubex=
 # run, so the compiler daemon's heap is gone before native-image's ~10 GB peak).
 # Never a QA build; the layout is composeApp/native-image-linux/README.md's.
 ./gradlew :composeApp:createLinuxNativeDistributable -Pnuvio.graalvm.home=/opt/graalvm \
-  -Pnuvio.native.builderHeap="${NUVIO_NATIVE_BUILDER_HEAP:-9g}" -Pnuvio.native.qa=false "${gradle_flags[@]}"
+  -Pnuvio.native.builderHeap="${NUVIO_NATIVE_BUILDER_HEAP:-10g}" -Pnuvio.native.qa=false "${gradle_flags[@]}"
 # nuvio-hdr-probe (required by NUVIO_PACKAGE_BUILD) uses the media runtime's
 # build-only SDK area: pinned wayland-scanner, color-management-v1.xml and Vulkan
 # headers/loader (the builder's wayland-protocols/scanner are too old). Only the

@@ -146,7 +146,7 @@ def builder_command(info, channel, jobs, offline, work, runtime, inputs, network
                '--env', 'NUVIO_PACKAGE_FORMATS=' + package_formats,
                '--env', 'NUVIO_BUILD_JOBS=' + str(jobs),
                # native-image peaks at ~9-11 GB RSS with a 9 GB heap; the 16 GB CI runner fits one.
-               '--env', 'NUVIO_NATIVE_BUILDER_HEAP=' + os.environ.get('NUVIO_NATIVE_BUILDER_HEAP', '9g')]
+               '--env', 'NUVIO_NATIVE_BUILDER_HEAP=' + os.environ.get('NUVIO_NATIVE_BUILDER_HEAP', '10g')]
     if offline:
         command += ['--env', 'NUVIO_GRADLE_OFFLINE=1']
     for src, dest, ro in [(work / 'source', '/source', False), (runtime, '/media', True),

@@ -49,6 +49,7 @@ jobs:
       DISPLAY: ''
       WAYLAND_DISPLAY: ''
       NUVIO_RUN_LIVE_DISPLAY_TESTS: ''
+      NUVIO_NATIVE_BUILDER_HEAP: 10g
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
