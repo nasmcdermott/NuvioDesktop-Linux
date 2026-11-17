@@ -948,7 +948,14 @@ const handleHudNavKey = code => {
       volumeAdjusting = !volumeAdjusting;
       syncHudNavState();
     } else {
-      navFocusEl.click();
+      const command = navFocusEl.dataset ? navFocusEl.dataset.command : "";
+      // Sources, Episodes and Live TV channels hand over to their own row-driven key mode, exactly
+      // as a click from the overflow menu or the panel shortcut does.
+      if (command === "sources" || command === "episodes" || command === "iptvChannels") {
+        window.nuvioOpenKeyboardPanel(command);
+      } else {
+        navFocusEl.click();
+      }
     }
   }
 };
@@ -3644,6 +3651,19 @@ const openPlayerModal = modal => {
   }
   if (linuxHost && (modal === "subtitles" || modal === "audio")) enterTrackKeyboardMode(modal);
   renderChrome();
+};
+
+// Opens the Sources sheet with its keyboard/gamepad navigation armed. Click paths go through here
+// too: the rows and filter chips only answer the arrows while keyboardPanelMode is "sources", and
+// a user may pick the icon with a pointer and then keep going on a pad. The panel's docked/centred
+// layout still follows the input that opened it (openPlayerModal reads lastHudInput).
+const openSourcesPanelForHud = () => {
+  keyboardPanelMode = "sources";
+  keyboardChipFocus = "";
+  keyboardSourceIndex = 0;
+  sourceFilterId = "";
+  send("keyboardPanelOpened", 0);
+  openPlayerModal("sources");
 };
 
 const parsedPlaybackSpeed = () => {
@@ -8818,8 +8838,12 @@ function syncActionRowOverflow() {
 
   // Ultra layout: the toggle is the options button, so every tool folds behind it regardless of
   // how much room the row has. The popover is what the user opens on purpose, not a spill-over.
+  // fork:linux - Sources is the exception: keep its icon in the row so a D-pad can reach it and
+  // open the keyboard-driven source list without navigating the pointer-only popover.
   if (root.classList.contains("ultra-hud")) {
-    items.forEach(button => (ultraMenuActions || actionOverflowMenu).appendChild(button));
+    items
+      .filter(button => !(linuxHost && button === sourcesButton))
+      .forEach(button => (ultraMenuActions || actionOverflowMenu).appendChild(button));
     return;
   }
 
@@ -9034,8 +9058,7 @@ document.querySelectorAll("[data-command]").forEach(button => {
         if (activeModal !== "iptvChannels") openIptvPanel(false);
         return;
       }
-      sourceFilterId = "";
-      openPlayerModal("sources");
+      openSourcesPanelForHud();
       send("sources", 0);
       return;
     }
@@ -9593,12 +9616,7 @@ window.nuvioOpenKeyboardPanel = panel => {
     return;
   }
   if (panel === "sources") {
-    keyboardPanelMode = "sources";
-    keyboardChipFocus = "";
-    send("keyboardPanelOpened", 0);
-    keyboardSourceIndex = 0;
-    sourceFilterId = "";
-    openPlayerModal("sources");
+    openSourcesPanelForHud();
     send("sources", 0);
     return;
   }
@@ -10153,8 +10171,7 @@ window.playerControls = nextState => {
   // fallback. A token rather than a boolean, exactly like closeModalsToken above: a sticky flag
   // would reopen the modal on the next state push after the user closed it.
   if (openSourcesToken !== previousOpenSourcesToken) {
-    sourceFilterId = "";
-    openPlayerModal("sources");
+    openSourcesPanelForHud();
   }
   // Kotlin asking for the party panel (the party moved to something this player cannot follow by
   // itself). A token for the same reason as openSourcesToken.
@@ -10170,7 +10187,7 @@ window.playerControls = nextState => {
   // for checking the new stream and swapping again. Never afterwards — a sticky flag would
   // reopen a sheet the user closed (Kotlin hears sourcesPanelClosed, but only after the push).
   if (isFirstPlayerControls && state.sourcesPanelOpen && activeModal !== "sources") {
-    openPlayerModal("sources");
+    openSourcesPanelForHud();
   }
   render();
 };

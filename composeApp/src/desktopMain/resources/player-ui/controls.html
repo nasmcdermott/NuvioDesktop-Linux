@@ -82,6 +82,9 @@
     <symbol id="icon-swap" viewBox="0 0 24 24">
       <path d="M7 7h11l-3-3 1.4-1.4L21.8 8l-5.4 5.4L15 12l3-3H7V7Zm10 10H6l3 3-1.4 1.4L2.2 16l5.4-5.4L9 12l-3 3h11v2Z"/>
     </symbol>
+    <symbol id="icon-cloud" viewBox="0 0 24 24">
+      <path d="M19.35 10.04C18.67 6.59 15.64 4 12 4 9.11 4 6.6 5.64 5.35 8.04 2.34 8.36 0 10.91 0 14c0 3.31 2.69 6 6 6h13c2.76 0 5-2.24 5-5 0-2.64-2.05-4.78-4.65-4.96Z"/>
+    </symbol>
     <symbol id="icon-video" viewBox="0 0 24 24">
       <path d="M4 6h16v12H4V6Zm2 2v8h12V8H6Zm14-4H4V2h16v2Zm0 18H4v-2h16v2Z"/>
     </symbol>
@@ -289,7 +292,7 @@
         <span id="episodeNotchLabel" data-i18n="player_hud_episodes">Episodes</span>
       </button>
       <button class="source-notch optional" id="sourceNotch" data-command="sources" aria-label="Open sources" data-i18n-aria-label="player_hud_open_sources">
-        <svg><use href="#icon-swap"></use></svg>
+        <svg><use href="#icon-cloud"></use></svg>
         <span data-i18n="player_hud_sources">Sources</span>
       </button>
 
@@ -430,7 +433,7 @@
             <button class="action desktop-preset-action" data-action-priority="80" id="animeShaderButton" data-command="keyboardCycleAnimeMode" aria-label="Cycle anime shader" title="Anime shaders" data-i18n-aria-label="player_hud_cycle_anime_shader" data-i18n-title="player_hud_anime_shaders"><svg><use href="#icon-anime-shader"></use></svg><span data-i18n="player_hud_anime">Anime</span></button>
             <button class="action desktop-preset-action" data-action-priority="85" data-command="keyboardCycleAnimeSvp" aria-label="Toggle SVP" title="SVP interpolation" data-i18n-aria-label="player_hud_toggle_svp" data-i18n-title="player_hud_svp_interpolation"><svg><use href="#icon-svp"></use></svg><span data-i18n="player_hud_svp">SVP</span></button>
             <button class="action" data-action-priority="3" id="iptvChannelsButton" data-command="iptvChannels" aria-label="Channels" title="Channels" hidden data-i18n-aria-label="player_hud_channels" data-i18n-title="player_hud_channels"><svg><use href="#icon-video"></use></svg><span id="iptvChannelsLabel" data-i18n="player_hud_channels">Channels</span></button>
-            <button class="action optional" data-action-priority="20" id="sourcesButton" data-command="sources"><svg><use href="#icon-swap"></use></svg><span id="sourcesLabel" data-i18n="player_hud_sources">Sources</span></button>
+            <button class="action optional" data-action-priority="2" id="sourcesButton" data-command="sources" hidden aria-label="Sources" title="Sources" data-i18n-aria-label="player_hud_sources" data-i18n-title="player_hud_sources"><svg><use href="#icon-cloud"></use></svg><span id="sourcesLabel" data-i18n="player_hud_sources">Sources</span></button>
             <button class="action optional" data-action-priority="25" id="episodesButton" data-command="episodes" hidden><svg><use href="#icon-video"></use></svg><span id="episodesLabel" data-i18n="player_hud_episodes">Episodes</span></button>
             <button class="action" data-action-priority="65" id="submitIntroButton" data-command="submitIntro" aria-label="Submit intro" title="Submit intro" data-i18n-aria-label="player_hud_submit_intro" data-i18n-title="player_hud_submit_intro"><svg><use href="#icon-flag"></use></svg><span data-i18n="player_hud_submit">Submit</span></button>
             <button class="action" data-action-priority="35" id="partyButton" data-command="party" aria-label="Watch party" title="Watch party" hidden data-i18n-aria-label="player_hud_watch_party" data-i18n-title="player_hud_watch_party"><svg><use href="#icon-party"></use></svg><span id="partyButtonLabel" data-i18n="player_hud_party">Party</span></button>

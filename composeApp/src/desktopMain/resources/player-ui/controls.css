@@ -4264,6 +4264,13 @@ svg {
   box-shadow: 5px 0 16px rgba(0,0,0,.28), inset -1px 0 0 rgba(255,255,255,.16);
 }
 #sourcesButton { display: none !important; }
+/* fork:linux - the blank edge notch is not a discoverable, focusable control. Linux also keeps a
+   real Sources icon in the action row, so the D-pad can reach it and activate the keyboard-driven
+   source list from there. Windows and macOS keep upstream's hidden button. */
+.player.linux-host:not(.iptv-live) #sourcesButton:not([hidden]) {
+  display: flex !important;
+  justify-content: center;
+}
 
 /* Keep desktop sheets visually separated from the video beneath them. */
 #episodesModal .track-panel.wide { border-radius: 0 0 18px 18px; }
