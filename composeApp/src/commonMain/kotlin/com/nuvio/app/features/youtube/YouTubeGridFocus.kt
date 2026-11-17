@@ -37,6 +37,12 @@ internal class GridColumnFocus(private val state: LazyGridState, private val sco
     private fun columns(): Int =
         state.layoutInfo.visibleItemsInfo.groupingBy { it.row }.eachCount().values.maxOrNull() ?: 0
 
+    /** True for the leftmost card of its row, whose Left belongs to the navigation bar. */
+    fun isFirstColumn(index: Int): Boolean {
+        val cols = columns()
+        return cols > 0 && index % cols == 0
+    }
+
     /**
      * Moves a row [down] (or up) from the focused item among [itemCount]. False leaves the key to the
      * screen's own navigation: up from the first row (to the header), or down from the last.

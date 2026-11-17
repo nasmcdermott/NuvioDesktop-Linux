@@ -7520,7 +7520,7 @@ private fun DesktopSidebarItem(
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
     focused: Boolean = false,
-    /** Hovering takes the keys too, so the ring and zoom follow the pointer. */
+    /** Hovering takes the keys too, so the zoom follows the pointer; the ring stays keyboard-only. */
     onHoverFocus: (() -> Unit)? = null,
     icon: @Composable (Color) -> Unit,
 ) {
@@ -7553,7 +7553,9 @@ private fun DesktopSidebarItem(
             .padding(horizontal = 10.dp, vertical = 4.dp)
             // The keyboard focus ring, when the sidebar's arrow-key navigation has this row.
             .then(
-                if (focused) {
+                // Hover drives the zoom but not the keyboard ring: the pointer already marks the
+                // row, and the ring would make every pass of the mouse look like a key press.
+                if (focused && !hovered) {
                     Modifier.border(2.dp, tokens.colors.accent, RoundedCornerShape(16.dp))
                 } else {
                     Modifier
@@ -8412,7 +8414,8 @@ private fun RowScope.NavQuadrant(
             // The ring marks the icon the arrow keys are on, as the sidebar's profile row does: the
             // keys live on the bar, not on the page behind it.
             .then(
-                if (focused) {
+                // Hover zooms the glyph; only keyboard/D-pad focus draws the ring.
+                if (focused && !hovered) {
                     Modifier.border(2.dp, Color(0xFF9ECAFF).copy(alpha = .9f), shape)
                 } else {
                     Modifier

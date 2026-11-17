@@ -1049,6 +1049,7 @@ fun YouTubeTabScreen(
                                 index == 0 -> firstCardFocus
                                 else -> null
                             },
+                            atLeftEdge = columnFocus.isFirstColumn(index),
                         )
                     }
                     }
@@ -1879,6 +1880,8 @@ private fun YouTubeVideoCard(
     queued: Boolean = false,
     onToggleQueued: () -> Unit = {},
     focusRequester: FocusRequester? = null,
+    /** The leftmost card in its grid row: Left leaves the grid for the navigation bar. */
+    atLeftEdge: Boolean = false,
     modifier: Modifier = Modifier,
 ) {
     // The card's menu, open at this window position (the ⋮ button, the cursor, or beside the card).
@@ -1985,6 +1988,9 @@ private fun YouTubeVideoCard(
             .trackSidebarEntryFocusY()
             .onGloballyPositioned { cardBounds = it.boundsInWindow() }
             .then(if (focusRequester != null) Modifier.focusRequester(focusRequester) else Modifier)
+            // On the first column, Left has nowhere to go in the grid: cancel the spatial move so
+            // the tab's releaseWhenStuck hand-off reaches the sidebar instead of the YouTube tabs.
+            .then(if (atLeftEdge) Modifier.focusProperties { left = FocusRequester.Cancel } else Modifier)
             // Select plays; holding it (Enter, or a pad's A) opens the menu beside the card, as
             // right-click does under the cursor.
             .onPreviewKeyEvent { event ->
