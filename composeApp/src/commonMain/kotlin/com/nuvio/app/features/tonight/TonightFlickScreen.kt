@@ -1,5 +1,6 @@
 package com.nuvio.app.features.tonight
 
+import com.nuvio.app.core.ui.trackSidebarEntryFocusY
 import com.nuvio.app.core.ui.keyLayer
 import com.nuvio.app.core.ui.requestFocusLogged
 import androidx.compose.foundation.focusable
@@ -109,6 +110,7 @@ internal fun TonightFlickView(
             .fillMaxSize()
             // Focus router fallback (KeyLayers): an arrow or OK that went to no one puts focus back here.
             .keyLayer("Tonight") { focus.requestFocusLogged() }
+            .trackSidebarEntryFocusY()
             .focusRequester(focus)
             .focusable()
             .tonightKeys { key ->

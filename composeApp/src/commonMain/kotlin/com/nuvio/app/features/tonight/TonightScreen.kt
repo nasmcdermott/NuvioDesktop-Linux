@@ -1,5 +1,6 @@
 package com.nuvio.app.features.tonight
 
+import com.nuvio.app.core.ui.trackSidebarEntryFocusY
 import com.nuvio.app.core.ui.keyLayer
 import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.requestFocusLogged
@@ -644,6 +645,7 @@ private fun TonightLauncher(
             // Before the focus target: this must observe the launcher root (and any focused child),
             // not only the modifier chain after it.
             .onFocusChanged { contentFocused = it.hasFocus }
+            .trackSidebarEntryFocusY()
             .focusRequester(focus)
             .focusable()
             .tonightKeys { key ->
@@ -929,6 +931,7 @@ private fun TonightQuestions(
             .fillMaxSize()
             // Focus router fallback (KeyLayers): an arrow or OK that went to no one puts focus back here.
             .keyLayer("Tonight") { focus.requestFocusLogged() }
+            .trackSidebarEntryFocusY()
             .focusRequester(focus)
             .focusable()
             .tonightKeys { key ->
@@ -1124,6 +1127,7 @@ private fun TonightCards(
             .fillMaxSize()
             // Focus router fallback (KeyLayers): an arrow or OK that went to no one puts focus back here.
             .keyLayer("Tonight") { focus.requestFocusLogged() }
+            .trackSidebarEntryFocusY()
             .focusRequester(focus)
             .focusable()
             .tonightKeysWithHold(
