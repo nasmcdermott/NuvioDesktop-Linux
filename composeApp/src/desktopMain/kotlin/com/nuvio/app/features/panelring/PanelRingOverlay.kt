@@ -17,6 +17,7 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.MusicNote
@@ -273,6 +274,7 @@ private fun SlotIcon(slot: PanelRingSlot, tint: Color, size: Dp) {
             NavBarEntry.Discover -> Icon(Icons.Rounded.Explore, label, modifier, tint)
             NavBarEntry.Library -> Icon(painterResource(Res.drawable.sidebar_library), label, modifier, tint)
             NavBarEntry.LiveTv -> Icon(Icons.Rounded.LiveTv, label, modifier, tint)
+            NavBarEntry.Sports -> Icon(Icons.Rounded.EmojiEvents, label, modifier, tint)
             NavBarEntry.YouTube -> Icon(Icons.Rounded.SmartDisplay, label, modifier, tint)
             NavBarEntry.Music -> Icon(Icons.Rounded.MusicNote, label, modifier, tint)
             NavBarEntry.Games -> Icon(Icons.Rounded.SportsEsports, label, modifier, tint)
@@ -290,7 +292,8 @@ private fun slotLabel(slot: PanelRingSlot): String = when (slot) {
         NavBarEntry.Discover -> stringResource(Res.string.compose_nav_discover)
         NavBarEntry.Library -> stringResource(Res.string.compose_nav_library)
         NavBarEntry.LiveTv -> stringResource(Res.string.iptv_settings_page)
-        NavBarEntry.Tonight, NavBarEntry.YouTube, NavBarEntry.Music, NavBarEntry.Games -> slot.entry.label
+        // Literal like Tonight/YouTube/Music/Games: these have no upstream string resource.
+        NavBarEntry.Tonight, NavBarEntry.Sports, NavBarEntry.YouTube, NavBarEntry.Music, NavBarEntry.Games -> slot.entry.label
     }
 }
 

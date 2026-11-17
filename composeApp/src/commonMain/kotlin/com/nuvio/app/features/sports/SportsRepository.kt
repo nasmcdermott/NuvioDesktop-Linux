@@ -23,7 +23,7 @@ import kotlinx.coroutines.sync.withLock
  * already showing. A failed refresh keeps what was cached and records the failure next to it — the
  * feed is unofficial and will fail, and an empty screen is a worse answer than a slightly old one.
  */
-object SportsRepository {
+internal object SportsRepository {
     private val log = Logger.withTag("Sports")
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 

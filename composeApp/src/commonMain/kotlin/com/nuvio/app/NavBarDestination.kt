@@ -3,6 +3,7 @@ package com.nuvio.app
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Home
 import androidx.compose.material.icons.rounded.AutoAwesome
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.MusicNote
@@ -113,6 +114,13 @@ internal val NavBarEntry.destination: NavBarDestination
             label = NavBarLabel.Resource(Res.string.iptv_settings_page),
             tab = AppScreenTab.LiveTv,
             orderDescription = "Shown while a Live TV playlist is added (Settings > Live TV).",
+        )
+        NavBarEntry.Sports -> NavBarDestination(
+            // fork:sports - a generic award glyph, so it reads as "sports" without naming one.
+            glyph = NavBarGlyph.Vector(Icons.Rounded.EmojiEvents),
+            label = NavBarLabel.Literal("Sports"),
+            tab = AppScreenTab.Sports,
+            orderDescription = "Live games on your Live TV channels. Needs a playlist (Settings > Live TV).",
         )
         NavBarEntry.YouTube -> NavBarDestination(
             glyph = NavBarGlyph.Vector(Icons.Rounded.SmartDisplay),

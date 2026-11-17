@@ -1,0 +1,109 @@
+package com.nuvio.app.features.sports
+
+import co.touchlab.kermit.Logger
+import com.nuvio.app.core.build.AppFeaturePolicy
+import kotlinx.coroutines.flow.MutableStateFlow
+import kotlinx.coroutines.flow.StateFlow
+import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.update
+import kotlinx.serialization.Serializable
+import kotlinx.serialization.json.Json
+
+/**
+ * Everything the Sports tab keeps for one profile.
+ *
+ * Stored as `nuvio_sports.properties` under the account folder, which is what makes Settings >
+ * Backup carry it for every profile with no work: that backup globs every `*.properties` store and
+ * Sports holds no credentials, so the credential-free pass has nothing to strip.
+ */
+@Serializable
+data class SportsSettings(
+    /** Settings > Sports > Show in navigation. Off removes the tab without touching anything else. */
+    val enabled: Boolean = true,
+    /** "" = take the region from the system, as the league catalog's defaults describe. */
+    val region: String = "",
+    /** Hides scores on the cards and the scoreboard; the page keeps its shape. */
+    val hideScores: Boolean = false,
+    /** Leagues taken off the page entirely. */
+    val hiddenLeagues: Set<String> = emptySet(),
+    /**
+     * A hand-picked channel for one game: event id -> channel key. Outranks anything the matcher
+     * infers, because the user can see their own playlist and the matcher cannot.
+     */
+    val picks: Map<String, String> = emptyMap(),
+    /** "eventId|channelKey" the user said is NOT showing that game. */
+    val blocked: Set<String> = emptySet(),
+)
+
+private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
+
+/**
+ * Where the Sports settings live. An expect/actual for the same reason the IPTV store is one: the
+ * desktop storage directory is `internal` to desktopMain and the store is plain JVM code.
+ */
+internal expect object SportsSettingsStorage {
+    fun loadPayload(): String?
+    fun savePayload(payload: String)
+}
+
+internal object SportsSettingsRepository {
+    private val log = Logger.withTag("SportsSettings")
+
+    private val _settings by lazy {
+        MutableStateFlow(
+            runCatching {
+                SportsSettingsStorage.loadPayload()
+                    ?.takeIf { it.isNotBlank() }
+                    ?.let { json.decodeFromString(SportsSettings.serializer(), it) }
+            }.onFailure { log.w { "Unreadable sports settings, starting fresh: ${it.message}" } }
+                .getOrNull() ?: SportsSettings(),
+        )
+    }
+
+    val settings: StateFlow<SportsSettings> get() = _settings.asStateFlow()
+
+    fun setEnabled(enabled: Boolean) = mutate { it.copy(enabled = enabled) }
+
+    fun setRegion(region: String) = mutate { it.copy(region = region.trim().uppercase()) }
+
+    fun setHideScores(hide: Boolean) = mutate { it.copy(hideScores = hide) }
+
+    fun setLeagueHidden(leagueId: String, hidden: Boolean) = mutate { current ->
+        current.copy(hiddenLeagues = if (hidden) current.hiddenLeagues + leagueId else current.hiddenLeagues - leagueId)
+    }
+
+    fun setPick(eventId: String, channelKey: String?) = mutate { current ->
+        current.copy(picks = if (channelKey == null) current.picks - eventId else current.picks + (eventId to channelKey))
+    }
+
+    fun blockChannel(eventId: String, channelKey: String) = mutate { current ->
+        current.copy(blocked = current.blocked + "${eventId}|$channelKey")
+    }
+
+    fun unblockChannel(eventId: String, channelKey: String) = mutate { current ->
+        current.copy(blocked = current.blocked - "${eventId}|$channelKey")
+    }
+
+    fun clearPicks() = mutate { it.copy(picks = emptyMap(), blocked = emptySet()) }
+
+    fun replaceForBackup(settings: SportsSettings) {
+        _settings.value = settings
+        persist()
+    }
+
+    private fun mutate(change: (SportsSettings) -> SportsSettings) {
+        _settings.update(change)
+        persist()
+    }
+
+    private fun persist() {
+        // A build that does not carry the feature must not write its store, so an ordinary build
+        // never leaves a file behind that a Sports build would then half-read.
+        if (!AppFeaturePolicy.sportsEnabled) return
+        runCatching { SportsSettingsStorage.savePayload(json.encodeToString(SportsSettings.serializer(), _settings.value)) }
+            .onFailure { log.e(it) { "Failed to save sports settings" } }
+    }
+}
+
+/** The store the desktop actual reads and writes. Named here so the backup and the UI agree. */
+internal const val SPORTS_STORE_NAME = "nuvio_sports"

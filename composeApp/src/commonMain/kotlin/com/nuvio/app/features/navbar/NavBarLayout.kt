@@ -31,6 +31,8 @@ enum class NavBarEntry(val key: String, val label: String) {
     Discover("discover", "Discover"),
     Library("library", "Library"),
     LiveTv("livetv", "Live TV"),
+    /** fork:sports - only in the navigation on a build launched with -Pnuvio.sports=true. */
+    Sports("sports", "Sports"),
     YouTube("youtube", "YouTube"),
     Music("music", "Music"),
     Games("games", "Games"),
@@ -43,6 +45,7 @@ internal val DEFAULT_NAV_BAR_ORDER = listOf(
     NavBarEntry.Discover,
     NavBarEntry.Library,
     NavBarEntry.LiveTv,
+    NavBarEntry.Sports,
     NavBarEntry.YouTube,
     NavBarEntry.Music,
     NavBarEntry.Games,
@@ -155,12 +158,14 @@ fun rememberNavBarEntries(): List<NavBarEntry> {
     val games by remember { NavBarLayoutRepository.gamesInNav }.collectAsStateWithLifecycle()
     val tonight by remember { NavBarLayoutRepository.tonightInNav }.collectAsStateWithLifecycle()
     val liveTv = com.nuvio.app.features.iptv.rememberLiveTvTabVisible()
+    val sports = com.nuvio.app.features.sports.rememberSportsTabVisible()
     val youTube = com.nuvio.app.features.youtube.rememberYouTubeTabVisible()
     val music = com.nuvio.app.features.music.rememberMusicTabVisible()
     return order.filter { entry ->
         when (entry) {
             NavBarEntry.Discover -> discover
             NavBarEntry.LiveTv -> liveTv
+            NavBarEntry.Sports -> sports
             NavBarEntry.YouTube -> youTube
             NavBarEntry.Music -> music
             NavBarEntry.Games -> games

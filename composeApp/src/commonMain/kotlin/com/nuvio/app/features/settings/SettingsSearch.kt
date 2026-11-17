@@ -1,5 +1,8 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.core.build.AppFeaturePolicy
+import androidx.compose.material.icons.rounded.EmojiEvents
+
 import com.nuvio.app.core.ui.requestFocusLogged
 import androidx.compose.material.icons.rounded.MusicNote
 import com.nuvio.app.core.i18n.platformString
@@ -749,6 +752,32 @@ private fun settingsSearchEntries(
             section = row.sectionOverride ?: iptvPage,
             icon = Icons.Rounded.LiveTv,
         )
+    }
+    // fork:sports - only on a build that carries the feature (see AppFeaturePolicy.sportsEnabled).
+    if (AppFeaturePolicy.sportsEnabled) {
+        val sportsPage = "Sports"
+        addPage(
+            page = SettingsPage.Sports,
+            key = "sports",
+            title = sportsPage,
+            description = "Live games on your Live TV channels",
+            icon = Icons.Rounded.EmojiEvents,
+        )
+        listOf(
+            PlaybackSearchRow("sports-in-navigation", "Show Sports in navigation", "A Sports button in the sidebar and top bar.", "Sports"),
+            PlaybackSearchRow("sports-hide-scores", "Hide scores", "Hides scores and clocks so a game is not spoiled.", "Sports"),
+            PlaybackSearchRow("sports-clear-picks", "Clear channel picks", "Forgets every channel you chose by hand.", "Sports"),
+        ).forEach { row ->
+            addRow(
+                page = SettingsPage.Sports,
+                key = row.key,
+                title = row.title,
+                description = row.description,
+                pageLabel = sportsPage,
+                section = row.sectionOverride ?: sportsPage,
+                icon = Icons.Rounded.EmojiEvents,
+            )
+        }
     }
     addPage(
         page = SettingsPage.Integrations,
@@ -3054,6 +3083,7 @@ private fun settingsSearchEntries(
             add(SettingsPage.Downloads)
         }
         if (!notificationsEnabled) add(SettingsPage.Notifications)
+        if (!AppFeaturePolicy.sportsEnabled) add(SettingsPage.Sports) // fork:sports
         if (!isDesktop) {
             add(SettingsPage.KeyboardShortcuts)
             add(SettingsPage.Screensaver)

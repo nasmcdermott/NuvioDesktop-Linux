@@ -192,6 +192,7 @@ private fun NavBarEntry.navDescription(): String = when (this) {
     NavBarEntry.Discover -> "Browse catalogs by genre, year and more."
     NavBarEntry.Library -> "Your saved titles and collections. Always shown."
     NavBarEntry.LiveTv -> "Shown while a Live TV playlist is added (Settings > Live TV)."
+    NavBarEntry.Sports -> "Live games on your Live TV channels. Needs a playlist (Settings > Live TV)."
     NavBarEntry.YouTube -> "Your YouTube home, subscriptions and playlists. Needs the account under YouTube account."
     NavBarEntry.Music -> "Your music library and YouTube Music."
     NavBarEntry.Games -> "Opens game mode, your game library, over the app."

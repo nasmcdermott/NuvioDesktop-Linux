@@ -710,6 +710,8 @@ enum class AppScreenTab {
     Library,
     /** IPTV channels; only in the navigation while a playlist exists (see rememberLiveTvTabVisible). */
     LiveTv,
+    /** fork:sports - live games from the Live TV channels; its own page, like LiveTv. */
+    Sports,
     Music, // fork:music - its own screen, like LiveTv (see MusicTabHost)
     YouTube, // fork:youtube-mode - its own screen, like LiveTv (see YouTubeTabScreen)
     Settings,
@@ -749,6 +751,7 @@ private fun AppScreenTab.toNativeNavigationTab(): NativeNavigationTab = when (th
     // Home rather than inventing a tab the native bar cannot render or select back.
     AppScreenTab.Discover -> NativeNavigationTab.Home
     AppScreenTab.LiveTv -> NativeNavigationTab.Home
+    AppScreenTab.Sports -> NativeNavigationTab.Home // fork:sports - no slot on the native tab bar
     AppScreenTab.Music -> NativeNavigationTab.Home // fork:music - no slot on the native tab bar
     AppScreenTab.YouTube -> NativeNavigationTab.Home // fork:youtube-mode
     AppScreenTab.Library -> NativeNavigationTab.Library
@@ -1904,6 +1907,7 @@ private fun MainAppContent(
             AppScreenTab.Library -> libraryScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.Discover -> discoverScrollToTopRequests.tryEmit(Unit)
             AppScreenTab.LiveTv -> Unit
+            AppScreenTab.Sports -> Unit // fork:sports
             AppScreenTab.Music -> Unit // fork:music
             AppScreenTab.YouTube -> Unit // fork:youtube-mode
             AppScreenTab.Settings -> settingsRootActionRequests.tryEmit(Unit)
@@ -6998,9 +7002,10 @@ private fun AppTabHost(
         val settingsSelected = selectedTab == AppScreenTab.Settings
         // Live TV is its own screen, built and disposed like Settings, with HomeScreen kept behind it.
         val liveTvSelected = selectedTab == AppScreenTab.LiveTv
+        val sportsSelected = selectedTab == AppScreenTab.Sports // fork:sports - its own page, like Live TV
         val musicSelected = selectedTab == AppScreenTab.Music // fork:music - its own screen, like Live TV
         val youTubeSelected = selectedTab == AppScreenTab.YouTube // fork:youtube-mode
-        val homeHidden = settingsSelected || liveTvSelected || musicSelected || youTubeSelected
+        val homeHidden = settingsSelected || liveTvSelected || sportsSelected || musicSelected || youTubeSelected
         // The content tab HomeScreen shows; kept while Settings is up, so the hidden screen does
         // not change mode underneath it.
         var contentTab by remember {
@@ -7099,6 +7104,20 @@ private fun AppTabHost(
                     topChromePadding = topChromePadding,
                     onOpenSettings = onLiveTvSettingsClick,
                 )
+            }
+        }
+
+        if (sportsSelected) { // fork:sports
+            if (com.nuvio.app.features.sports.rememberSportsTabVisible()) {
+                tabStateHolder.SaveableStateProvider(AppScreenTab.Sports.name) {
+                    com.nuvio.app.features.sports.SportsScreen(
+                        modifier = Modifier.fillMaxSize(),
+                        topChromePadding = topChromePadding,
+                    )
+                }
+            } else {
+                // Switched off, or the last playlist was removed while it was open: nothing to show.
+                LaunchedEffect(Unit) { onNavigateToHome?.invoke() }
             }
         }
 

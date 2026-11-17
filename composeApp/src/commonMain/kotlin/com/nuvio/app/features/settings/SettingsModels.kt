@@ -9,6 +9,7 @@ import androidx.compose.material.icons.rounded.Settings
 import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.ui.graphics.vector.ImageVector
 import nuvio.composeapp.generated.resources.Res
+import nuvio.composeapp.generated.resources.sports_settings_section
 import nuvio.composeapp.generated.resources.collections_header
 import nuvio.composeapp.generated.resources.party_title
 import nuvio.composeapp.generated.resources.compose_settings_category_about
@@ -155,6 +156,12 @@ internal enum class SettingsPage(
     ),
     Iptv(
         titleRes = Res.string.iptv_settings_page,
+        category = SettingsCategory.General,
+        parentPage = Root,
+    ),
+    /** fork:sports - only present on a build launched with -Pnuvio.sports=true. */
+    Sports(
+        titleRes = Res.string.sports_settings_section,
         category = SettingsCategory.General,
         parentPage = Root,
     ),

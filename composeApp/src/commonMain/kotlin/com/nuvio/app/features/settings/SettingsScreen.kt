@@ -1,5 +1,7 @@
 package com.nuvio.app.features.settings
 
+import com.nuvio.app.features.sports.sportsSettingsContent // fork:sports
+
 import com.nuvio.app.core.ui.keyLayer
 import com.nuvio.app.core.ui.navigationKey
 import androidx.compose.material.icons.rounded.MusicNote
@@ -87,6 +89,7 @@ import androidx.compose.material.icons.rounded.Tune
 import androidx.compose.material.icons.rounded.SportsEsports
 import androidx.compose.material.icons.rounded.LiveTv
 import androidx.compose.material.icons.rounded.VideoLibrary
+import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Explore
 import androidx.compose.material.icons.rounded.Extension
 import androidx.compose.material.icons.rounded.Groups
@@ -1377,6 +1380,7 @@ private fun MobileSettingsScreen(
                     settings = gameLibrarySettings,
                 )
                 SettingsPage.Iptv -> iptvSettingsContent(isTablet = false)
+                SettingsPage.Sports -> sportsSettingsContent(isTablet = false) // fork:sports
                 SettingsPage.Screensaver -> screensaverSettingsContent(
                     isTablet = false,
                     settings = screensaverSettings,
@@ -1438,6 +1442,8 @@ private fun SettingsPage.isEnabledByFeaturePolicy(): Boolean =
         SettingsPage.Plugins -> AppFeaturePolicy.pluginsEnabled
         SettingsPage.AutoDownloads,
         SettingsPage.Downloads -> AppFeaturePolicy.downloadsEnabled
+        // fork:sports - absent entirely from a build without the feature.
+        SettingsPage.Sports -> AppFeaturePolicy.sportsEnabled
         else -> true
     }
 
@@ -2316,6 +2322,7 @@ private fun TabletSettingsScreen(
                         settings = gameLibrarySettings,
                     )
                     SettingsPage.Iptv -> iptvSettingsContent(isTablet = true)
+                    SettingsPage.Sports -> sportsSettingsContent(isTablet = true) // fork:sports
                     SettingsPage.Screensaver -> screensaverSettingsContent(
                         isTablet = true,
                         settings = screensaverSettings,
@@ -3415,6 +3422,12 @@ private fun DesktopSettingsRootNavigation(
                         onClick = onNavigateToLibrary,
                         contentDescription = stringResource(Res.string.compose_nav_library),
                         painter = painterResource(Res.drawable.sidebar_library),
+                        modifier = entryModifier,
+                    )
+                    com.nuvio.app.features.navbar.NavBarEntry.Sports -> DesktopSettingsNavIcon( // fork:sports
+                        onClick = request(entry),
+                        contentDescription = "Sports",
+                        imageVector = Icons.Rounded.EmojiEvents,
                         modifier = entryModifier,
                     )
                     com.nuvio.app.features.navbar.NavBarEntry.YouTube -> DesktopSettingsNavIcon( // fork:youtube-mode

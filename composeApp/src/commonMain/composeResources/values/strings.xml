@@ -5224,6 +5224,24 @@
     <string name="settings_backup_import_confirm">Import %1$d settings files from %2$s?</string>
     <string name="settings_backup_import_untouched">Settings the backup does not contain are left as they are.</string>
     <string name="settings_backup_read_failed">Could not read that backup: %1$s</string>
+    <!-- fork:sports -->
+    <string name="sports_page_title">Sports</string>
+    <string name="sports_page_live_now">Live now</string>
+    <string name="sports_page_coming_up">Coming up</string>
+    <string name="sports_page_no_games">No games on this date</string>
+    <string name="sports_page_on_your_channels">On your channels</string>
+    <string name="sports_settings_section">Sports</string>
+    <string name="sports_settings_show_in_nav">Show Sports in navigation</string>
+    <string name="sports_settings_show_in_nav_description">Needs a playlist under Live TV. Off hides the tab; your follows and channel picks are kept.</string>
+    <string name="sports_settings_hide_scores">Hide scores</string>
+    <string name="sports_settings_hide_scores_description">Hides scores and clocks on the Sports page, so a game you have not caught up with is not spoiled.</string>
+    <string name="sports_settings_region">Region for leagues</string>
+    <string name="sports_settings_region_description">Which leagues the Sports page offers by default. Empty takes it from your system.</string>
+    <string name="sports_settings_clear_picks">Clear channel picks</string>
+    <string name="sports_settings_clear_picks_description">Forgets every channel you picked by hand and every one you marked as wrong.</string>
+    <string name="sports_settings_backup_note">Sports settings are included in Settings › Backup.</string>
+    <string name="sports_settings_uses_livetv">Uses your Live TV playlists</string>
+    <string name="sports_settings_uses_livetv_description">Games are matched to the channels in your playlists. Add or edit them in Live TV settings.</string>
     <!-- fork:tonight -->
     <string name="live_scores_section">Live scores</string>
     <string name="live_scores_enable">Live score pop-ups</string>

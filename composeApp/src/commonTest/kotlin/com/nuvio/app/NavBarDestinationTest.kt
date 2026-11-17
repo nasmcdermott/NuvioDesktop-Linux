@@ -25,6 +25,7 @@ class NavBarDestinationTest {
             NavBarEntry.Discover to AppScreenTab.Discover,
             NavBarEntry.Library to AppScreenTab.Library,
             NavBarEntry.LiveTv to AppScreenTab.LiveTv,
+            NavBarEntry.Sports to AppScreenTab.Sports, // fork:sports
             NavBarEntry.YouTube to AppScreenTab.YouTube,
             NavBarEntry.Music to AppScreenTab.Music,
             NavBarEntry.Games to null,
