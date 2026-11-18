@@ -253,7 +253,7 @@ private fun SportsDayList(
         return
     }
 
-    if (sections.live.isEmpty() && sections.upcoming.isEmpty() && !sections.anyLoading) {
+    if (sections.live.isEmpty() && sections.upcoming.isEmpty() && sections.results.isEmpty() && !sections.anyLoading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
@@ -276,6 +276,10 @@ private fun SportsDayList(
     }
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap)) {
+        if (sections.anyError) {
+            // Without this a failed refresh looks exactly like a day with no games.
+            item { SportsStaleNote(sections.oldestFetchMs) }
+        }
         if (sections.live.isNotEmpty()) {
             item { SportsSectionHeader("LIVE NOW", sections.live.size, live = true) }
             item { SportsGameRail(sections.live, leagues, settings, hideScores, onOpenGame) }
@@ -283,6 +287,41 @@ private fun SportsDayList(
         if (sections.upcoming.isNotEmpty()) {
             item { SportsSectionHeader("COMING UP", sections.upcoming.size, live = false) }
             item { SportsGameRail(sections.upcoming, leagues, settings, hideScores, onOpenGame) }
+        }
+        if (sections.results.isNotEmpty()) {
+            item { SportsSectionHeader("RESULTS", sections.results.size, live = false) }
+            item { SportsGameRail(sections.results, leagues, settings, hideScores, onOpenGame) }
+        }
+    }
+}
+
+/**
+ * "Could not refresh · showing 12 minutes ago".
+ *
+ * The feed is unofficial and will fail; saying so beside the games it failed to replace is the
+ * difference between a stale page and a broken one.
+ */
+@Composable
+private fun SportsStaleNote(fetchedAtMs: Long) {
+    val tokens = MaterialTheme.nuvio
+    val age = remember(fetchedAtMs) { relativeAge(fetchedAtMs) }
+    Text(
+        text = if (age == null) "Could not refresh" else "Could not refresh · showing $age",
+        style = MaterialTheme.typography.labelSmall,
+        color = tokens.colors.warning,
+    )
+}
+
+/** "42 minutes ago", or null when nothing has ever been fetched. */
+internal fun relativeAge(fetchedAtMs: Long, nowMs: Long = System.currentTimeMillis()): String? {
+    if (fetchedAtMs <= 0L) return null
+    val minutes = (nowMs - fetchedAtMs).coerceAtLeast(0L) / 60_000L
+    return when {
+        minutes < 1L -> "just now"
+        minutes < 60L -> if (minutes == 1L) "1 minute ago" else "$minutes minutes ago"
+        else -> {
+            val hours = minutes / 60L
+            if (hours == 1L) "1 hour ago" else "$hours hours ago"
         }
     }
 }
@@ -342,15 +381,21 @@ private fun SportsGameRail(
 private data class DaySections(
     val live: List<SportsEvent>,
     val upcoming: List<SportsEvent>,
+    /** Finished games. A followed team's last result is the thing people open this page for. */
+    val results: List<SportsEvent>,
     val anyLoading: Boolean,
+    /** Set when any league failed; the page keeps showing whatever it already had. */
     val anyError: Boolean,
+    /** The oldest fetch among the leagues shown, for the "showing X ago" line. */
+    val oldestFetchMs: Long,
 )
 
 /**
- * Reads every league's cached state for [day] and splits it into the two sections.
+ * Reads every league's cached state for [day] and splits it into three sections.
  *
- * Finished games are left out: the page answers "what can I watch", and a game that ended this
- * morning is history the user did not ask for.
+ * Results are included rather than dropped: the page answers "what is on, and how did we do", and
+ * for a followed team the second half of that is the reason to open it. They sort last so a live
+ * game is never pushed off screen by one that finished this morning.
  */
 @Composable
 private fun collectSections(
@@ -365,13 +410,38 @@ private fun collectSections(
     }
     val allGames = states.flatMap { it.games }
         .filter { !mySportsOnly || SportsFollows.isInMySports(settings, it) }
+    val split = splitDay(allGames)
+    val fetched = states.map { it.fetchedAtMs }.filter { it > 0L }
     return DaySections(
-        live = allGames.filter { it.state == GameState.LIVE }.sortedBy { it.startMs },
-        upcoming = allGames.filter { it.state == GameState.PRE }.sortedBy { it.startMs },
+        live = split.live,
+        upcoming = split.upcoming,
+        results = split.results,
         anyLoading = states.any { it.loading },
         anyError = states.any { it.error != null },
+        oldestFetchMs = fetched.minOrNull() ?: 0L,
     )
 }
+
+/** A day's games, split into the sections the page draws. Order within each is decided here. */
+internal data class SplitDay(
+    val live: List<SportsEvent>,
+    val upcoming: List<SportsEvent>,
+    val results: List<SportsEvent>,
+) {
+    val isEmpty: Boolean get() = live.isEmpty() && upcoming.isEmpty() && results.isEmpty()
+}
+
+/**
+ * Live by kick-off, upcoming by kick-off, results most recent first.
+ *
+ * Results run backwards on purpose: the last result is the one someone opening the page wants,
+ * whereas the next game is the one they want from the other two sections.
+ */
+internal fun splitDay(games: List<SportsEvent>): SplitDay = SplitDay(
+    live = games.filter { it.state == GameState.LIVE }.sortedBy { it.startMs },
+    upcoming = games.filter { it.state == GameState.PRE }.sortedBy { it.startMs },
+    results = games.filter { it.state == GameState.POST }.sortedByDescending { it.startMs },
+)
 
 /** The way to the Sports settings page, and to Live TV once the user needs playlists. */
 @Composable
