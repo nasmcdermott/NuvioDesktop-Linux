@@ -28,19 +28,26 @@ internal object SportsWatch {
      * A user's own pick for this game outranks anything inferred, so [pickedChannelKey] is checked
      * first: if the game was given a channel by hand, that is the answer whatever the matcher says.
      */
-    fun optionsFor(event: SportsEvent, pickedChannelKey: String? = null): List<Option> {
+    fun optionsFor(
+        event: SportsEvent,
+        pickedChannelKey: String? = null,
+        blocked: Set<String> = emptySet(),
+    ): List<Option> {
         val available = SportsChannels.available()
         if (available.isEmpty()) return emptyList()
         val league = SportsCatalog.league(event.leagueId)
+        // A wrong match is worse than no match: it plays someone else's game. Anything the user
+        // marked wrong for THIS game is dropped before it can be offered again.
+        val usable = available.filterNot { blocked.contains(blockKey(event.id, it.channel.key)) }
 
         // A hand-picked channel may have been renamed or moved between playlists; search every one.
         if (pickedChannelKey != null) {
-            available.firstOrNull { it.channel.key == pickedChannelKey }?.let { picked ->
+            usable.firstOrNull { it.channel.key == pickedChannelKey }?.let { picked ->
                 return listOf(Option(picked.playlist, picked.channel, "Your pick"))
             }
         }
 
-        val byPlaylist = available.groupBy { it.playlist.id }
+        val byPlaylist = usable.groupBy { it.playlist.id }
         val options = mutableListOf<Option>()
         for ((playlistId, entries) in byPlaylist) {
             val channels = entries.map { it.channel }
@@ -54,6 +61,9 @@ internal object SportsWatch {
         return options
     }
 
+    /** The key [SportsSettings.blocked] stores for "this channel is not showing this game". */
+    fun blockKey(eventId: String, channelKey: String): String = "$eventId|$channelKey"
+
     /** Plays [option]. False when the channel turned out to have no playable URL. */
     fun play(option: Option, zapList: List<IptvChannel> = emptyList()): Boolean =
         IptvPlaybackRequests.play(option.playlist, option.channel, zapList)
@@ -62,8 +72,12 @@ internal object SportsWatch {
      * Plays the best option for [event]; the boolean is false when nothing is showing it on any of
      * the user's channels.
      */
-    fun playBest(event: SportsEvent, pickedChannelKey: String? = null): Boolean {
-        val best = optionsFor(event, pickedChannelKey).firstOrNull() ?: return false
+    fun playBest(
+        event: SportsEvent,
+        pickedChannelKey: String? = null,
+        blocked: Set<String> = emptySet(),
+    ): Boolean {
+        val best = optionsFor(event, pickedChannelKey, blocked).firstOrNull() ?: return false
         return play(best)
     }
 }

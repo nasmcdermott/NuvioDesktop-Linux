@@ -1,5 +1,33 @@
 package com.nuvio.app.features.sports
 
+import com.nuvio.app.core.ui.NuvioAsyncImage
+
+import androidx.compose.foundation.Image
+
+import androidx.compose.ui.graphics.Color
+
+import androidx.compose.ui.layout.ContentScale
+
+
+import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.size
+
+import androidx.compose.runtime.collectAsState
+
+import com.nuvio.app.core.ui.navAction
+
+import com.nuvio.app.core.ui.NavAction
+
+import androidx.compose.ui.input.key.type
+
+import androidx.compose.ui.input.key.onKeyEvent
+
+import androidx.compose.ui.input.key.key
+
+import androidx.compose.ui.input.key.KeyEventType
+
+import androidx.compose.ui.input.key.Key
+
 import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import com.nuvio.app.core.ui.requestFocusLogged
 
@@ -59,7 +87,12 @@ internal fun SportsGameDetail(
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
-    val options = remember(event.id) { SportsWatch.optionsFor(event) }
+    val settings by SportsSettingsRepository.settings.collectAsState()
+    // Re-derived whenever the user picks or blocks a channel, so the list answers immediately.
+    val picked = settings.picks[event.id]
+    val options = remember(event.id, picked, settings.blocked) {
+        SportsWatch.optionsFor(event, picked, settings.blocked)
+    }
     // The box score is a second, heavier request; it loads behind the scoreboard the card already has.
     var summary by remember(event.id) { mutableStateOf<GameSummary?>(null) }
     var summaryFailed by remember(event.id) { mutableStateOf(false) }
@@ -149,6 +182,12 @@ internal fun SportsGameDetail(
             color = tokens.colors.textPrimary,
         )
 
+        SportsUnblockRow(
+            event = event,
+            blocked = settings.blocked,
+            onUnblock = { channelKey -> SportsSettingsRepository.unblockChannel(event.id, channelKey) },
+        )
+
         if (options.isEmpty()) {
             // Say what is missing rather than showing an empty list: the usual cause is no guide,
             // which is a fixable thing in Live TV settings.
@@ -161,7 +200,20 @@ internal fun SportsGameDetail(
         } else {
             LazyColumn(verticalArrangement = Arrangement.spacedBy(tokens.spacing.listGap)) {
                 items(options, key = { "${it.playlist.id}:${it.channel.key}" }) { option ->
-                    SportsChannelOption(option) { SportsWatch.play(option) }
+                    SportsChannelOption(
+                        option = option,
+                        isPick = picked != null && picked == option.channel.key,
+                        onPlay = { SportsWatch.play(option) },
+                        onMakePick = { SportsSettingsRepository.setPick(event.id, option.channel.key) },
+                        // Blocking also drops it as the pick: keeping a pick pointing at a channel
+                        // the user just called wrong would put it straight back at the top.
+                        onBlock = {
+                            SportsSettingsRepository.blockChannel(event.id, option.channel.key)
+                            if (picked == option.channel.key) {
+                                SportsSettingsRepository.setPick(event.id, null)
+                            }
+                        },
+                    )
                 }
             }
         }
@@ -214,6 +266,36 @@ private fun SportsScoreTeam(side: GameSide, hideScores: Boolean, modifier: Modif
         horizontalAlignment = Alignment.CenterHorizontally,
         verticalArrangement = Arrangement.spacedBy(2.dp),
     ) {
+        // The crest, with the abbreviation behind it: one game on screen, so a decode or two is
+        // nothing, and a fallback that is already drawn means a slow or missing logo cannot leave
+        // a hole where the team should be.
+        Box(
+            modifier = Modifier.size(48.dp),
+            contentAlignment = Alignment.Center,
+        ) {
+            Box(
+                modifier = Modifier
+                    .fillMaxSize()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(side.team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
+                contentAlignment = Alignment.Center,
+            ) {
+                Text(
+                    text = side.team.abbreviation.take(4),
+                    style = MaterialTheme.typography.labelMedium,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
+            side.team.logo?.let { logo ->
+                NuvioAsyncImage(
+                    model = logo,
+                    contentDescription = null,
+                    modifier = Modifier.size(48.dp),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        }
         Text(
             text = side.team.shortName.ifBlank { side.team.name },
             style = MaterialTheme.typography.titleMedium,
@@ -230,7 +312,13 @@ private fun SportsScoreTeam(side: GameSide, hideScores: Boolean, modifier: Modif
 
 /** One channel that is showing the game. Clicking it plays it. */
 @Composable
-private fun SportsChannelOption(option: SportsWatch.Option, onPlay: () -> Unit) {
+private fun SportsChannelOption(
+    option: SportsWatch.Option,
+    isPick: Boolean,
+    onPlay: () -> Unit,
+    onMakePick: () -> Unit,
+    onBlock: () -> Unit,
+) {
     val tokens = MaterialTheme.nuvio
     var focused by remember { mutableStateOf(false) }
     Row(
@@ -240,7 +328,11 @@ private fun SportsChannelOption(option: SportsWatch.Option, onPlay: () -> Unit) 
             .background(if (focused) tokens.colors.focusBackground else tokens.colors.surfaceCard)
             .border(
                 tokens.borders.hairline,
-                if (focused) tokens.colors.borderFocus else tokens.colors.borderSubtle,
+                when {
+                    isPick -> tokens.colors.borderSelected
+                    focused -> tokens.colors.borderFocus
+                    else -> tokens.colors.borderSubtle
+                },
                 tokens.shapes.compactCard,
             )
             .onFocusChanged { focused = it.isFocused }
@@ -253,7 +345,7 @@ private fun SportsChannelOption(option: SportsWatch.Option, onPlay: () -> Unit) 
             Text(
                 text = option.channel.name.ifBlank { "Channel ${option.channel.num}" },
                 style = MaterialTheme.typography.bodyMedium,
-                fontWeight = FontWeight.Medium,
+                fontWeight = if (isPick) FontWeight.SemiBold else FontWeight.Medium,
                 color = tokens.colors.textPrimary,
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
@@ -266,14 +358,78 @@ private fun SportsChannelOption(option: SportsWatch.Option, onPlay: () -> Unit) 
                 overflow = TextOverflow.Ellipsis,
             )
         }
-        Text(
-            text = "Watch",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = if (focused) tokens.colors.accent else tokens.colors.textSecondary,
-        )
+        // Fix match. Two deliberate verbs, not a menu: "this is the one" and "this is wrong".
+        // Both are small and stay out of the way of Watch, which is what the row is usually for.
+        if (!isPick) {
+            SportsInlineAction("This one", onMakePick)
+        }
+        SportsInlineAction("Wrong", onBlock)
+        SportsInlineAction("Watch", onPlay, emphasise = true)
     }
 }
+
+/**
+ * A small text action beside the channel row. Its own focus stop so a pad can reach it, and it
+ * names the game it is about through the row it sits in, so no extra labelling is needed.
+ */
+@Composable
+private fun SportsInlineAction(label: String, onClick: () -> Unit, emphasise: Boolean = false) {
+    val tokens = MaterialTheme.nuvio
+    var focused by remember { mutableStateOf(false) }
+    Text(
+        text = label,
+        style = MaterialTheme.typography.labelLarge,
+        fontWeight = if (emphasise) FontWeight.SemiBold else FontWeight.Normal,
+        color = when {
+            focused -> tokens.colors.accent
+            emphasise -> tokens.colors.textPrimary
+            else -> tokens.colors.textSecondary
+        },
+        modifier = Modifier
+            .clip(tokens.shapes.chip)
+            .focusable()
+            .onKeyEvent { event ->
+                val activates = event.navAction() == NavAction.Select || event.key == Key.Spacebar
+                when {
+                    !activates -> false
+                    event.type == KeyEventType.KeyDown -> true
+                    event.type == KeyEventType.KeyUp -> { onClick(); true }
+                    else -> true
+                }
+            }
+            .onFocusChanged { focused = it.isFocused }
+            .clickable(onClick = onClick)
+            .padding(horizontal = tokens.spacing.controlGap, vertical = 2.dp),
+    )
+}
+
+/**
+ * "Wrong" hides the channel for this game only, so the list needs a way back. Shown above the
+ * options whenever anything is blocked for this game.
+ */
+@Composable
+private fun SportsUnblockRow(
+    event: SportsEvent,
+    blocked: Set<String>,
+    onUnblock: (String) -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    val mine = blocked.mapNotNull { key ->
+        val id = key.substringBefore('|')
+        if (id != event.id) null else key.substringAfter('|')
+    }
+    if (mine.isEmpty()) return
+    Text(
+        text = "Hidden for this game: ${mine.size}. Long-press a channel in Live TV to rename it, " +
+            "or use Reset below.",
+        style = MaterialTheme.typography.labelSmall,
+        color = tokens.colors.textMuted,
+    )
+    SportsInlineAction("Reset hidden channels", {
+        mine.forEach(onUnblock)
+    })
+}
+
 
 /** Back out of the detail view; keyboard users have Escape/Back, this is for the pointer. */
 @Composable
