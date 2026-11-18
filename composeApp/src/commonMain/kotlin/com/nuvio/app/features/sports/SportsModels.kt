@@ -139,9 +139,36 @@ data class ScoringPlay(
     val homeScore: String? = null,
 )
 
+/** One numbered statistic of a team ("Total Yards", "3rd down efficiency"): label plus display text. */
+@Serializable
+data class TeamStat(val label: String, val value: String, val category: String? = null)
+
+/** A stat line for one player. [headline] is the provider's own summary of them. */
+@Serializable
+data class PlayerStat(
+    val name: String,
+    val position: String? = null,
+    val headline: String? = null,
+    val stats: List<StandingValue> = emptyList(),
+)
+
+/**
+ * One stat category of a game — "Passing", "Rushing", "Turnovers". Each holds both teams' players,
+ * because a box score reads across the two sides rather than down one.
+ */
+@Serializable
+data class StatCategory(
+    val name: String,
+    val players: List<PlayerStat> = emptyList(),
+)
+
 /**
  * A game's detail payload. Fetched on demand, not with the scoreboard: most games are never opened,
  * and this is the expensive call.
+ *
+ * [teamStats] and [categories] are what a viewer actually reads after a game: touchdowns, turnovers,
+ * possession, then who threw for what. Both are optional — the provider sends neither for every
+ * league, and a widget that never gets them must still draw.
  */
 @Serializable
 data class GameSummary(
@@ -149,4 +176,22 @@ data class GameSummary(
     val scoring: List<ScoringPlay> = emptyList(),
     val standings: List<Standing> = emptyList(),
     val venue: String? = null,
+    /** Both teams' comparison numbers, away first. */
+    val teamStats: List<TeamStatPair> = emptyList(),
+    /** Per-player categories (passing, rushing, receiving…), in the provider's order. */
+    val categories: List<StatCategory> = emptyList(),
+)
+
+/**
+ * One comparison row of the team-stat block: a label and both sides' values, so the UI can draw the
+ * familiar away / label / home three columns without knowing which stat it is.
+ */
+@Serializable
+data class TeamStatPair(
+    val label: String,
+    val away: String,
+    val home: String,
+    /** Higher is better for both sides, or null when the stat is neutral (turnovers can be either). */
+    val awayLeads: Boolean = false,
+    val homeLeads: Boolean = false,
 )

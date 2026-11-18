@@ -65,12 +65,15 @@ internal class EspnSportsFeed(
         val root = fetchObject("${ESPN}${league.path}/summary?event=$eventId")
             ?: return GameSummary(eventId)
         val header = root["header"]?.jsonObject
+        val boxscore = root["boxscore"]?.jsonObjectOrNull()
         return GameSummary(
             eventId = eventId,
             scoring = scoringPlays(root["scoringPlays"]?.asArray() ?: JsonArray(emptyList())),
             standings = standingsOf(header),
             venue = header?.get("competitions")?.asArray()?.firstOrNull()?.jsonObject
                 ?.get("venue")?.jsonObject?.get("fullName")?.stringOrNull(),
+            teamStats = teamStats(boxscore),
+            categories = statCategories(boxscore),
         )
     }
 
@@ -209,6 +212,86 @@ internal class EspnSportsFeed(
                 }.orEmpty(),
             )
         }
+    }
+
+    /**
+     * The team-stat comparison block.
+     *
+     * The provider sends `boxscore.teams` as two entries, each with a `statistics` array; the rows
+     * are joined on the stat's `name` so both sides line up even when one is missing a stat the
+     * other has. Order follows the away team's list, which is the reading order of a box score.
+     */
+    private fun teamStats(boxscore: JsonObject?): List<TeamStatPair> {
+        val teams = boxscore?.get("teams")?.asArray() ?: return emptyList()
+        if (teams.size < 2) return emptyList()
+        fun statsOf(index: Int): Map<String, String> =
+            teams.getOrNull(index)?.jsonObjectOrNull()
+                ?.get("statistics")?.asArray()
+                ?.mapNotNull { entry ->
+                    val obj = entry.jsonObjectOrNull() ?: return@mapNotNull null
+                    val name = obj["name"]?.stringOrNull() ?: obj["label"]?.stringOrNull() ?: return@mapNotNull null
+                    name to (obj["displayValue"]?.stringOrNull() ?: return@mapNotNull null)
+                }
+                ?.toMap()
+                .orEmpty()
+
+        val away = statsOf(0)
+        val home = statsOf(1)
+        return away.map { (name, awayValue) ->
+            val homeValue = home[name] ?: "—"
+            TeamStatPair(
+                label = name.replaceFirstChar { it.uppercase() },
+                away = awayValue,
+                home = homeValue,
+                // Numeric comparisons only; a "3rd down efficiency" string cannot be ordered sensibly.
+                awayLeads = numeric(awayValue) != null && numeric(homeValue) != null &&
+                    numeric(awayValue)!! > numeric(homeValue)!!,
+                homeLeads = numeric(awayValue) != null && numeric(homeValue) != null &&
+                    numeric(homeValue)!! > numeric(awayValue)!!,
+            )
+        }
+    }
+
+    /** "45% (3/7)" and "312" parse; "—" and "10:32" do not, which is the intent. */
+    private fun numeric(value: String): Double? =
+        value.substringBefore('(').trim().removeSuffix("%").toDoubleOrNull()
+
+    /** Per-player categories: "Passing", "Rushing", "Turnovers"… each with both sides' players. */
+    private fun statCategories(boxscore: JsonObject?): List<StatCategory> {
+        val players = boxscore?.get("players")?.asArray() ?: return emptyList()
+        return players.mapNotNull { teamEntry ->
+            val teamObj = teamEntry.jsonObjectOrNull() ?: return@mapNotNull null
+            teamObj["statistics"]?.asArray()?.mapNotNull { statEntry ->
+                val statObj = statEntry.jsonObjectOrNull() ?: return@mapNotNull null
+                val name = statObj["name"]?.stringOrNull()
+                    ?: statObj["type"]?.stringOrNull()
+                    ?: return@mapNotNull null
+                val rows = statObj["athletes"]?.asArray() ?: return@mapNotNull null
+                val lines = rows.mapNotNull { athleteEntry ->
+                    val athleteObj = athleteEntry.jsonObjectOrNull() ?: return@mapNotNull null
+                    val athleteName = athleteObj["athlete"]?.jsonObjectOrNull()?.get("displayName")?.stringOrNull()
+                        ?: return@mapNotNull null
+                    PlayerStat(
+                        name = athleteName,
+                        position = athleteObj["athlete"]?.jsonObjectOrNull()?.get("position")
+                            ?.jsonObjectOrNull()?.get("abbreviation")?.stringOrNull(),
+                        headline = run {
+                            val parts = athleteObj["stats"]?.asArray()?.map { element ->
+                                element.stringOrNull().orEmpty()
+                            } ?: emptyList()
+                            parts.filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }
+                        },
+                        stats = athleteObj["stats"]?.asArray()?.map { element ->
+                            StandingValue("", element.stringOrNull().orEmpty())
+                        }.orEmpty(),
+                    )
+                }
+                if (lines.isEmpty()) null else StatCategory(name.replaceFirstChar { it.uppercase() }, lines)
+            }.orEmpty()
+        }.flatten()
+            // The same category arrives once per team; fold them so "Passing" holds both sides.
+            .groupBy { it.name }
+            .map { (name, group) -> StatCategory(name, group.flatMap { it.players }) }
     }
 
     private suspend fun fetchObject(url: String): JsonObject? = try {

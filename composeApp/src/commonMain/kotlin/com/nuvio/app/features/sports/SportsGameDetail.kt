@@ -18,6 +18,7 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -28,6 +29,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.nuvio
@@ -49,6 +51,14 @@ internal fun SportsGameDetail(
 ) {
     val tokens = MaterialTheme.nuvio
     val options = remember(event.id) { SportsWatch.optionsFor(event) }
+    // The box score is a second, heavier request; it loads behind the scoreboard the card already has.
+    var summary by remember(event.id) { mutableStateOf<GameSummary?>(null) }
+    var summaryFailed by remember(event.id) { mutableStateOf(false) }
+    LaunchedEffect(event.id) {
+        val loaded = SportsRepository.summary(event.leagueId, event.id)
+        summary = loaded
+        summaryFailed = loaded == null
+    }
 
     Column(
         modifier = modifier
@@ -67,6 +77,44 @@ internal fun SportsGameDetail(
         }
 
         SportsScoreboard(event, hideScores)
+
+        // Team comparison and the scoring summary, then who did what.
+        summary?.let { loaded ->
+            if (loaded.teamStats.isNotEmpty()) {
+                Text(
+                    text = "Team stats",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+                SportsTeamStats(loaded.teamStats, event)
+            }
+            if (loaded.scoring.isNotEmpty()) {
+                Text(
+                    text = "Scoring",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+                SportsScoringPlays(loaded.scoring)
+            }
+            if (loaded.categories.isNotEmpty()) {
+                Text(
+                    text = "Player stats",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+                SportsPlayerStats(loaded.categories)
+            }
+        }
+        if (summaryFailed) {
+            Text(
+                text = "Stats are not available for this game.",
+                style = MaterialTheme.typography.bodySmall,
+                color = tokens.colors.textMuted,
+            )
+        }
 
         Text(
             text = when {
@@ -264,6 +312,152 @@ internal fun SportsSectionHeader(
                 style = MaterialTheme.typography.labelSmall,
                 color = tokens.colors.textMuted,
             )
+        }
+    }
+}
+
+/**
+ * Away / label / home, the row shape a box score is read in.
+ *
+ * The leading side is emphasised rather than bar-charted: a bar for "3rd down efficiency" and a bar
+ * for "Total yards" would imply a shared scale they do not have.
+ */
+@Composable
+private fun SportsTeamStats(stats: List<TeamStatPair>, event: SportsEvent) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(tokens.shapes.card)
+            .background(tokens.colors.surfaceCard)
+            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
+            .padding(tokens.spacing.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+            Text(
+                text = event.away.team.shortName,
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+                modifier = Modifier.weight(1f),
+            )
+            Text(
+                text = event.home.team.shortName,
+                style = MaterialTheme.typography.labelSmall,
+                color = tokens.colors.textMuted,
+                modifier = Modifier.weight(1f),
+            )
+        }
+        stats.forEach { stat ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                Text(
+                    text = stat.away,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (stat.awayLeads) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (stat.awayLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                Text(
+                    text = stat.label,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                    modifier = Modifier.weight(1.4f),
+                    textAlign = TextAlign.Center,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                Text(
+                    text = stat.home,
+                    style = MaterialTheme.typography.bodySmall,
+                    fontWeight = if (stat.homeLeads) FontWeight.SemiBold else FontWeight.Normal,
+                    color = if (stat.homeLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
+                    modifier = Modifier.weight(1f),
+                    textAlign = TextAlign.End,
+                )
+            }
+        }
+    }
+}
+
+/** The scoring summary: period, clock, what happened, and the score it made. */
+@Composable
+private fun SportsScoringPlays(plays: List<ScoringPlay>) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(tokens.shapes.card)
+            .background(tokens.colors.surfaceCard)
+            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
+            .padding(tokens.spacing.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        plays.forEach { play ->
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.Top) {
+                Text(
+                    text = listOfNotNull(play.period, play.clock).joinToString(" · "),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                    modifier = Modifier.widthIn(min = 72.dp),
+                )
+                Text(
+                    text = play.text,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textSecondary,
+                    modifier = Modifier.weight(1f),
+                )
+                if (play.awayScore != null && play.homeScore != null) {
+                    Text(
+                        text = "${play.awayScore}–${play.homeScore}",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                    )
+                }
+            }
+        }
+    }
+}
+
+/** Per-player categories: a heading, then each player's own line. */
+@Composable
+private fun SportsPlayerStats(categories: List<StatCategory>) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(tokens.shapes.card)
+            .background(tokens.colors.surfaceCard)
+            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
+            .padding(tokens.spacing.cardPadding),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        categories.forEach { category ->
+            Text(
+                text = category.name,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.SemiBold,
+                color = tokens.colors.textPrimary,
+            )
+            category.players.forEach { player ->
+                Row(Modifier.fillMaxWidth()) {
+                    Text(
+                        text = listOfNotNull(player.name, player.position).joinToString(" · "),
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textSecondary,
+                        modifier = Modifier.weight(1f),
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    if (player.headline != null) {
+                        Text(
+                            text = player.headline,
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textMuted,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
         }
     }
 }
