@@ -8,6 +8,8 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.foundation.lazy.LazyListScope
+import com.nuvio.app.features.settings.SettingsActionRow
+import com.nuvio.app.features.settings.SettingsGlassButton
 import com.nuvio.app.features.settings.SettingsGroup
 import com.nuvio.app.features.settings.SettingsGroupDivider
 import com.nuvio.app.features.settings.SettingsSectionNote
@@ -42,6 +44,23 @@ internal fun LazyListScope.sportsSettingsContent(isTablet: Boolean) {
                     isTablet = isTablet,
                     onCheckedChange = SportsSettingsRepository::setHideScores,
                 )
+                SettingsGroupDivider(isTablet = isTablet)
+                // fork:sports - the follows live in the picker; this row is the way in and a summary.
+                var pickerOpen by remember { mutableStateOf(false) }
+                SettingsActionRow(
+                    title = "Followed teams and leagues",
+                    description = when (val followed = com.nuvio.app.features.sports.SportsFollows.count(settings)) {
+                        0 -> "Nothing followed yet. Followed games lead the Sports page."
+                        1 -> "1 followed."
+                        else -> "$followed followed."
+                    },
+                    isTablet = isTablet,
+                ) {
+                    SettingsGlassButton(text = "Choose", onClick = { pickerOpen = true })
+                }
+                if (pickerOpen) {
+                    com.nuvio.app.features.sports.SportsFollowPicker(onDismiss = { pickerOpen = false })
+                }
                 SettingsGroupDivider(isTablet = isTablet)
                 SettingsSwitchRow(
                     title = "Clear channel picks",

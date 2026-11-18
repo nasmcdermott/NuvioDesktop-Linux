@@ -45,6 +45,8 @@ internal fun SportsGameCard(
     event: SportsEvent,
     league: League?,
     hideScores: Boolean,
+    /** True when a followed team is playing, so the card says why it is here. */
+    followed: Boolean = false,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -76,8 +78,8 @@ internal fun SportsGameCard(
             modifier = Modifier.weight(1f),
             verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         ) {
-            SportsTeamRow(event.away, hideScores, event.state)
-            SportsTeamRow(event.home, hideScores, event.state)
+            SportsTeamRow(event.away, hideScores, event.state, followed)
+            SportsTeamRow(event.home, hideScores, event.state, followed)
             SportsGameFooter(event)
         }
         Spacer(Modifier.width(tokens.spacing.controlGap))
@@ -91,7 +93,7 @@ internal fun SportsGameCard(
 
 /** One side of the card: logo, name, score. */
 @Composable
-private fun SportsTeamRow(side: GameSide, hideScores: Boolean, state: GameState) {
+private fun SportsTeamRow(side: GameSide, hideScores: Boolean, state: GameState, followed: Boolean) {
     val tokens = MaterialTheme.nuvio
     val dimmed = state == GameState.POST && !side.winner
     Row(verticalAlignment = Alignment.CenterVertically) {
@@ -99,7 +101,8 @@ private fun SportsTeamRow(side: GameSide, hideScores: Boolean, state: GameState)
         Spacer(Modifier.width(tokens.spacing.controlGap))
         Column(Modifier.weight(1f)) {
             Text(
-                text = side.team.shortName.ifBlank { side.team.name },
+                // A followed team's name carries a star, so My Sports rows explain themselves.
+                text = (if (followed) "★ " else "") + side.team.shortName.ifBlank { side.team.name },
                 style = MaterialTheme.typography.bodyMedium,
                 fontWeight = if (state == GameState.POST && side.winner) FontWeight.SemiBold else FontWeight.Normal,
                 color = if (dimmed) tokens.colors.textSecondary else tokens.colors.textPrimary,

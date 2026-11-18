@@ -33,6 +33,15 @@ data class SportsSettings(
     val picks: Map<String, String> = emptyMap(),
     /** "eventId|channelKey" the user said is NOT showing that game. */
     val blocked: Set<String> = emptySet(),
+    /** Teams the viewer follows, as "leagueId:teamId" — see [SportsFollows.teamKey]. */
+    val followedTeams: Set<String> = emptySet(),
+    /** Leagues the viewer follows. A followed league shows all of its games, teams followed or not. */
+    val followedLeagues: Set<String> = emptySet(),
+    /**
+     * Whether the follow picker has been offered once. Kept apart from "is anything followed" so
+     * that someone who deliberately followed nothing is not asked again on every launch.
+     */
+    val setUp: Boolean = false,
 )
 
 private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
@@ -85,6 +94,26 @@ internal object SportsSettingsRepository {
     }
 
     fun clearPicks() = mutate { it.copy(picks = emptyMap(), blocked = emptySet()) }
+
+    fun setTeamFollowed(teamKey: String, followed: Boolean) = mutate { current ->
+        current.copy(
+            followedTeams = if (followed) current.followedTeams + teamKey else current.followedTeams - teamKey,
+        )
+    }
+
+    fun setLeagueFollowed(leagueId: String, followed: Boolean) = mutate { current ->
+        current.copy(
+            followedLeagues = if (followed) current.followedLeagues + leagueId else current.followedLeagues - leagueId,
+        )
+    }
+
+    /** Marks the picker as offered, so it never opens by itself again. */
+    fun markSetUp() {
+        if (_settings.value.setUp) return
+        mutate { it.copy(setUp = true) }
+    }
+
+    fun clearFollows() = mutate { it.copy(followedTeams = emptySet(), followedLeagues = emptySet()) }
 
     fun replaceForBackup(settings: SportsSettings) {
         _settings.value = settings

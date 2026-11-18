@@ -63,9 +63,22 @@ internal fun SportsScreen(
     var selectedDay by rememberSaveable { mutableStateOf(days.firstOrNull { it.label == "Today" }?.day ?: days.getOrNull(3)?.day ?: "") }
     var selectedSport by rememberSaveable { mutableStateOf<String?>(null) }
     var openGameId by rememberSaveable { mutableStateOf<String?>(null) }
+    // null = All events; true = My Sports. Saveable so it survives a tab switch like the day does.
+    var mySportsOnly by rememberSaveable { mutableStateOf(false) }
+    var pickerOpen by rememberSaveable { mutableStateOf(false) }
     val screenFocus = remember { FocusRequester() }
+    val settings by SportsSettingsRepository.settings.collectAsState()
 
-    val leagues = remember { SportsCatalog.leaguesIn(null) }
+    // Offered once, on the first ever open with nothing followed. Afterwards an empty My Sports
+    // shows a card instead, so a viewer who deliberately follows nothing is not asked each launch.
+    LaunchedEffect(Unit) {
+        if (!settings.setUp && SportsFollows.isEmpty(settings)) {
+            pickerOpen = true
+            SportsSettingsRepository.markSetUp()
+        }
+    }
+
+    val leagues = remember { SportsCatalog.leaguesIn(settings.region.ifBlank { null }) }
     val sports = remember(leagues) { SportsCatalog.sportsOf(leagues) }
     val sport = selectedSport?.let { name -> sports.firstOrNull { it.name == name } }
     val visibleLeagues = remember(leagues, sport) {
@@ -128,10 +141,14 @@ internal fun SportsScreen(
                 SportsSettingsLink(onClick = onOpenSettings)
             }
 
-            SportsSportChips(
+            SportsPageChips(
+                mySportsOnly = mySportsOnly,
+                followedCount = SportsFollows.count(settings),
                 sports = sports,
                 selected = sport,
                 onSelect = { selectedSport = it?.name },
+                onToggleMySports = { mySportsOnly = !mySportsOnly; openGameId = null },
+                onOpenPicker = { pickerOpen = true },
             )
 
             SportsDateStrip(
@@ -144,14 +161,73 @@ internal fun SportsScreen(
                 SportsGameDetail(
                     event = openGame.first,
                     league = openGame.second,
-                    hideScores = false,
+                    hideScores = settings.hideScores,
                     onBack = { openGameId = null },
                 )
             } else {
                 SportsDayList(
                     day = selectedDay,
                     leagues = visibleLeagues,
+                    settings = settings,
+                    mySportsOnly = mySportsOnly,
+                    hideScores = settings.hideScores,
                     onOpenGame = { openGameId = it },
+                    onOpenPicker = { pickerOpen = true },
+                )
+            }
+        }
+
+        if (pickerOpen) {
+            SportsFollowPicker(
+                onDismiss = {
+                    pickerOpen = false
+                    // Dismissing counts as having been offered, so it never reopens by itself.
+                    SportsSettingsRepository.markSetUp()
+                },
+            )
+        }
+    }
+}
+
+/**
+ * The pill row: My Sports, then All events, then the sports.
+ *
+ * My Sports leads because it is the reason someone follows things; All events sits beside it so the
+ * way back out is always one press away.
+ */
+@Composable
+private fun SportsPageChips(
+    mySportsOnly: Boolean,
+    followedCount: Int,
+    sports: List<Sport>,
+    selected: Sport?,
+    onSelect: (Sport?) -> Unit,
+    onToggleMySports: () -> Unit,
+    onOpenPicker: () -> Unit,
+) {
+    val tokens = MaterialTheme.nuvio
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        SportsChip(
+            label = if (followedCount == 0) "★ My Sports" else "★ My Sports ($followedCount)",
+            selected = mySportsOnly,
+            onClick = onToggleMySports,
+        )
+        SportsChip(
+            label = "All events",
+            selected = !mySportsOnly,
+            onClick = { if (mySportsOnly) onToggleMySports() },
+        )
+        SportsChip(label = "Follow…", selected = false, onClick = onOpenPicker)
+        LazyRow(horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap)) {
+            items(sports, key = { it.name }) { sport ->
+                SportsChip(
+                    label = sport.label,
+                    selected = sport == selected,
+                    onClick = { onSelect(if (sport == selected) null else sport) },
                 )
             }
         }
@@ -163,21 +239,34 @@ internal fun SportsScreen(
 private fun SportsDayList(
     day: String,
     leagues: List<League>,
+    settings: SportsSettings,
+    mySportsOnly: Boolean,
+    hideScores: Boolean,
     onOpenGame: (String) -> Unit,
+    onOpenPicker: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    val sections = collectSections(leagues, day)
+    val sections = collectSections(leagues, day, settings, mySportsOnly)
+
+    if (mySportsOnly && SportsFollows.isEmpty(settings)) {
+        SportsFollowPrompt(onOpenPicker)
+        return
+    }
 
     if (sections.live.isEmpty() && sections.upcoming.isEmpty() && !sections.anyLoading) {
         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
             Column(horizontalAlignment = Alignment.CenterHorizontally) {
                 Text(
-                    text = "No games on this date",
+                    text = if (mySportsOnly) "None of your teams play on this date" else "No games on this date",
                     style = MaterialTheme.typography.titleMedium,
                     color = tokens.colors.textPrimary,
                 )
                 Text(
-                    text = if (sections.anyError) "Some leagues could not be reached." else "Try another day.",
+                    text = when {
+                        sections.anyError -> "Some leagues could not be reached."
+                        mySportsOnly -> "Try another day, or follow more teams."
+                        else -> "Try another day."
+                    },
                     style = MaterialTheme.typography.bodyMedium,
                     color = tokens.colors.textMuted,
                 )
@@ -188,20 +277,36 @@ private fun SportsDayList(
 
     LazyColumn(verticalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap)) {
         if (sections.live.isNotEmpty()) {
-            item {
-                SportsSectionHeader("LIVE NOW", sections.live.size, live = true)
-            }
-            item {
-                SportsGameRail(sections.live, leagues, onOpenGame)
-            }
+            item { SportsSectionHeader("LIVE NOW", sections.live.size, live = true) }
+            item { SportsGameRail(sections.live, leagues, settings, hideScores, onOpenGame) }
         }
         if (sections.upcoming.isNotEmpty()) {
-            item {
-                SportsSectionHeader("COMING UP", sections.upcoming.size, live = false)
-            }
-            item {
-                SportsGameRail(sections.upcoming, leagues, onOpenGame)
-            }
+            item { SportsSectionHeader("COMING UP", sections.upcoming.size, live = false) }
+            item { SportsGameRail(sections.upcoming, leagues, settings, hideScores, onOpenGame) }
+        }
+    }
+}
+
+/** An empty My Sports that explains itself and offers the one action that fixes it. */
+@Composable
+private fun SportsFollowPrompt(onOpenPicker: () -> Unit) {
+    val tokens = MaterialTheme.nuvio
+    Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
+        Column(
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+        ) {
+            Text(
+                text = "Nothing followed yet",
+                style = MaterialTheme.typography.titleMedium,
+                color = tokens.colors.textPrimary,
+            )
+            Text(
+                text = "Follow teams and leagues to have their games lead this page.",
+                style = MaterialTheme.typography.bodyMedium,
+                color = tokens.colors.textMuted,
+            )
+            SportsChip(label = "Follow teams and leagues", selected = true, onClick = onOpenPicker)
         }
     }
 }
@@ -211,6 +316,8 @@ private fun SportsDayList(
 private fun SportsGameRail(
     games: List<SportsEvent>,
     leagues: List<League>,
+    settings: SportsSettings,
+    hideScores: Boolean,
     onOpenGame: (String) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -223,7 +330,8 @@ private fun SportsGameRail(
             SportsGameCard(
                 event = game,
                 league = byId[game.leagueId],
-                hideScores = false,
+                hideScores = hideScores,
+                followed = SportsFollows.isFollowedTeamGame(settings, game),
                 onClick = { onOpenGame(game.id) },
             )
         }
@@ -245,12 +353,18 @@ private data class DaySections(
  * morning is history the user did not ask for.
  */
 @Composable
-private fun collectSections(leagues: List<League>, day: String): DaySections {
+private fun collectSections(
+    leagues: List<League>,
+    day: String,
+    settings: SportsSettings,
+    mySportsOnly: Boolean,
+): DaySections {
     val states = leagues.map { league ->
         val state by remember(league.id, day) { SportsRepository.dayState(league.id, day) }.collectAsState()
         state
     }
     val allGames = states.flatMap { it.games }
+        .filter { !mySportsOnly || SportsFollows.isInMySports(settings, it) }
     return DaySections(
         live = allGames.filter { it.state == GameState.LIVE }.sortedBy { it.startMs },
         upcoming = allGames.filter { it.state == GameState.PRE }.sortedBy { it.startMs },

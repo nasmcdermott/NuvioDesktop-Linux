@@ -55,7 +55,7 @@ internal fun SportsSportChips(
 }
 
 @Composable
-private fun SportsChip(label: String, selected: Boolean, onClick: () -> Unit) {
+internal fun SportsChip(label: String, selected: Boolean, onClick: () -> Unit) {
     val tokens = MaterialTheme.nuvio
     var focused by remember { mutableStateOf(false) }
     val shape = tokens.shapes.chip
