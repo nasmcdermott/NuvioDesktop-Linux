@@ -249,7 +249,7 @@ private fun SportsPageChips(
             // so Down from the filters never reached the cards. That is the one case the shared
             // arrow helper cannot cover, because the key is answered inside this row.
             .onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onDown()
+                event.type == KeyEventType.KeyDown && event.navigationKey() == Key.DirectionDown && onDown()
             },
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         verticalAlignment = Alignment.CenterVertically,

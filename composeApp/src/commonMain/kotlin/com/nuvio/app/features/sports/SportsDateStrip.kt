@@ -31,6 +31,7 @@ import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
+import com.nuvio.app.core.ui.navigationKey
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
@@ -97,7 +98,7 @@ internal fun SportsDateStrip(
             // inside such a strip turns Down into a click on the pill. Down has to mean "go on to
             // the games" here, so it is answered before the pill sees it.
             .onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onDown()
+                event.type == KeyEventType.KeyDown && event.navigationKey() == Key.DirectionDown && onDown()
             },
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         verticalAlignment = Alignment.CenterVertically,
