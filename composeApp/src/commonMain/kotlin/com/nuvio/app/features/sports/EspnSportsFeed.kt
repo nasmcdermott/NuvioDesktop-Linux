@@ -97,9 +97,15 @@ internal class EspnSportsFeed(
                         note = obj["note"]?.jsonObject?.get("description")?.stringOrNull(),
                         values = obj["stats"]?.asArray()?.mapNotNull { stat ->
                             val statObj = stat.jsonObjectOrNull() ?: return@mapNotNull null
-                            val label = statObj["shortName"]?.stringOrNull()
+                            // abbreviation ("W", "L", "PCT", "GB") is the column heading a table
+                            // wants; the raw name ("winPercent") is camelCase API spelling, and
+                            // displayName ("Win Percentage") is too wide for a column.
+                            val label = statObj["abbreviation"]?.stringOrNull()
+                                ?: statObj["shortName"]?.stringOrNull()
                                 ?: statObj["name"]?.stringOrNull() ?: return@mapNotNull null
-                            StandingValue(label, statObj["displayValue"]?.stringOrNull().orEmpty())
+                            val value = statObj["displayValue"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+                                ?: return@mapNotNull null
+                            StandingValue(label, value)
                         }.orEmpty(),
                     )
                 }

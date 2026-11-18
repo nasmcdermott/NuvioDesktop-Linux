@@ -284,4 +284,32 @@ class EspnSportsFeedParsingTest {
         assertEquals(listOf("bad", "good"), games.map { it.id })
         assertEquals(0L, games.first { it.id == "bad" }.startMs)
     }
+
+    @Test
+    fun `standings are read through the division nesting, with abbreviations as headings`() = runBlocking {
+        // Shape taken from the live NFL endpoint: the table hangs off children -> children ->
+        // standings.entries, and every stat carries an abbreviation the table uses as a heading.
+        val body = """
+            {"children":[{"name":"AFC","children":[{"name":"AFC East","standings":{"entries":[
+              {"team":{"id":"2","displayName":"Buffalo Bills","shortDisplayName":"Bills","abbreviation":"BUF"},
+               "stats":[
+                 {"name":"wins","abbreviation":"W","displayValue":"8"},
+                 {"name":"losses","abbreviation":"L","displayValue":"1"},
+                 {"name":"ties","abbreviation":"T","displayValue":"0"},
+                 {"name":"winPercent","abbreviation":"PCT","displayValue":".889"},
+                 {"name":"differential","abbreviation":"DIFF","displayValue":"+88"},
+                 {"name":"pointsFor","abbreviation":"PF","displayValue":"287"},
+                 {"name":"deductions","abbreviation":"DED","displayValue":""}
+               ]}]}}]}]}
+        """.trimIndent()
+
+        val rows = feed(body).standings(nfl)
+
+        assertEquals(listOf("Bills"), rows.map { it.team.shortName })
+        // abbreviation, not the camelCase API name and not the wide display name.
+        assertEquals(listOf("W", "L", "T", "PCT", "DIFF", "PF"), SportsTable.columns(rows).map { it.label })
+        // A blank value is dropped at parse time rather than shown as an empty column.
+        assertTrue(rows.single().values.none { it.label == "DED" })
+        assertEquals(listOf("8", "1", "0", ".889", "+88", "287"), SportsTable.cells(rows.single(), SportsTable.columns(rows)))
+    }
 }
