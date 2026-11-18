@@ -28,9 +28,19 @@ internal object SportsRepository {
     private val json = kotlinx.serialization.json.Json { ignoreUnknownKeys = true }
 
     /** How long a fetched day is trusted before a refresh is worth making. */
+    /**
+     * How often the Sports page re-asks for the day it is showing. The scoreboard carries a running
+     * clock, period and score, so a page that fetches once shows a frozen game; this is the interval
+     * the page's timer uses, and the repository's own cache TTL for a live day, so the timer's ask is
+     * never served from the cache it just filled.
+     */
+    internal val liveRefreshMs: Long get() = Freshness.LIVE_MS
+
     internal object Freshness {
-        const val LIVE_MS = 45_000L
-        const val TODAY_MS = 5 * 60_000L
+        // The feed's clock is not a ticker: ESPN rewrites displayClock only when the game clock
+        // actually stops (a score, a timeout, a dead ball), which is roughly once a minute. Asking
+        // more often than this buys nothing, and asking less often makes a live game look frozen.
+        const val LIVE_MS = 30_000L
         const val FUTURE_MS = 30 * 60_000L
         const val PAST_MS = 24 * 60 * 60_000L
         const val TEAMS_MS = 7 * 24 * 60 * 60_000L
@@ -202,7 +212,11 @@ internal object SportsRepository {
         return when {
             day > today -> Freshness.FUTURE_MS
             day < today -> Freshness.PAST_MS
-            else -> Freshness.TODAY_MS
+            // Today is the only day that changes while it is being watched: the scoreboard carries a
+            // running clock and a live score. A five-minute cache over it (which is what this was)
+            // served the same frozen numbers for the whole first five minutes of every visit, so the
+            // page looked dead even once the page started asking again on a timer.
+            else -> Freshness.LIVE_MS
         }
     }
 }

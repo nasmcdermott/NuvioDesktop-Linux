@@ -147,15 +147,12 @@ internal object SportsCatalog {
             guideWords = listOf("ATP", "Tennis"), color = 0xFF0A2E5C,
         ),
         // ---- Combat
+        // Boxing has no working scoreboard path on this feed (every candidate answers HTTP 400), so it
+        // is left out rather than shown as a league that is permanently broken. MMA covers fighting.
         League(
             id = "mma/ufc", sport = Sport.FIGHTING, name = "UFC", shortName = "UFC",
             path = "mma/ufc", minutes = 180,
             guideWords = listOf("UFC"), color = 0xFFD20A0A,
-        ),
-        League(
-            id = "boxing/boxing", sport = Sport.FIGHTING, name = "Boxing", shortName = "BOXING",
-            path = "boxing/boxing", minutes = 150,
-            guideWords = listOf("Boxing", "Fight Night"), color = 0xFF7A0019,
         ),
         // ---- Cricket and rugby
         League(

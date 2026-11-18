@@ -2198,6 +2198,13 @@ compose.desktop {
         } else {
             "DIRECT3D"
         }
+        // fork:linux — -Pnuvio.desktop.dataDir=<path> points `run` at a separate profile. Without
+        // this, a live test reads and writes the developer's real profile, which is both a surprise
+        // and a way to corrupt it. The native-image tracing task already had its own handoff; this
+        // is the same idea for the ordinary run task.
+        providers.gradleProperty("nuvio.desktop.dataDir").orNull?.takeIf { it.isNotBlank() }?.let {
+            jvmArgs += "-Dnuvio.desktop.dataDir=$it"
+        }
         jvmArgs += listOfNotNull(
             "-Dapple.awt.application.appearance=NSAppearanceNameDarkAqua",
             "-Dskiko.renderApi=$skikoRenderApi",

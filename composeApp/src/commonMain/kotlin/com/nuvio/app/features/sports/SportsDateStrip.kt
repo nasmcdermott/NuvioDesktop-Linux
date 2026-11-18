@@ -1,13 +1,20 @@
 package com.nuvio.app.features.sports
 
+import androidx.compose.ui.input.key.onKeyEvent
+import com.nuvio.app.core.ui.NavAction
+import com.nuvio.app.core.ui.navAction
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.lazy.LazyRow
+import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -21,6 +28,11 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -39,9 +51,7 @@ internal data class SportsDay(
     /** The weekday, always: "Thu". */
     val weekday: String,
 )
-
 private val DayKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
-
 /**
  * The days the strip offers, [radius] either side of [today].
  *
@@ -67,7 +77,6 @@ internal fun sportsDays(
         weekday = date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale),
     )
 }
-
 /**
  * The date strip. Each pill is its own focus stop, so a gamepad's left/right lands on a day the
  * same way it lands on a channel in Live TV, and the mouse gets the same result.
@@ -77,15 +86,23 @@ internal fun SportsDateStrip(
     days: List<SportsDay>,
     selected: String,
     onSelect: (String) -> Unit,
+    onDown: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
-    Row(
-        modifier = modifier,
+    LazyRow(
+        modifier = modifier
+            .fillMaxWidth()
+            // A day pill sits in a horizontal strip above the cards, and Compose's arrow handling
+            // inside such a strip turns Down into a click on the pill. Down has to mean "go on to
+            // the games" here, so it is answered before the pill sees it.
+            .onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onDown()
+            },
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        days.forEach { day ->
+        items(days, key = { it.day }) { day ->
             SportsDayPill(
                 day = day,
                 selected = day.day == selected,
@@ -94,7 +111,6 @@ internal fun SportsDateStrip(
         }
     }
 }
-
 @Composable
 private fun SportsDayPill(day: SportsDay, selected: Boolean, onClick: () -> Unit) {
     val tokens = MaterialTheme.nuvio
@@ -123,7 +139,19 @@ private fun SportsDayPill(day: SportsDay, selected: Boolean, onClick: () -> Unit
                 shape,
             )
             .onFocusChanged { focused = it.isFocused }
-            .clickable(role = Role.Tab, onClick = onClick)
+            // A Tab role makes Enter fall through instead of choosing the day (see the sport chips).
+            // focusable() before clickable, and the Select handler before both: see KeyboardSelect.
+            .focusable()
+            .onKeyEvent { event ->
+                val activates = event.navAction() == NavAction.Select || event.key == Key.Spacebar
+                when {
+                    !activates -> false
+                    event.type == KeyEventType.KeyDown -> true
+                    event.type == KeyEventType.KeyUp -> { onClick(); true }
+                    else -> true
+                }
+            }
+            .clickable(onClick = onClick)
             .padding(
                 horizontal = tokens.components.chipHorizontalPadding,
                 vertical = tokens.components.chipVerticalPadding,

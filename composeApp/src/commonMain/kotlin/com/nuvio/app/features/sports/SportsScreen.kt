@@ -13,12 +13,14 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -34,6 +36,7 @@ import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.key
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
+import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
@@ -66,7 +69,17 @@ internal fun SportsScreen(
     // null = All events; true = My Sports. Saveable so it survives a tab switch like the day does.
     var mySportsOnly by rememberSaveable { mutableStateOf(false) }
     var pickerOpen by rememberSaveable { mutableStateOf(false) }
-    val screenFocus = remember { FocusRequester() }
+    val firstCardFocus = remember { FocusRequester() }
+    var entryFocusRequests by remember { mutableIntStateOf(0) }
+    // The card lives in a LazyColumn, which composes its first item after the frame this runs on, so
+    // one attempt is refused. Retry briefly, and again whenever the day's contents change.
+    LaunchedEffect(entryFocusRequests) {
+        if (entryFocusRequests == 0) return@LaunchedEffect
+        repeat(12) {
+            if (firstCardFocus.requestFocusLogged()) return@LaunchedEffect
+            kotlinx.coroutines.delay(48)
+        }
+    }
     val settings by SportsSettingsRepository.settings.collectAsState()
 
     // Offered once, on the first ever open with nothing followed. Afterwards an empty My Sports
@@ -87,8 +100,19 @@ internal fun SportsScreen(
 
     // Fetch the day for the leagues on screen. The repository coalesces and caches, so asking on
     // every recomposition is cheap and keeps the strip honest when the user flips between days.
+    //
+    // It also has to repeat. The scoreboard carries a running clock, period and score, and a single
+    // fetch per day froze all three the moment the page opened. Only today repeats: a finished day
+    // cannot change, and re-asking it would spend requests on nothing.
     LaunchedEffect(selectedDay, visibleLeagues) {
-        visibleLeagues.forEach { SportsRepository.refresh(it.id, selectedDay) }
+        if (selectedDay != SportsRepository.today()) {
+            visibleLeagues.forEach { SportsRepository.refresh(it.id, selectedDay) }
+            return@LaunchedEffect
+        }
+        while (true) {
+            visibleLeagues.forEach { SportsRepository.refresh(it.id, selectedDay) }
+            kotlinx.coroutines.delay(SportsRepository.liveRefreshMs)
+        }
     }
 
     val openGame = openGameId?.let { id ->
@@ -103,8 +127,12 @@ internal fun SportsScreen(
     Box(
         modifier = modifier
             .fillMaxSize()
-            .keyLayer("Sports") { screenFocus.requestFocusLogged() }
-            .focusRequester(screenFocus)
+            .keyLayer("Sports") { entryFocusRequests++; true }
+            // Not focusable itself: a full-window focus stop has no neighbour in any direction, so
+            // moveFocus always answered false and the arrows were dead on arrival. Focus belongs to
+            // the chips and cards; this root only carries the requester and the arrow handling for
+            // whatever inside it holds focus.
+            .arrowKeyFocusNavigation(releaseWhenStuck = true)
             .onPreviewKeyEvent { event ->
                 // navigationKey(), not key: a user who rebinds Back must still be able to leave a
                 // game, and comparing the physical key would ignore their binding.
@@ -149,12 +177,16 @@ internal fun SportsScreen(
                 onSelect = { selectedSport = it?.name },
                 onToggleMySports = { mySportsOnly = !mySportsOnly; openGameId = null },
                 onOpenPicker = { pickerOpen = true },
+                // The cards are the only thing below the filters, so Down means the same to both.
+                onDown = { entryFocusRequests++; true },
             )
 
             SportsDateStrip(
                 days = days,
                 selected = selectedDay,
                 onSelect = { selectedDay = it; openGameId = null },
+                // Down from the days means the games, the same as from the filters.
+                onDown = { entryFocusRequests++; true },
             )
 
             if (openGame != null) {
@@ -171,6 +203,7 @@ internal fun SportsScreen(
                     settings = settings,
                     mySportsOnly = mySportsOnly,
                     hideScores = settings.hideScores,
+                    firstCardFocus = firstCardFocus,
                     onOpenGame = { openGameId = it },
                     onOpenPicker = { pickerOpen = true },
                 )
@@ -204,32 +237,46 @@ private fun SportsPageChips(
     onSelect: (Sport?) -> Unit,
     onToggleMySports: () -> Unit,
     onOpenPicker: () -> Unit,
+    onDown: () -> Boolean,
 ) {
     val tokens = MaterialTheme.nuvio
-    Row(
-        modifier = Modifier.fillMaxWidth(),
+    // One LazyRow, not a Row of fixed chips beside one: a LazyRow placed in a Row has no weight, so
+    // it took its full intrinsic width and pushed the leading chips off the left edge of the page.
+    LazyRow(
+        modifier = Modifier
+            .fillMaxWidth()
+            // A horizontal scroller keeps Left and Right for itself and has no vertical neighbour,
+            // so Down from the filters never reached the cards. That is the one case the shared
+            // arrow helper cannot cover, because the key is answered inside this row.
+            .onPreviewKeyEvent { event ->
+                event.type == KeyEventType.KeyDown && event.key == Key.DirectionDown && onDown()
+            },
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         verticalAlignment = Alignment.CenterVertically,
     ) {
-        SportsChip(
-            label = if (followedCount == 0) "★ My Sports" else "★ My Sports ($followedCount)",
-            selected = mySportsOnly,
-            onClick = onToggleMySports,
-        )
-        SportsChip(
-            label = "All events",
-            selected = !mySportsOnly,
-            onClick = { if (mySportsOnly) onToggleMySports() },
-        )
-        SportsChip(label = "Follow…", selected = false, onClick = onOpenPicker)
-        LazyRow(horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap)) {
-            items(sports, key = { it.name }) { sport ->
-                SportsChip(
-                    label = sport.label,
-                    selected = sport == selected,
-                    onClick = { onSelect(if (sport == selected) null else sport) },
-                )
-            }
+        item(key = "my-sports") {
+            SportsChip(
+                label = if (followedCount == 0) "★ My Sports" else "★ My Sports ($followedCount)",
+                selected = mySportsOnly,
+                onClick = onToggleMySports,
+            )
+        }
+        item(key = "all") {
+            SportsChip(
+                label = "All events",
+                selected = !mySportsOnly,
+                onClick = { if (mySportsOnly) onToggleMySports() },
+            )
+        }
+        item(key = "follow") {
+            SportsChip(label = "Follow…", selected = false, onClick = onOpenPicker)
+        }
+        items(sports, key = { it.name }) { sport ->
+            SportsChip(
+                label = sport.label,
+                selected = sport == selected,
+                onClick = { onSelect(if (sport == selected) null else sport) },
+            )
         }
     }
 }
@@ -242,6 +289,7 @@ private fun SportsDayList(
     settings: SportsSettings,
     mySportsOnly: Boolean,
     hideScores: Boolean,
+    firstCardFocus: FocusRequester,
     onOpenGame: (String) -> Unit,
     onOpenPicker: () -> Unit,
 ) {
@@ -275,6 +323,15 @@ private fun SportsDayList(
         return
     }
 
+    // Decided once, in section order, rather than by a flag the item lambdas mutate: those run
+    // later and in an order this code should not depend on.
+    val firstSection = PubDayFocus(
+        live = firstCardFocus.takeIf { sections.live.isNotEmpty() },
+        upcoming = firstCardFocus.takeIf { sections.live.isEmpty() && sections.upcoming.isNotEmpty() },
+        results = firstCardFocus.takeIf {
+            sections.live.isEmpty() && sections.upcoming.isEmpty() && sections.results.isNotEmpty()
+        },
+    )
     LazyColumn(verticalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap)) {
         if (sections.anyError) {
             // Without this a failed refresh looks exactly like a day with no games.
@@ -282,15 +339,15 @@ private fun SportsDayList(
         }
         if (sections.live.isNotEmpty()) {
             item { SportsSectionHeader("LIVE NOW", sections.live.size, live = true) }
-            item { SportsGameRail(sections.live, leagues, settings, hideScores, onOpenGame) }
+            item { SportsGameRail(sections.live, leagues, settings, hideScores, firstSection.live, onOpenGame) }
         }
         if (sections.upcoming.isNotEmpty()) {
             item { SportsSectionHeader("COMING UP", sections.upcoming.size, live = false) }
-            item { SportsGameRail(sections.upcoming, leagues, settings, hideScores, onOpenGame) }
+            item { SportsGameRail(sections.upcoming, leagues, settings, hideScores, firstSection.upcoming, onOpenGame) }
         }
         if (sections.results.isNotEmpty()) {
             item { SportsSectionHeader("RESULTS", sections.results.size, live = false) }
-            item { SportsGameRail(sections.results, leagues, settings, hideScores, onOpenGame) }
+            item { SportsGameRail(sections.results, leagues, settings, hideScores, firstSection.results, onOpenGame) }
         }
     }
 }
@@ -357,6 +414,7 @@ private fun SportsGameRail(
     leagues: List<League>,
     settings: SportsSettings,
     hideScores: Boolean,
+    entryFocus: FocusRequester?,
     onOpenGame: (String) -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
@@ -365,17 +423,32 @@ private fun SportsGameRail(
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.listGap),
         contentPadding = PaddingValues(vertical = 2.dp),
     ) {
-        items(games, key = { "${it.leagueId}:${it.id}" }) { game ->
+        itemsIndexed(games, key = { _, game -> "${game.leagueId}:${game.id}" }) { index, game ->
             SportsGameCard(
                 event = game,
                 league = byId[game.leagueId],
                 hideScores = hideScores,
                 followed = SportsFollows.isFollowedTeamGame(settings, game),
+                // Only the first card of the first rail takes it; the others pass null so a requester
+                // is never attached to a card that has not been composed yet.
+                focusRequester = entryFocus.takeIf { index == 0 },
                 onClick = { onOpenGame(game.id) },
             )
         }
     }
 }
+
+/**
+ * Down from a filter row: put focus on the day's first game. Taken as handled even when there is
+ * none — a day with no games is a normal state, not an unhandled key, and letting it fall through
+ * would move focus out of the page instead.
+ */
+/** Which rail takes the entry focus: the first section that has a game in it. */
+private class PubDayFocus(
+    val live: FocusRequester?,
+    val upcoming: FocusRequester?,
+    val results: FocusRequester?,
+)
 
 /** What one day looks like once every league's state has been read. */
 private data class DaySections(

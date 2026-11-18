@@ -47,7 +47,11 @@ internal class EspnSportsFeed(
     private suspend fun scoreboardAt(url: String, league: League): List<SportsEvent> {
         val root = fetchObject(url) ?: return emptyList()
         val events = root["events"]?.asArray() ?: return emptyList()
-        return events.mapNotNull { element -> runCatching { event(element.jsonObject, league) }.getOrNull() }
+        return events.mapNotNull { element ->
+            runCatching { event(element.jsonObject, league) }
+                .onFailure { log.w { "Skipped an event in ${league.id}: ${it::class.simpleName}: ${it.message}" } }
+                .getOrNull()
+        }
     }
 
     override suspend fun teams(league: League): List<Team> {
@@ -151,6 +155,10 @@ internal class EspnSportsFeed(
             },
             status = typeObj?.get("shortDetail")?.stringOrNull()
                 ?: typeObj?.get("detail")?.stringOrNull(),
+            // The running clock, on its own. shortDetail folds it together with the period
+            // ("9:58 - 3rd"), and a countdown nobody can separate from its label cannot be styled
+            // or shortened when the card is narrow.
+            clock = clock?.takeIf { it.isNotBlank() && it != "0:00" },
             away = away,
             home = home,
             situation = competition?.get("situation")?.jsonObject
@@ -309,9 +317,15 @@ internal class EspnSportsFeed(
         // java.time so the model layer stays free of platform types.
         val match = IsoUtc.matchEntire(text) ?: return 0L
         val (year, month, day, hour, minute, second) = match.destructured
+        // The seconds group is optional: "2026-11-18T00:30Z" has none, and destructuring gives ""
+        // for an unmatched optional group. toIntOrNull("") would have thrown; 0 is the right answer.
         return epochMillis(
-            year.toInt(), month.toInt(), day.toInt(),
-            hour.toInt(), minute.toInt(), second.toInt(),
+            year.toIntOrNull() ?: return 0L,
+            month.toIntOrNull() ?: return 0L,
+            day.toIntOrNull() ?: return 0L,
+            hour.toIntOrNull() ?: return 0L,
+            minute.toIntOrNull() ?: return 0L,
+            second.toIntOrNull() ?: 0,
         )
     }
 

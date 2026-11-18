@@ -1,5 +1,14 @@
 package com.nuvio.app.features.sports
 
+import com.nuvio.app.core.ui.arrowKeyFocusNavigation
+import com.nuvio.app.core.ui.requestFocusLogged
+
+import androidx.compose.ui.focus.focusRequester
+
+import androidx.compose.ui.focus.FocusRequester
+
+import androidx.compose.foundation.focusable
+
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
@@ -60,9 +69,22 @@ internal fun SportsGameDetail(
         summaryFailed = loaded == null
     }
 
+    // The page replaces the card rails, so it is the only thing on screen: it has to be able to hold
+    // focus itself, or the arrow keys have nothing to act on and Compose reports focus as NONE.
+    val pageFocus = remember { FocusRequester() }
+    LaunchedEffect(event.id) {
+        repeat(10) {
+            if (pageFocus.requestFocusLogged()) return@LaunchedEffect
+            kotlinx.coroutines.delay(48)
+        }
+    }
+
     Column(
         modifier = modifier
             .fillMaxWidth()
+            .focusRequester(pageFocus)
+            .focusable()
+            .arrowKeyFocusNavigation(releaseWhenStuck = true)
             .padding(tokens.spacing.screenHorizontal),
         verticalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap),
     ) {

@@ -230,4 +230,58 @@ class EspnSportsFeedParsingTest {
 
         assertEquals(0L, feed(body).scoreboard(nfl, "20261117", "20261117").single().startMs)
     }
+
+    @Test
+    fun `a timestamp without seconds still parses`() = runBlocking {
+        // The real feed sends both "2026-11-18T00:30Z" and "…T00:30:00Z". The first has no seconds
+        // group, which destructures to "" — parsing that as an Int threw, and the exception was
+        // swallowed per event, so EVERY game of every league silently vanished from the page.
+        val body = """
+            {"events":[{"id":"1","date":"2026-11-18T00:30Z","competitions":[{
+              "status":{"period":0,"type":{"state":"pre","completed":false,"shortDetail":"7:30 PM"}},
+              "competitors":[
+                {"homeAway":"away","score":"0","team":{"id":"a","displayName":"A","shortDisplayName":"A","abbreviation":"A"}},
+                {"homeAway":"home","score":"0","team":{"id":"b","displayName":"B","shortDisplayName":"B","abbreviation":"B"}}
+              ]}]}]}
+        """.trimIndent()
+
+        val game = feed(body).scoreboard(nfl, "20261118", "20261118").single()
+
+        assertEquals(epochMillis(2026, 11, 18, 0, 30, 0), game.startMs)
+    }
+
+    @Test
+    fun `a timestamp with seconds parses the same`() = runBlocking {
+        val withSeconds = feed(
+            """{"events":[{"id":"1","date":"2026-11-18T00:30:15Z","competitions":[{
+              "status":{"period":0,"type":{"state":"pre","completed":false}},
+              "competitors":[
+                {"homeAway":"away","team":{"id":"a","displayName":"A","shortDisplayName":"A","abbreviation":"A"}},
+                {"homeAway":"home","team":{"id":"b","displayName":"B","shortDisplayName":"B","abbreviation":"B"}}
+              ]}]}]}""",
+        ).scoreboard(nfl, "20261118", "20261118").single()
+
+        assertEquals(epochMillis(2026, 11, 18, 0, 30, 15), withSeconds.startMs)
+    }
+
+    @Test
+    fun `an unusable date keeps the game and reports no kick-off time`() = runBlocking {
+        // Dropping the game because its date is unreadable is worse than showing it: the teams and
+        // the score are still right. 0 means "unknown time", and the UI prints nothing for it.
+        val body = """
+            {"events":[
+              {"id":"bad","date":"nonsense","competitions":[{"status":{"type":{"state":"pre","completed":false}},
+                "competitors":[{"homeAway":"away","team":{"id":"a","displayName":"A","shortDisplayName":"A","abbreviation":"A"}},
+                               {"homeAway":"home","team":{"id":"b","displayName":"B","shortDisplayName":"B","abbreviation":"B"}}]}]},
+              {"id":"good","date":"2026-11-18T00:30Z","competitions":[{"status":{"type":{"state":"pre","completed":false}},
+                "competitors":[{"homeAway":"away","team":{"id":"c","displayName":"C","shortDisplayName":"C","abbreviation":"C"}},
+                               {"homeAway":"home","team":{"id":"d","displayName":"D","shortDisplayName":"D","abbreviation":"D"}}]}]}
+            ]}
+        """.trimIndent()
+
+        val games = feed(body).scoreboard(nfl, "20261118", "20261118")
+
+        assertEquals(listOf("bad", "good"), games.map { it.id })
+        assertEquals(0L, games.first { it.id == "bad" }.startMs)
+    }
 }

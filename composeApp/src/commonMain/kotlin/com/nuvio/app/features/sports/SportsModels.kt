@@ -103,6 +103,11 @@ data class SportsEvent(
     val state: GameState,
     /** "3rd · 9:42", "FT", "7:30 PM" — the provider's own status text. */
     val status: String? = null,
+    /**
+     * The running clock on its own ("9:42"), when the provider sends one. [status] folds it
+     * together with the period; this is here so the two can be drawn and sized separately.
+     */
+    val clock: String? = null,
     val away: GameSide,
     val home: GameSide,
     /** A short situational line ("ECU · Jayla Hearp makes free throws"), when the provider sends one. */

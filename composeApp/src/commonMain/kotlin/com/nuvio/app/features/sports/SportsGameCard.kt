@@ -1,6 +1,14 @@
 package com.nuvio.app.features.sports
 
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.key
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.type
+import com.nuvio.app.core.ui.NavAction
+import com.nuvio.app.core.ui.navAction
 import androidx.compose.foundation.background
+import androidx.compose.foundation.focusable
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -24,6 +32,8 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.semantics.Role
@@ -47,6 +57,8 @@ internal fun SportsGameCard(
     hideScores: Boolean,
     /** True when a followed team is playing, so the card says why it is here. */
     followed: Boolean = false,
+    /** Set on the first card of the day, so the page has a real place to put entry focus. */
+    focusRequester: FocusRequester? = null,
     onClick: () -> Unit,
     modifier: Modifier = Modifier,
 ) {
@@ -69,7 +81,28 @@ internal fun SportsGameCard(
                 },
                 shape,
             )
+            // Role.Button, not Role.Tab: a Tab role says "one of a tab set", so the focus system
+            // expects arrow keys to switch between them and does not route Enter to the click.
+            .focusRequesterIf(focusRequester)
             .onFocusChanged { focused = it.isFocused }
+            // The same three steps KeyboardSelect uses, in the same order and for the same reasons:
+            // focusable() is what gives the card a focus node for a FocusRequester to resolve to,
+            // and the key handler must precede clickable, whose own focusable node consumes Enter
+            // before anything after it sees the key. Enter alone was not enough anyway — Select is
+            // rebindable, so activation resolves through navAction().
+            .focusable()
+            .onKeyEvent { event ->
+                val activates = event.navAction() == NavAction.Select || event.key == Key.Spacebar
+                when {
+                    !activates -> false
+                    event.type == KeyEventType.KeyDown -> true
+                    event.type == KeyEventType.KeyUp -> {
+                        onClick()
+                        true
+                    }
+                    else -> true
+                }
+            }
             .clickable(role = Role.Button, onClick = onClick)
             .padding(tokens.spacing.cardPadding),
         verticalAlignment = Alignment.CenterVertically,
@@ -211,3 +244,11 @@ internal fun kickoffText(startMs: Long): String {
         .atZone(java.time.ZoneId.systemDefault())
         .format(java.time.format.DateTimeFormatter.ofPattern("h:mm a", java.util.Locale.getDefault()))
 }
+
+/**
+ * Attach a [FocusRequester] only when one was passed. Written as its own extension so the modifier
+ * sits at a fixed place in the chain: the conditional has to be the requester itself, not a null
+ * branch of a `then`, which Compose can resolve before the focus node below it exists.
+ */
+private fun Modifier.focusRequesterIf(requester: FocusRequester?): Modifier =
+    if (requester == null) this else this.focusRequester(requester)
