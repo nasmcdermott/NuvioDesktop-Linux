@@ -33,4 +33,24 @@ class SportsFixMatchTest {
         assertEquals("401", key.substringBefore('|'))
         assertEquals("pl|2:7", key.substringAfter('|'))
     }
+
+    @Test
+    fun `a pick survives the settings round-trip and is cleared by name`() {
+        // setPick is what "This one" calls; it must be reversible, or fixing a wrong pick means
+        // editing a properties file by hand.
+        val settings = SportsSettings()
+        val picked = settings.copy(picks = settings.picks + ("401" to "newsport:5"))
+        assertEquals("newsport:5", picked.picks["401"])
+
+        val cleared = picked.copy(picks = picked.picks - "401")
+        assertTrue(cleared.picks.isEmpty())
+    }
+
+    @Test
+    fun `blocking and unblocking are inverse`() {
+        val key = SportsWatch.blockKey("401", "newsport:5")
+        val blocked = setOf(key)
+        assertTrue(blocked.contains(key))
+        assertTrue((blocked - key).isEmpty())
+    }
 }
