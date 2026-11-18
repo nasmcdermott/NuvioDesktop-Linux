@@ -85,14 +85,16 @@ data class GameSide(
     /** "12-4" or "3-1-2" — the provider's own wording, never reformatted here. */
     val record: String? = null,
     val winner: Boolean = false,
+    /** Quarter, period, half or inning scores in order, when the provider sends them. */
+    val linescores: List<String> = emptyList(),
 )
 
 /**
  * A game, which is what the Sports page is a list of.
  *
- * [network] is the broadcast network the provider lists ("ESPN", "TNT SPORT 2"). It is the strongest
- * everyday clue for finding the game in the user's own channels, so it is kept even when the
- * provider sends no other presentation detail.
+ * [network] is the primary broadcast network the provider lists ("ESPN", "TNT SPORT 2");
+ * [broadcasts] carries every network listed across national and regional feeds so channel matching
+ * can find any of them in the user's playlists.
  */
 @Serializable
 data class SportsEvent(
@@ -112,7 +114,13 @@ data class SportsEvent(
     val home: GameSide,
     /** A short situational line ("ECU · Jayla Hearp makes free throws"), when the provider sends one. */
     val situation: String? = null,
+    /** Stadium or arena ("Lincoln Financial Field"), when the provider sends one. */
+    val venue: String? = null,
     val network: String? = null,
+    /** Every broadcast network listed for the event (e.g. ["ABC", "ESPN+", "TSN"]). */
+    val broadcasts: List<String> = emptyList(),
+    /** Explicit event title for tournaments, races and fight cards ("Las Vegas Grand Prix"). */
+    val title: String? = null,
     /** 0f..1f through the game, when it can be known; null for untimed sports. */
     val progress: Float? = null,
 ) {
@@ -120,19 +128,53 @@ data class SportsEvent(
 
     /** True when either side has a score to show, which is what "hide scores" suppresses. */
     val hasScore: Boolean get() = away.score != null || home.score != null
+
+    /** Every broadcast network known for this event, preserving order without duplicates. */
+    val allNetworks: List<String>
+        get() = if (broadcasts.isNotEmpty()) broadcasts else listOfNotNull(network)
+
+    /** Readable matchup or event title ("Bears @ Lions" or "Las Vegas Grand Prix"). */
+    val displayTitle: String
+        get() = title?.takeIf { it.isNotBlank() }
+            ?: "${away.team.shortName.ifBlank { away.team.name }} @ ${home.team.shortName.ifBlank { home.team.name }}"
 }
 
-/** One line of a league table. [entries] are the provider's own column names, in its own order. */
+/** One line of a league table. [values] carry both the provider's column heading and stat key. */
 @Serializable
 data class Standing(
     val team: Team,
-    /** e.g. "1st in AFC East". */
+    /** e.g. "Champions League", "Playoffs", "1st in AFC East". */
     val note: String? = null,
     val values: List<StandingValue> = emptyList(),
+    /** 1-based place within [group], when known. */
+    val rank: Int = 0,
+    /** Division, conference or competition group name ("AFC East", "Eastern Conference"). */
+    val group: String? = null,
+    /** Parent conference when [group] is a division ("American Football Conference"). */
+    val conference: String? = null,
+    /** Playoff seed in conference standings (US leagues). */
+    val seed: Int? = null,
+    /** Places moved since the previous round (+ up, - down). */
+    val rankChange: Int? = null,
+    /** Clincher tag ("x", "y", "z", "e", "*", "p"). */
+    val clincher: String? = null,
+    val clincherText: String? = null,
+    /** Qualification or relegation band colour, ARGB. */
+    val noteColor: Long? = null,
+    val record: String? = null,
+    val homeRecord: String? = null,
+    val awayRecord: String? = null,
+    val streak: String? = null,
+    /** Recent results oldest-first ("WWDLW"), when known. */
+    val form: String? = null,
+    /** Composite sort score for merged conference / league views. */
+    val sortValue: Double = 0.0,
+    /** True when [team] represents an individual driver or athlete rather than a club. */
+    val athlete: Boolean = false,
 )
 
 @Serializable
-data class StandingValue(val label: String, val value: String)
+data class StandingValue(val label: String, val value: String, val key: String = "")
 
 /** One scoring play, for the detail view's "latest scoring" list. */
 @Serializable
@@ -142,6 +184,18 @@ data class ScoringPlay(
     val text: String,
     val awayScore: String? = null,
     val homeScore: String? = null,
+)
+
+/** One chronological play-by-play entry from a game's provider summary. */
+@Serializable
+data class PlayByPlayEntry(
+    val id: String,
+    val period: String? = null,
+    val clock: String? = null,
+    val text: String,
+    val awayScore: String? = null,
+    val homeScore: String? = null,
+    val scoring: Boolean = false,
 )
 
 /** One numbered statistic of a team ("Total Yards", "3rd down efficiency"): label plus display text. */
@@ -179,6 +233,7 @@ data class StatCategory(
 data class GameSummary(
     val eventId: String,
     val scoring: List<ScoringPlay> = emptyList(),
+    val playByPlay: List<PlayByPlayEntry> = emptyList(),
     val standings: List<Standing> = emptyList(),
     val venue: String? = null,
     /** Both teams' comparison numbers, away first. */

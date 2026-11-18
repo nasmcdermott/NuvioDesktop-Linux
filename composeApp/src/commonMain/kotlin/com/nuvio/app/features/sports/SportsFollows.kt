@@ -63,4 +63,19 @@ internal object SportsFollows {
     fun isFollowedTeamGame(settings: SportsSettings, event: SportsEvent): Boolean =
         isSideFollowed(settings, event.leagueId, event.away) ||
             isSideFollowed(settings, event.leagueId, event.home)
+
+    /** The followed team's ids in [event] (0, 1 or 2 of them), for starring card rows. */
+    fun followedSideIds(settings: SportsSettings, event: SportsEvent): Set<String> = buildSet {
+        if (isTeamFollowed(settings, event.leagueId, event.away.team.id)) add(event.away.team.id)
+        if (isTeamFollowed(settings, event.leagueId, event.home.team.id)) add(event.home.team.id)
+    }
+
+    /** The followed side's display name in [event], or null when neither side is followed. */
+    fun followedSideName(settings: SportsSettings, event: SportsEvent): String? = when {
+        isSideFollowed(settings, event.leagueId, event.away) ->
+            event.away.team.shortName.ifBlank { event.away.team.name }
+        isSideFollowed(settings, event.leagueId, event.home) ->
+            event.home.team.shortName.ifBlank { event.home.team.name }
+        else -> null
+    }
 }

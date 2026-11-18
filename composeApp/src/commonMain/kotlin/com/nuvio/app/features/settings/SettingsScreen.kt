@@ -1149,6 +1149,7 @@ private fun MobileSettingsScreen(
                             onLocalLibraryClick = { onPageChange(SettingsPage.LocalLibrary) },
                             onGamesClick = { onPageChange(SettingsPage.Games) },
                             onIptvClick = { onPageChange(SettingsPage.Iptv) },
+                            onSportsClick = { onPageChange(SettingsPage.Sports) },
                             onAutoDownloadsClick = { onPageChange(SettingsPage.AutoDownloads) },
                             onAppearanceClick = { onPageChange(SettingsPage.Appearance) },
                             onAdvancedClick = { onPageChange(SettingsPage.Advanced) },
@@ -1172,6 +1173,7 @@ private fun MobileSettingsScreen(
                             showDownloadsEntry = AppFeaturePolicy.downloadsEnabled,
                             showNotificationsEntry = AppFeaturePolicy.notificationsEnabled,
                             showPluginsEntry = AppFeaturePolicy.pluginsEnabled,
+                            showSportsEntry = AppFeaturePolicy.sportsEnabled,
                         )
                     }
                 }
@@ -2014,6 +2016,7 @@ private fun TabletSettingsScreen(
                                 onLocalLibraryClick = { openInlinePage(SettingsPage.LocalLibrary) },
                                 onGamesClick = { openInlinePage(SettingsPage.Games) },
                                 onIptvClick = { openInlinePage(SettingsPage.Iptv) },
+                                onSportsClick = { openInlinePage(SettingsPage.Sports) },
                                 onAutoDownloadsClick = { openInlinePage(SettingsPage.AutoDownloads) },
                                 onAppearanceClick = { openInlinePage(SettingsPage.Appearance) },
                                 onAdvancedClick = { openInlinePage(SettingsPage.Advanced) },
@@ -2037,6 +2040,7 @@ private fun TabletSettingsScreen(
                                 showDownloadsEntry = AppFeaturePolicy.downloadsEnabled,
                                 showNotificationsEntry = AppFeaturePolicy.notificationsEnabled,
                                 showPluginsEntry = AppFeaturePolicy.pluginsEnabled,
+                                showSportsEntry = AppFeaturePolicy.sportsEnabled,
                                 showAccountSection = false,
                                 showGeneralSection = true,
                                 showAboutSection = false,
@@ -2467,6 +2471,13 @@ private fun desktopSettingsSidebarDefaultItems(): List<DesktopSettingsSidebarIte
         page = SettingsPage.Iptv,
     ),
     DesktopSettingsSidebarItem(
+        // fork:sports - Settings > Sports in the sidebar; filtered out on builds without the
+        // feature by the list's isEnabledByFeaturePolicy() pass.
+        label = stringResource(Res.string.sports_settings_section),
+        icon = Icons.Rounded.EmojiEvents,
+        page = SettingsPage.Sports,
+    ),
+    DesktopSettingsSidebarItem(
         label = stringResource(Res.string.compose_settings_page_account),
         icon = Icons.Rounded.AccountCircle,
         page = SettingsPage.Account,
@@ -2570,6 +2581,7 @@ private fun SettingsPage.desktopSidebarPage(): SettingsPage = when (this) {
     SettingsPage.Usenet -> SettingsPage.Usenet
     SettingsPage.Games -> SettingsPage.Games
     SettingsPage.Iptv -> SettingsPage.Iptv
+    SettingsPage.Sports -> SettingsPage.Sports // fork:sports
     SettingsPage.AutoDownloads -> SettingsPage.AutoDownloads
     SettingsPage.Downloads -> SettingsPage.AutoDownloads
     SettingsPage.StreamScoring -> SettingsPage.Streams

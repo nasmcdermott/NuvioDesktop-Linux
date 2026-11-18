@@ -73,6 +73,7 @@ internal class EspnSportsFeed(
         return GameSummary(
             eventId = eventId,
             scoring = scoringPlays(root["scoringPlays"]?.asArray() ?: JsonArray(emptyList())),
+            playByPlay = playByPlay(root),
             standings = standingsOf(header),
             venue = header?.get("competitions")?.asArray()?.firstOrNull()?.jsonObject
                 ?.get("venue")?.jsonObject?.get("fullName")?.stringOrNull(),
@@ -82,73 +83,232 @@ internal class EspnSportsFeed(
     }
 
     override suspend fun standings(league: League): List<Standing> {
-        val url = "${ESPN_STANDINGS}${league.path}/standings?level=3"
+        val url = standingsUrl(league)
         val root = fetchObject(url) ?: return emptyList()
-        // The table hangs off `standings.entries`, sometimes nested under children that carry the
-        // division names, so both shapes are walked.
-        val entries = mutableListOf<Standing>()
-        fun walk(node: JsonObject) {
-            node["standings"]?.jsonObjectOrNull()?.get("entries")?.asArray()?.forEach { entry ->
-                runCatching {
-                    val obj = entry.jsonObject
-                    val teamObj = obj["team"]?.jsonObject ?: return@runCatching
-                    entries += Standing(
-                        team = team(teamObj),
-                        note = obj["note"]?.jsonObject?.get("description")?.stringOrNull(),
-                        values = obj["stats"]?.asArray()?.mapNotNull { stat ->
-                            val statObj = stat.jsonObjectOrNull() ?: return@mapNotNull null
-                            // abbreviation ("W", "L", "PCT", "GB") is the column heading a table
-                            // wants; the raw name ("winPercent") is camelCase API spelling, and
-                            // displayName ("Win Percentage") is too wide for a column.
-                            val label = statObj["abbreviation"]?.stringOrNull()
-                                ?: statObj["shortName"]?.stringOrNull()
-                                ?: statObj["name"]?.stringOrNull() ?: return@mapNotNull null
-                            val value = statObj["displayValue"]?.stringOrNull()?.takeIf { it.isNotBlank() }
-                                ?: return@mapNotNull null
-                            StandingValue(label, value)
-                        }.orEmpty(),
-                    )
+        // Collect leaf tables along with their group name and optional parent conference name.
+        data class Leaf(val name: String, val conference: String?, val entries: JsonArray)
+        val leaves = mutableListOf<Leaf>()
+        fun walk(node: JsonObject, parentName: String?) {
+            val entries = node["standings"]?.jsonObjectOrNull()?.get("entries")?.asArray()
+            val nodeName = node["name"]?.stringOrNull()
+                ?: node["abbreviation"]?.stringOrNull()
+            if (entries != null && entries.isNotEmpty()) {
+                leaves += Leaf(nodeName ?: league.name, parentName, entries)
+            }
+            val children = node["children"]?.asArray() ?: return
+            val nextParent = if (node === root) null else nodeName
+            children.forEach { child ->
+                child.jsonObjectOrNull()?.let { walk(it, nextParent) }
+            }
+        }
+        walk(root, null)
+        if (leaves.isEmpty()) return emptyList()
+
+        // Racing endpoints list Drivers first, then Constructors; keep the Drivers championship.
+        val firstEntry = leaves.first().entries.firstOrNull()?.jsonObjectOrNull()
+        val isAthleteTable = firstEntry?.get("athlete")?.jsonObjectOrNull() != null &&
+            firstEntry["team"]?.jsonObjectOrNull() == null
+        val activeLeaves = if (isAthleteTable) leaves.take(1) else leaves
+
+        val allRows = mutableListOf<Standing>()
+        for (leaf in activeLeaves) {
+            val parsed = leaf.entries.mapNotNull { entry ->
+                runCatching { parseStandingEntry(entry.jsonObject, leaf.name, leaf.conference, league) }.getOrNull()
+            }
+            val ranked = when {
+                parsed.isNotEmpty() && parsed.all { it.rank > 0 } -> parsed.sortedBy { it.rank }
+                parsed.isNotEmpty() && parsed.all { it.seed != null } -> parsed.sortedBy { it.seed }
+                else -> parsed
+            }.mapIndexed { idx, row ->
+                if (row.rank > 0) row else row.copy(rank = idx + 1)
+            }
+
+            if (isAthleteTable && ranked.isNotEmpty()) {
+                val leadPts = ranked.first().values
+                    .firstOrNull { it.key == "championshipPts" || it.key == "points" || it.label == "PTS" }
+                    ?.value?.toDoubleOrNull()
+                allRows += if (leadPts != null) {
+                    ranked.map { row ->
+                        val pts = row.values
+                            .firstOrNull { it.key == "championshipPts" || it.key == "points" || it.label == "PTS" }
+                            ?.value?.toDoubleOrNull()
+                        val behind = if (pts == null || row.rank == 1) "–" else "-${SportsTable.formatDelta(leadPts - pts)}"
+                        row.copy(values = row.values + StandingValue("BEHIND", behind, "behind"))
+                    }
+                } else {
+                    ranked
                 }
-            }
-            node["children"]?.asArray()?.forEach { child ->
-                child.jsonObjectOrNull()?.let(::walk)
+            } else {
+                allRows += ranked
             }
         }
-        root["standings"]?.jsonObjectOrNull()?.let(::walk)
-        root["children"]?.asArray()?.forEach { child ->
-            // Some leagues put the divisions at the top level instead.
-            child.jsonObjectOrNull()?.let(::walk)
+        return allRows
+    }
+
+    internal fun standingsUrl(league: League): String {
+        val divisions = league.path in DIVISION_LEAGUES
+        return "${ESPN_STANDINGS}${league.path}/standings" + if (divisions) "?level=3" else ""
+    }
+
+    private fun parseStandingEntry(
+        obj: JsonObject,
+        groupName: String,
+        conferenceName: String?,
+        league: League,
+    ): Standing? {
+        val teamObj = obj["team"]?.jsonObjectOrNull()
+        val athleteObj = obj["athlete"]?.jsonObjectOrNull()
+        val subject = teamObj ?: athleteObj ?: return null
+        val statsArray = obj["stats"]?.asArray()
+        val statsByName = HashMap<String, JsonObject>()
+        var record: String? = null
+        var homeRecord: String? = null
+        var awayRecord: String? = null
+        val values = ArrayList<StandingValue>()
+
+        statsArray?.forEach { stat ->
+            val statObj = stat.jsonObjectOrNull() ?: return@forEach
+            val type = statObj["type"]?.stringOrNull()?.lowercase()
+            when (type) {
+                "total" -> record = statObj["summary"]?.stringOrNull() ?: statObj["displayValue"]?.stringOrNull()
+                "home" -> homeRecord = statObj["summary"]?.stringOrNull() ?: statObj["displayValue"]?.stringOrNull()
+                "road", "away" -> awayRecord = statObj["summary"]?.stringOrNull() ?: statObj["displayValue"]?.stringOrNull()
+            }
+            val rawName = statObj["name"]?.stringOrNull()
+            if (rawName != null) statsByName[rawName] = statObj
+
+            // abbreviation ("W", "L", "PCT", "GB") is the column heading a table wants; the raw
+            // name ("winPercent") is camelCase API spelling, and displayName is too wide.
+            val label = statObj["abbreviation"]?.stringOrNull()
+                ?: statObj["shortDisplayName"]?.stringOrNull()
+                ?: statObj["shortName"]?.stringOrNull()
+                ?: rawName ?: return@forEach
+            val displayValue = statObj["displayValue"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+                ?: return@forEach
+            // Skip metadata-only stats from visible table columns unless they are the only ones.
+            if (rawName in META_STAT_NAMES) return@forEach
+            values += StandingValue(label = label, value = displayValue, key = rawName.orEmpty())
         }
-        return entries
+
+        fun num(name: String): Double? {
+            val s = statsByName[name] ?: return null
+            return s["value"]?.let { runCatching { it.jsonPrimitive.contentOrNull?.toDoubleOrNull() }.getOrNull() }
+                ?: s["displayValue"]?.stringOrNull()?.toDoubleOrNull()
+        }
+        fun text(name: String): String? =
+            statsByName[name]?.get("displayValue")?.stringOrNull()?.trim()?.takeIf { it.isNotEmpty() }
+
+        val noteObj = obj["note"]?.jsonObjectOrNull()
+        val noteDesc = noteObj?.get("description")?.stringOrNull()
+        val noteColor = noteObj?.get("color")?.stringOrNull()?.let(::parseHexColor)
+            ?: noteDesc?.let(SportsTable::zoneColor)
+
+        val clincher = text("clincher")?.takeIf { it != "*" && it.length <= 2 }
+        val clincherText = statsByName["clincher"]?.get("description")?.stringOrNull()
+        val rank = num("rank")?.toInt()?.takeIf { it > 0 } ?: 0
+        val seed = num("playoffSeed")?.toInt()?.takeIf { it > 0 }
+        val rankChange = num("rankChange")?.toInt()?.takeIf { it != 0 }
+
+        val isPointsSport = athleteObj != null ||
+            league.sport in setOf(Sport.FOOTBALL, Sport.RUGBY, Sport.HOCKEY, Sport.RACING, Sport.AUSSIE_RULES) ||
+            ("points" in statsByName && "winPercent" !in statsByName)
+        val sortValue = if (isPointsSport) {
+            (num("points") ?: num("championshipPts") ?: 0.0) * 1000.0 + (num("pointDifferential") ?: num("differential") ?: 0.0)
+        } else {
+            (num("winPercent") ?: 0.0) * 1000.0 + (num("wins") ?: 0.0)
+        }
+
+        val parsedTeam = if (teamObj != null) {
+            team(teamObj)
+        } else {
+            val name = subject["displayName"]?.stringOrNull() ?: subject["name"]?.stringOrNull().orEmpty()
+            val shortName = subject["shortDisplayName"]?.stringOrNull() ?: subject["shortName"]?.stringOrNull() ?: name
+            Team(
+                id = subject["id"]?.stringOrNull().orEmpty(),
+                name = name,
+                shortName = shortName,
+                abbreviation = subject["abbreviation"]?.stringOrNull()
+                    ?: shortName.split(' ').lastOrNull()?.take(3)?.uppercase().orEmpty(),
+                logo = subject["flag"]?.jsonObjectOrNull()?.get("href")?.stringOrNull()
+                    ?: subject["headshot"]?.jsonObjectOrNull()?.get("href")?.stringOrNull(),
+                color = league.color,
+            )
+        }
+
+        return Standing(
+            team = parsedTeam,
+            note = noteDesc,
+            values = values,
+            rank = rank,
+            group = groupName,
+            conference = conferenceName,
+            seed = seed,
+            rankChange = rankChange,
+            clincher = clincher,
+            clincherText = clincherText,
+            noteColor = noteColor,
+            record = record,
+            homeRecord = homeRecord,
+            awayRecord = awayRecord,
+            streak = text("streak"),
+            sortValue = sortValue,
+            athlete = athleteObj != null && teamObj == null,
+        )
     }
 
     // region Parsing
 
     private fun event(obj: JsonObject, league: League): SportsEvent? {
         val id = obj["id"]?.stringOrNull() ?: return null
-        val competition = obj["competitions"]?.asArray()?.firstOrNull()?.jsonObject
-        val competitors = competition?.get("competitors")?.asArray().orEmpty()
-        val sides = competitors.mapNotNull { element ->
-            val side = element.jsonObject
-            val teamObj = side["team"]?.jsonObject ?: return@mapNotNull null
+        val competition = obj["competitions"]?.asArray()?.firstOrNull()?.jsonObject ?: return null
+        val competitors = competition["competitors"]?.asArray().orEmpty()
+        val eventName = obj["shortName"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+            ?: obj["name"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+
+        val parsedSides = competitors.mapNotNull { element ->
+            val side = element.jsonObjectOrNull() ?: return@mapNotNull null
+            val teamObj = side["team"]?.jsonObjectOrNull()
+            val athleteObj = side["athlete"]?.jsonObjectOrNull()
+            val parsedTeam = when {
+                teamObj != null -> team(teamObj)
+                athleteObj != null -> athleteAsTeam(athleteObj, league)
+                else -> return@mapNotNull null
+            }
             val homeAway = side["homeAway"]?.stringOrNull()
             homeAway to GameSide(
-                team = team(teamObj),
+                team = parsedTeam,
                 score = side["score"]?.stringOrNull()?.takeIf { it.isNotBlank() },
-                record = side["records"]?.asArray()?.firstOrNull()?.jsonObject
+                record = side["records"]?.asArray()?.firstOrNull()?.jsonObjectOrNull()
                     ?.get("summary")?.stringOrNull(),
                 winner = side["winner"]?.jsonPrimitive?.booleanOrNull == true,
+                linescores = side["linescores"]?.asArray()?.mapNotNull { ls ->
+                    ls.jsonObjectOrNull()?.get("displayValue")?.stringOrNull()
+                        ?: ls.jsonObjectOrNull()?.get("value")?.jsonPrimitive?.intOrNull?.toString()
+                }.orEmpty(),
             )
-        }.toMap()
-        val away = sides["away"] ?: sides.values.firstOrNull() ?: return null
-        val home = sides["home"] ?: sides.values.lastOrNull() ?: return null
+        }
 
-        val status = competition?.get("status")?.jsonObject ?: obj["status"]?.jsonObject
+        // Standard 2-sided matchup (team or 1v1 athlete), OR a field event (F1, NASCAR, PGA) with
+        // many competitors or an event title.
+        val isFieldEvent = league.sport in FIELD_EVENT_SPORTS && (competitors.size > 2 || (parsedSides.size < 2 && eventName != null))
+        val (away, home) = when {
+            isFieldEvent -> fieldEventSides(eventName ?: league.name, league, parsedSides.map { it.second })
+            parsedSides.size >= 2 -> {
+                val byRole = parsedSides.toMap()
+                val awaySide = byRole["away"] ?: parsedSides.first().second
+                val homeSide = byRole["home"] ?: parsedSides.last().second
+                awaySide to homeSide
+            }
+            else -> return null
+        }
+
+        val status = competition["status"]?.jsonObject ?: obj["status"]?.jsonObject
         val typeObj = status?.get("type")?.jsonObject
         val completed = typeObj?.get("completed")?.jsonPrimitive?.booleanOrNull == true
         val stateName = typeObj?.get("state")?.stringOrNull()
         val clock = status?.get("displayClock")?.stringOrNull()
         val period = status?.get("period")?.jsonPrimitive?.intOrNull
+        val broadcasts = extractBroadcasts(competition)
         return SportsEvent(
             id = id,
             leagueId = league.id,
@@ -161,19 +321,80 @@ internal class EspnSportsFeed(
             },
             status = typeObj?.get("shortDetail")?.stringOrNull()
                 ?: typeObj?.get("detail")?.stringOrNull(),
-            // The running clock, on its own. shortDetail folds it together with the period
-            // ("9:58 - 3rd"), and a countdown nobody can separate from its label cannot be styled
-            // or shortened when the card is narrow.
             clock = clock?.takeIf { it.isNotBlank() && it != "0:00" },
             away = away,
             home = home,
-            situation = competition?.get("situation")?.jsonObject
+            situation = competition["situation"]?.jsonObject
                 ?.get("lastPlay")?.jsonObject?.get("text")?.stringOrNull(),
-            network = competition?.get("broadcasts")?.asArray()?.firstOrNull()?.jsonObject
-                ?.get("names")?.asArray()?.firstOrNull()?.stringOrNull()
-                ?: competition?.get("broadcast")?.stringOrNull(),
+            venue = competition["venue"]?.jsonObject?.get("fullName")?.stringOrNull(),
+            network = broadcasts.firstOrNull(),
+            broadcasts = broadcasts,
+            title = if (isFieldEvent || league.sport == Sport.FIGHTING) eventName else null,
             progress = progressOf(status),
         )
+    }
+
+    private fun athleteAsTeam(athleteObj: JsonObject, league: League): Team {
+        val fullName = athleteObj["displayName"]?.stringOrNull()
+            ?: athleteObj["fullName"]?.stringOrNull()
+            ?: athleteObj["shortName"]?.stringOrNull().orEmpty()
+        val shortName = athleteObj["shortName"]?.stringOrNull() ?: fullName
+        val abbr = fullName.split(' ').lastOrNull()?.take(3)?.uppercase().orEmpty()
+        return Team(
+            id = athleteObj["id"]?.stringOrNull().orEmpty(),
+            name = fullName,
+            shortName = shortName,
+            abbreviation = abbr.ifBlank { league.shortName.take(3) },
+            logo = athleteObj["headshot"]?.jsonObjectOrNull()?.get("href")?.stringOrNull()
+                ?: athleteObj["flag"]?.jsonObjectOrNull()?.get("href")?.stringOrNull(),
+            color = league.color,
+        )
+    }
+
+    private fun fieldEventSides(
+        eventName: String,
+        league: League,
+        leaders: List<GameSide>,
+    ): Pair<GameSide, GameSide> {
+        val topOne = leaders.getOrNull(0)
+        val topTwo = leaders.getOrNull(1)
+        if (topOne != null && topTwo != null && (topOne.score != null || topOne.winner)) {
+            return topOne to topTwo
+        }
+        return GameSide(
+            team = Team(
+                id = "${league.id}:event",
+                name = eventName,
+                shortName = eventName,
+                abbreviation = league.shortName.take(4),
+                color = league.color,
+            ),
+        ) to GameSide(
+            team = Team(
+                id = "${league.id}:series",
+                name = league.name,
+                shortName = league.name,
+                abbreviation = league.shortName.take(4),
+                color = league.color,
+            ),
+        )
+    }
+
+    private fun extractBroadcasts(competition: JsonObject): List<String> {
+        val out = LinkedHashSet<String>()
+        competition["broadcasts"]?.asArray()?.forEach { entry ->
+            entry.jsonObjectOrNull()?.get("names")?.asArray()?.forEach { n ->
+                n.stringOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let(out::add)
+            }
+        }
+        competition["geoBroadcasts"]?.asArray()?.forEach { entry ->
+            entry.jsonObjectOrNull()?.get("media")?.jsonObjectOrNull()?.get("shortName")
+                ?.stringOrNull()?.trim()?.takeIf { it.isNotEmpty() }?.let(out::add)
+        }
+        competition["broadcast"]?.stringOrNull()?.split('/')?.forEach { part ->
+            part.trim().takeIf { it.isNotEmpty() }?.let(out::add)
+        }
+        return out.toList()
     }
 
     /** How far through the game we are, from the period and the clock; null when untimed. */
@@ -195,6 +416,38 @@ internal class EspnSportsFeed(
             ?: obj["logos"]?.asArray()?.firstOrNull()?.jsonObject?.get("href")?.stringOrNull(),
         color = obj["color"]?.stringOrNull()?.let { parseHexColor(it) },
     )
+
+    private fun playByPlay(root: JsonObject): List<PlayByPlayEntry> {
+        val directPlays = root["plays"]?.asArray()
+        val plays = if (directPlays != null) {
+            directPlays
+        } else {
+            // NFL summaries nest each play under its drive; flatten drives in feed order.
+            root["drives"]?.jsonObjectOrNull()?.let { drives ->
+                val previous = drives["previous"]?.asArray().orEmpty()
+                val current = listOfNotNull(drives["current"])
+                (previous + current).flatMap { drive ->
+                    drive.jsonObjectOrNull()?.get("plays")?.asArray().orEmpty()
+                }
+            }.orEmpty()
+        }
+        return plays.mapIndexedNotNull { index, element ->
+            val obj = element.jsonObjectOrNull() ?: return@mapIndexedNotNull null
+            val text = obj["text"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+                ?: obj["shortDescription"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+                ?: return@mapIndexedNotNull null
+            PlayByPlayEntry(
+                id = obj["id"]?.stringOrNull() ?: obj["sequenceNumber"]?.stringOrNull() ?: "play:$index",
+                period = obj["period"]?.jsonObjectOrNull()?.get("displayValue")?.stringOrNull()
+                    ?: obj["period"]?.jsonObjectOrNull()?.get("number")?.stringOrNull()?.let { "Period $it" },
+                clock = obj["clock"]?.jsonObjectOrNull()?.get("displayValue")?.stringOrNull(),
+                text = text,
+                awayScore = obj["awayScore"]?.stringOrNull(),
+                homeScore = obj["homeScore"]?.stringOrNull(),
+                scoring = obj["scoringPlay"]?.jsonPrimitive?.booleanOrNull == true,
+            )
+        }.distinctBy { it.id }
+    }
 
     private fun scoringPlays(plays: JsonArray): List<ScoringPlay> = plays.mapNotNull { element ->
         val obj = element.jsonObjectOrNull() ?: return@mapNotNull null
@@ -341,6 +594,10 @@ internal class EspnSportsFeed(
         const val ESPN = "https://site.api.espn.com/apis/site/v2/sports/"
         const val ESPN_STANDINGS = "https://site.api.espn.com/apis/v2/sports/"
 
+        val DIVISION_LEAGUES = setOf("football/nfl", "basketball/nba", "hockey/nhl", "baseball/mlb")
+        val META_STAT_NAMES = setOf("rank", "rankChange", "clincher", "playoffSeed")
+        val FIELD_EVENT_SPORTS = setOf(Sport.RACING, Sport.GOLF)
+
         val IsoUtc = Regex(
             """(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?Z?""",
         )
@@ -360,7 +617,7 @@ internal fun JsonElement?.jsonObjectOrNull(): JsonObject? = this as? JsonObject
 internal fun JsonElement?.stringOrNull(): String? = this?.let { runCatching { it.jsonPrimitive.contentOrNull }.getOrNull() }
 
 internal fun parseHexColor(hex: String): Long? {
-    val clean = hex.removePrefix("#").trim()
+    val clean = hex.trim().trimStart('#')
     if (clean.length != 6 && clean.length != 8) return null
     val value = clean.toLongOrNull(16) ?: return null
     return if (clean.length == 6) 0xFF000000L or value else value

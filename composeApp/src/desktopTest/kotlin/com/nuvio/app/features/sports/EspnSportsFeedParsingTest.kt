@@ -31,6 +31,7 @@ class EspnSportsFeedParsingTest {
             {"events":[{
               "id":"401671814","date":"2026-11-17T01:15:00Z",
               "competitions":[{
+                "venue":{"fullName":"Johnson Hagood Stadium"},
                 "status":{"period":3,"displayClock":"9:42",
                   "type":{"state":"in","completed":false,"shortDetail":"3rd · 9:42"}},
                 "broadcasts":[{"names":["ESPN"]}],
@@ -61,6 +62,7 @@ class EspnSportsFeedParsingTest {
         assertEquals("East Carolina", game.home.team.name)
         assertEquals("35", game.home.score)
         assertEquals("ESPN", game.network)
+        assertEquals("Johnson Hagood Stadium", game.venue)
         assertEquals(0xFF0D3B66L, game.away.team.color)
         assertTrue(game.isLive && game.hasScore)
         // 2026-11-17T01:15:00Z
@@ -306,10 +308,73 @@ class EspnSportsFeedParsingTest {
         val rows = feed(body).standings(nfl)
 
         assertEquals(listOf("Bills"), rows.map { it.team.shortName })
+        assertEquals("AFC East", rows.single().group)
+        assertEquals("AFC", rows.single().conference)
         // abbreviation, not the camelCase API name and not the wide display name.
         assertEquals(listOf("W", "L", "T", "PCT", "DIFF", "PF"), SportsTable.columns(rows).map { it.label })
         // A blank value is dropped at parse time rather than shown as an empty column.
         assertTrue(rows.single().values.none { it.label == "DED" })
         assertEquals(listOf("8", "1", "0", ".889", "+88", "287"), SportsTable.cells(rows.single(), SportsTable.columns(rows)))
+    }
+
+    @Test
+    fun `racing driver standings compute points behind leader`() = runBlocking {
+        val f1 = SportsCatalog.league("racing/f1")!!
+        val seenUrls = mutableListOf<String>()
+        val body = """
+            {"children":[
+              {"name":"Driver Standings","standings":{"entries":[
+                {"athlete":{"id":"1","displayName":"Max Verstappen","shortName":"M. Verstappen"},
+                 "stats":[{"name":"rank","value":1},{"name":"championshipPts","abbreviation":"PTS","displayValue":"393","value":393}]},
+                {"athlete":{"id":"2","displayName":"Lando Norris","shortName":"L. Norris"},
+                 "stats":[{"name":"rank","value":2},{"name":"championshipPts","abbreviation":"PTS","displayValue":"331","value":331}]}
+              ]}},
+              {"name":"Constructor Standings","standings":{"entries":[
+                {"team":{"id":"99","displayName":"McLaren","shortDisplayName":"McLaren","abbreviation":"MCL"},
+                 "stats":[{"name":"points","abbreviation":"PTS","displayValue":"593"}]}
+              ]}}
+            ]}
+        """.trimIndent()
+
+        val rows = feed(body) { seenUrls += it }.standings(f1)
+        val table = SportsTable.build(f1, rows)
+
+        // Single-table / racing leagues do not request ?level=3, and only the Drivers leaf is kept.
+        assertTrue(!seenUrls.single().contains("level=3"))
+        assertEquals(2, rows.size)
+        assertTrue(rows.all { it.athlete })
+        assertEquals(listOf("PTS", "BEHIND"), table.columns.map { it.label })
+        assertEquals(listOf("393", "–"), SportsTable.cells(rows[0], table.columns))
+        assertEquals(listOf("331", "-62"), SportsTable.cells(rows[1], table.columns))
+    }
+
+    @Test
+    fun `scoreboard collects all broadcasts, linescores, and 1v1 athlete fights`() = runBlocking {
+        val ufc = SportsCatalog.league("mma/ufc")!!
+        val body = """
+            {"events":[{
+              "id":"60001","shortName":"UFC 310: Pantoja vs. Asakura","date":"2026-12-07T03:00Z",
+              "competitions":[{
+                "status":{"period":2,"displayClock":"3:12","type":{"state":"in","completed":false,"shortDetail":"R2 · 3:12"}},
+                "broadcasts":[{"names":["ESPN+","TNT Sports 1"]}],
+                "geoBroadcasts":[{"media":{"shortName":"TSN"}}],
+                "competitors":[
+                  {"homeAway":"away","athlete":{"id":"10","displayName":"Alexandre Pantoja","shortName":"A. Pantoja"},
+                   "linescores":[{"displayValue":"10"}]},
+                  {"homeAway":"home","athlete":{"id":"11","displayName":"Kai Asakura","shortName":"K. Asakura"},
+                   "linescores":[{"displayValue":"9"}]}
+                ]
+              }]
+            }]}
+        """.trimIndent()
+
+        val event = feed(body).scoreboard(ufc, "20261207", "20261207").single()
+
+        assertEquals(GameState.LIVE, event.state)
+        assertEquals(listOf("ESPN+", "TNT Sports 1", "TSN"), event.broadcasts)
+        assertEquals("ESPN+", event.network)
+        assertEquals("A. Pantoja", event.away.team.shortName)
+        assertEquals("K. Asakura", event.home.team.shortName)
+        assertEquals(listOf("10"), event.away.linescores)
     }
 }

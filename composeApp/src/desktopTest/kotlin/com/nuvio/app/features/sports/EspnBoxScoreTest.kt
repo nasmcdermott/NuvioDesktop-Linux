@@ -119,6 +119,46 @@ class EspnBoxScoreTest {
     }
 
     @Test
+    fun `flat basketball play list is parsed in provider order`() = runBlocking {
+        val nba = SportsCatalog.league("basketball/nba")!!
+        val body = """
+            {"plays":[
+              {"id":"p1","text":"Jump Ball","period":{"number":1,"displayValue":"1st Quarter"},
+               "clock":{"displayValue":"12:00"},"awayScore":0,"homeScore":0,"scoringPlay":false},
+              {"id":"p2","text":"A. Player makes layup","period":{"number":1,"displayValue":"1st Quarter"},
+               "clock":{"displayValue":"11:40"},"awayScore":2,"homeScore":0,"scoringPlay":true}
+            ]}
+        """.trimIndent()
+
+        val plays = feed(body).summary(nba, "1").playByPlay
+
+        assertEquals(listOf("p1", "p2"), plays.map { it.id })
+        assertEquals("1st Quarter", plays.last().period)
+        assertEquals("11:40", plays.last().clock)
+        assertTrue(plays.last().scoring)
+        assertEquals("2", plays.last().awayScore)
+    }
+
+    @Test
+    fun `NFL drive plays flatten in chronological order and include the current drive`() = runBlocking {
+        val body = """
+            {"drives":{"previous":[{"plays":[
+              {"id":"p1","text":"Kickoff","period":{"number":1},"clock":{"displayValue":"15:00"},"awayScore":0,"homeScore":0},
+              {"id":"p2","text":"Touchdown","period":{"number":1},"clock":{"displayValue":"8:00"},"awayScore":0,"homeScore":7,"scoringPlay":true}
+            ]}],"current":{"plays":[
+              {"id":"p3","shortDescription":"Run","period":{"number":2},"clock":{"displayValue":"12:00"},"awayScore":0,"homeScore":7}
+            ]}}}
+        """.trimIndent()
+
+        val plays = feed(body).summary(nfl, "1").playByPlay
+
+        assertEquals(listOf("p1", "p2", "p3"), plays.map { it.id })
+        assertEquals("Period 2", plays.last().period)
+        assertEquals("Run", plays.last().text)
+        assertEquals("7", plays.last().homeScore)
+    }
+
+    @Test
     fun `a summary with no box score still parses`() = runBlocking {
         // A league the provider carries scores for but no players; the page must still draw.
         val loaded = feed("""{"header":{}}""").summary(nfl, "1")

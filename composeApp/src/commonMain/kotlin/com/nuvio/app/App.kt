@@ -4830,6 +4830,10 @@ private fun MainAppContent(
                                                 requestedSettingsPageName = "Iptv"
                                                 handleRootTabClick(AppScreenTab.Settings)
                                             },
+                                            onSportsSettingsClick = { // fork:sports
+                                                requestedSettingsPageName = "Sports"
+                                                handleRootTabClick(AppScreenTab.Settings)
+                                            },
                                             onMusicNavigate = { navController.navigateIfResumed(it) }, // fork:music
                                             onPlayYouTube = { navController.navigateToPlayer(it) }, // fork:youtube-mode
                                             onYouTubeSettingsClick = {
@@ -6966,6 +6970,7 @@ private fun AppTabHost(
     onNavigateToLiveTv: (() -> Unit)? = null,
     onNavigateToMusic: (() -> Unit)? = null,
     onLiveTvSettingsClick: () -> Unit = {},
+    onSportsSettingsClick: () -> Unit = {}, // fork:sports
     onMusicNavigate: (Any) -> Unit = {}, // fork:music
     onPlayYouTube: (PlayerLaunch) -> Unit = {}, // fork:youtube-mode
     onYouTubeSettingsClick: () -> Unit = {},
@@ -7113,6 +7118,7 @@ private fun AppTabHost(
                     com.nuvio.app.features.sports.SportsScreen(
                         modifier = Modifier.fillMaxSize(),
                         topChromePadding = topChromePadding,
+                        onOpenSettings = onSportsSettingsClick,
                     )
                 }
             } else {

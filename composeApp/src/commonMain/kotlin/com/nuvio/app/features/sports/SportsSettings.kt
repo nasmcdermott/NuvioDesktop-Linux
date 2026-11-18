@@ -22,8 +22,10 @@ data class SportsSettings(
     val enabled: Boolean = true,
     /** "" = take the region from the system, as the league catalog's defaults describe. */
     val region: String = "",
-    /** Hides scores on the cards and the scoreboard; the page keeps its shape. */
+    /** Hides scores on the cards, scoreboard and tables; the page keeps its shape. */
     val hideScores: Boolean = false,
+    /** Hide games without a current IPTV match, except games involving followed teams. */
+    val onlyGamesOnMyChannels: Boolean = false,
     /** Leagues taken off the page entirely. */
     val hiddenLeagues: Set<String> = emptySet(),
     /**
@@ -31,8 +33,26 @@ data class SportsSettings(
      * infers, because the user can see their own playlist and the matcher cannot.
      */
     val picks: Map<String, String> = emptyMap(),
+    /** "leagueId:teamId" -> channel key: use this channel for every game of that team. */
+    val teamChannels: Map<String, String> = emptyMap(),
+    /** Normalized network key ("espn plus", "tnt") -> channel key: use this channel for that broadcaster. */
+    val networkChannels: Map<String, String> = emptyMap(),
+    /** leagueId -> channel key: use this channel for every event of that competition (e.g. Formula 1). */
+    val leagueChannels: Map<String, String> = emptyMap(),
     /** "eventId|channelKey" the user said is NOT showing that game. */
     val blocked: Set<String> = emptySet(),
+    /**
+     * Preferred / default IPTV playlist id for Sports matching and playback. "" searches every
+     * playlist in Live TV order; when set, channels from that IPTV service lead.
+     */
+    val preferredPlaylistId: String = "",
+    /**
+     * Preferred channel region / language filter on game pages: "" = all regions, "EN" = English,
+     * "UK" / "US" / "CA" / "IE" / "AU", or "lang:es" etc.
+     */
+    val channelRegion: String = "",
+    /** Ranks 4K / FHD streams ahead of SD and backup copies within the same match tier. */
+    val bestQualityFirst: Boolean = true,
     /** Teams the viewer follows, as "leagueId:teamId" — see [SportsFollows.teamKey]. */
     val followedTeams: Set<String> = emptySet(),
     /** Leagues the viewer follows. A followed league shows all of its games, teams followed or not. */
@@ -42,7 +62,11 @@ data class SportsSettings(
      * that someone who deliberately followed nothing is not asked again on every launch.
      */
     val setUp: Boolean = false,
-)
+) {
+    /** Total number of manual channel overrides across games, teams, networks and competitions. */
+    val totalPickCount: Int
+        get() = picks.size + teamChannels.size + networkChannels.size + leagueChannels.size
+}
 
 private val json = Json { ignoreUnknownKeys = true; prettyPrint = false }
 
@@ -77,12 +101,46 @@ internal object SportsSettingsRepository {
 
     fun setHideScores(hide: Boolean) = mutate { it.copy(hideScores = hide) }
 
+    fun setOnlyGamesOnMyChannels(enabled: Boolean) = mutate { it.copy(onlyGamesOnMyChannels = enabled) }
+
     fun setLeagueHidden(leagueId: String, hidden: Boolean) = mutate { current ->
         current.copy(hiddenLeagues = if (hidden) current.hiddenLeagues + leagueId else current.hiddenLeagues - leagueId)
     }
 
     fun setPick(eventId: String, channelKey: String?) = mutate { current ->
         current.copy(picks = if (channelKey == null) current.picks - eventId else current.picks + (eventId to channelKey))
+    }
+
+    fun setTeamChannel(teamKey: String, channelKey: String?) = mutate { current ->
+        current.copy(
+            teamChannels = if (channelKey == null) current.teamChannels - teamKey else current.teamChannels + (teamKey to channelKey),
+        )
+    }
+
+    fun setNetworkChannel(networkKey: String, channelKey: String?) = mutate { current ->
+        val clean = SportsChannelMatcher.networkKey(networkKey)
+        if (clean.isEmpty()) return@mutate current
+        current.copy(
+            networkChannels = if (channelKey == null) current.networkChannels - clean else current.networkChannels + (clean to channelKey),
+        )
+    }
+
+    fun setLeagueChannel(leagueId: String, channelKey: String?) = mutate { current ->
+        current.copy(
+            leagueChannels = if (channelKey == null) current.leagueChannels - leagueId else current.leagueChannels + (leagueId to channelKey),
+        )
+    }
+
+    fun setPreferredPlaylistId(playlistId: String) = mutate { current ->
+        current.copy(preferredPlaylistId = playlistId.trim())
+    }
+
+    fun setChannelRegion(regionCode: String) = mutate { current ->
+        current.copy(channelRegion = regionCode.trim())
+    }
+
+    fun setBestQualityFirst(enabled: Boolean) = mutate { current ->
+        current.copy(bestQualityFirst = enabled)
     }
 
     fun blockChannel(eventId: String, channelKey: String) = mutate { current ->
@@ -93,7 +151,15 @@ internal object SportsSettingsRepository {
         current.copy(blocked = current.blocked - "${eventId}|$channelKey")
     }
 
-    fun clearPicks() = mutate { it.copy(picks = emptyMap(), blocked = emptySet()) }
+    fun clearPicks() = mutate {
+        it.copy(
+            picks = emptyMap(),
+            teamChannels = emptyMap(),
+            networkChannels = emptyMap(),
+            leagueChannels = emptyMap(),
+            blocked = emptySet(),
+        )
+    }
 
     fun setTeamFollowed(teamKey: String, followed: Boolean) = mutate { current ->
         current.copy(

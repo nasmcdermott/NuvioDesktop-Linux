@@ -49,6 +49,10 @@ import nuvio.composeapp.generated.resources.compose_settings_page_continue_watch
 import nuvio.composeapp.generated.resources.compose_settings_page_games
 import nuvio.composeapp.generated.resources.iptv_settings_page
 import nuvio.composeapp.generated.resources.iptv_settings_description
+import nuvio.composeapp.generated.resources.sports_settings_section
+import nuvio.composeapp.generated.resources.sports_settings_uses_livetv
+import nuvio.composeapp.generated.resources.sports_settings_uses_livetv_description
+import androidx.compose.material.icons.rounded.EmojiEvents
 import nuvio.composeapp.generated.resources.compose_settings_page_homescreen
 import nuvio.composeapp.generated.resources.compose_settings_page_integrations
 import nuvio.composeapp.generated.resources.compose_settings_page_meta_screen
@@ -114,6 +118,7 @@ internal fun LazyListScope.settingsRootContent(
     onLocalLibraryClick: () -> Unit,
     onGamesClick: () -> Unit,
     onIptvClick: () -> Unit,
+    onSportsClick: () -> Unit = {},
     onAutoDownloadsClick: () -> Unit,
     onAppearanceClick: () -> Unit,
     onAdvancedClick: () -> Unit,
@@ -135,6 +140,7 @@ internal fun LazyListScope.settingsRootContent(
     onAccountClick: () -> Unit,
     onSwitchProfileClick: (() -> Unit)? = null,
     showDownloadsEntry: Boolean = true,
+    showSportsEntry: Boolean = false,
     showNotificationsEntry: Boolean = true,
     showPluginsEntry: Boolean = true,
     showAccountSection: Boolean = true,
@@ -240,6 +246,16 @@ internal fun LazyListScope.settingsRootContent(
                         isTablet = isTablet,
                         onClick = onIptvClick,
                     )
+                    if (showSportsEntry) {
+                        SettingsGroupDivider(isTablet = isTablet)
+                        SettingsNavigationRow(
+                            title = stringResource(Res.string.sports_settings_section),
+                            description = stringResource(Res.string.sports_settings_uses_livetv_description),
+                            icon = Icons.Rounded.EmojiEvents,
+                            isTablet = isTablet,
+                            onClick = onSportsClick,
+                        )
+                    }
                     if (showDownloadsEntry) {
                         SettingsGroupDivider(isTablet = isTablet)
                         SettingsNavigationRow(

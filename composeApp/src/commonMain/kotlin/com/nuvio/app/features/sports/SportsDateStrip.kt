@@ -1,15 +1,9 @@
 package com.nuvio.app.features.sports
 
-import androidx.compose.ui.input.key.onKeyEvent
-import com.nuvio.app.core.ui.NavAction
-import com.nuvio.app.core.ui.navAction
 import androidx.compose.foundation.background
-import androidx.compose.foundation.focusable
-import androidx.compose.foundation.border
-import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
-import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.widthIn
@@ -19,25 +13,16 @@ import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.getValue
-import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
-import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.SolidColor
-import androidx.compose.ui.input.key.Key
-import androidx.compose.ui.input.key.KeyEventType
-import androidx.compose.ui.input.key.key
-import com.nuvio.app.core.ui.navigationKey
-import androidx.compose.ui.input.key.onPreviewKeyEvent
-import androidx.compose.ui.input.key.type
-import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.smoothBorder
 import java.time.LocalDate
 import java.time.format.DateTimeFormatter
 import java.time.format.TextStyle
@@ -52,13 +37,11 @@ internal data class SportsDay(
     /** The weekday, always: "Thu". */
     val weekday: String,
 )
+
 private val DayKeyFormatter = DateTimeFormatter.ofPattern("yyyyMMdd")
+
 /**
  * The days the strip offers, [radius] either side of [today].
- *
- * Built from the user's own zone and locale rather than a fixed English list: the rest of the app
- * already follows the system locale, and a dated strip that does not is the one place that reads
- * as foreign.
  */
 internal fun sportsDays(
     today: LocalDate = LocalDate.now(),
@@ -78,81 +61,94 @@ internal fun sportsDays(
         weekday = date.dayOfWeek.getDisplayName(TextStyle.SHORT, locale),
     )
 }
+
 /**
- * The date strip. Each pill is its own focus stop, so a gamepad's left/right lands on a day the
- * same way it lands on a channel in Live TV, and the mouse gets the same result.
+ * The date strip. Connected into the Sports page's vertical focus ladder: Up steps to the sport
+ * filter chips, Down steps into the multi-row games grid, and entering the strip restores focus to
+ * the currently selected day.
  */
 @Composable
 internal fun SportsDateStrip(
     days: List<SportsDay>,
     selected: String,
+    bandRequester: FocusRequester,
     onSelect: (String) -> Unit,
+    onUp: () -> Boolean,
     onDown: () -> Boolean,
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
+    val pillRequesters = remember { HashMap<String, FocusRequester>() }
+    fun requesterFor(dayKey: String): FocusRequester = pillRequesters.getOrPut(dayKey) { FocusRequester() }
+    val selectedRequester = requesterFor(selected)
+
     LazyRow(
         modifier = modifier
             .fillMaxWidth()
-            // A day pill sits in a horizontal strip above the cards, and Compose's arrow handling
-            // inside such a strip turns Down into a click on the pill. Down has to mean "go on to
-            // the games" here, so it is answered before the pill sees it.
-            .onPreviewKeyEvent { event ->
-                event.type == KeyEventType.KeyDown && event.navigationKey() == Key.DirectionDown && onDown()
-            },
+            .sportsHorizontalBand(
+                bandRequester = bandRequester,
+                fallbackRequester = selectedRequester,
+                onUp = onUp,
+                onDown = onDown,
+            ),
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+        contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
         verticalAlignment = Alignment.CenterVertically,
     ) {
         items(days, key = { it.day }) { day ->
             SportsDayPill(
                 day = day,
                 selected = day.day == selected,
+                focusRequester = requesterFor(day.day),
                 onClick = { onSelect(day.day) },
             )
         }
     }
 }
+
 @Composable
-private fun SportsDayPill(day: SportsDay, selected: Boolean, onClick: () -> Unit) {
+private fun SportsDayPill(
+    day: SportsDay,
+    selected: Boolean,
+    focusRequester: FocusRequester,
+    onClick: () -> Unit,
+) {
     val tokens = MaterialTheme.nuvio
-    var focused by remember { mutableStateOf(false) }
+    val interaction = rememberSportsInteraction(baseScale = 1.05f, label = "sportsDayPillZoom")
     val shape = RoundedCornerShape(50)
     val labelColor = if (selected) tokens.colors.onAccent else tokens.colors.textPrimary
-    val sublabelColor = if (selected) tokens.colors.onAccent.copy(alpha = tokens.opacity.secondary) else tokens.colors.textSecondary
+    val sublabelColor = if (selected) {
+        tokens.colors.onAccent.copy(alpha = tokens.opacity.secondary)
+    } else {
+        tokens.colors.textSecondary
+    }
+    val borderWidth = if (interaction.focused) 2.dp else tokens.borders.hairline
+
     Column(
         modifier = Modifier
-            .widthIn(min = 80.dp)
+            .widthIn(min = 84.dp)
+            .sportsInteractive(
+                state = interaction,
+                focusRequester = focusRequester,
+                onClick = onClick,
+            )
             .clip(shape)
             .background(
                 when {
                     selected -> tokens.colors.accentFill
-                    focused -> SolidColor(tokens.colors.focusBackground)
+                    interaction.highlighted -> SolidColor(tokens.colors.focusBackground)
                     else -> SolidColor(tokens.colors.surfaceCard)
                 },
             )
-            .border(
-                tokens.borders.hairline,
-                when {
+            .smoothBorder(
+                width = borderWidth,
+                color = when {
+                    interaction.focused -> tokens.colors.borderFocus
                     selected -> tokens.colors.borderSelected
-                    focused -> tokens.colors.borderFocus
                     else -> tokens.colors.borderSubtle
                 },
-                shape,
+                shape = shape,
             )
-            .onFocusChanged { focused = it.isFocused }
-            // A Tab role makes Enter fall through instead of choosing the day (see the sport chips).
-            // focusable() before clickable, and the Select handler before both: see KeyboardSelect.
-            .focusable()
-            .onKeyEvent { event ->
-                val activates = event.navAction() == NavAction.Select || event.key == Key.Spacebar
-                when {
-                    !activates -> false
-                    event.type == KeyEventType.KeyDown -> true
-                    event.type == KeyEventType.KeyUp -> { onClick(); true }
-                    else -> true
-                }
-            }
-            .clickable(onClick = onClick)
             .padding(
                 horizontal = tokens.components.chipHorizontalPadding,
                 vertical = tokens.components.chipVerticalPadding,
@@ -167,7 +163,7 @@ private fun SportsDayPill(day: SportsDay, selected: Boolean, onClick: () -> Unit
         Text(
             text = day.label,
             style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (selected) FontWeight.SemiBold else FontWeight.Medium,
+            fontWeight = if (selected || interaction.focused) FontWeight.SemiBold else FontWeight.Medium,
             color = labelColor,
         )
     }

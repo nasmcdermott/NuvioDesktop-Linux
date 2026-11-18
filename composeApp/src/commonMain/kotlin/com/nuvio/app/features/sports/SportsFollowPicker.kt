@@ -13,7 +13,8 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.widthIn
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.itemsIndexed
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Check
@@ -33,8 +34,11 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
@@ -43,6 +47,7 @@ import androidx.compose.ui.unit.sp
 import com.nuvio.app.core.ui.NuvioModalDialog
 import com.nuvio.app.core.ui.NuvioTextField
 import com.nuvio.app.core.ui.nuvio
+import com.nuvio.app.core.ui.smoothBorder
 
 /**
  * Follow teams and leagues.
@@ -157,15 +162,44 @@ internal fun SportsFollowPicker(
             }
         }
 
+        val listState = rememberLazyListState()
+        val listFocus = rememberSportsListFocus(listState)
+        val focusableLazyIndices = remember(rows) {
+            rows.mapIndexedNotNull { index, row ->
+                index.takeIf { row is PickerRow.LeagueRow || row is PickerRow.TeamRow }
+            }
+        }
+        val focusRowForLazyIndex = remember(focusableLazyIndices) {
+            focusableLazyIndices.withIndex().associate { it.value to it.index }
+        }
+
         LazyColumn(
-            modifier = Modifier.fillMaxWidth().heightIn(max = 460.dp),
+            state = listState,
+            modifier = Modifier
+                .fillMaxWidth()
+                .heightIn(max = 460.dp)
+                .onKeyEvent { event ->
+                    listFocus.handleVerticalAndSideKeys(
+                        event = event,
+                        rowCount = focusableLazyIndices.size,
+                        lazyIndexOfRow = { row -> focusableLazyIndices.getOrElse(row) { 0 } },
+                        onUpFromFirst = { false },
+                    )
+                },
             verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
         ) {
-            items(rows, key = { it.key }) { row ->
+            itemsIndexed(rows, key = { _, row -> row.key }) { lazyIndex, row ->
+                val focusRow = focusRowForLazyIndex[lazyIndex]
+                val focusRequester = focusRow?.let(listFocus::requester)
+                val onFocused = focusRow?.let { rowIndex ->
+                    { listFocus.focusedRowIndex = rowIndex }
+                }
                 when (row) {
                     is PickerRow.LeagueRow -> SportsPickerLeagueHeader(
                         league = row.league,
                         followed = row.followed,
+                        focusRequester = focusRequester,
+                        onFocused = onFocused,
                         onToggleFollow = {
                             SportsSettingsRepository.setLeagueFollowed(row.league.id, !row.followed)
                         },
@@ -173,6 +207,8 @@ internal fun SportsFollowPicker(
                     is PickerRow.TeamRow -> SportsPickerTeamRow(
                         team = row.team,
                         followed = row.followed,
+                        focusRequester = focusRequester,
+                        onFocused = onFocused,
                         onToggle = {
                             SportsSettingsRepository.setTeamFollowed(
                                 SportsFollows.teamKey(row.leagueId, row.team.id),
@@ -235,22 +271,36 @@ private fun loadTeams(
 private fun SportsPickerLeagueHeader(
     league: League,
     followed: Boolean,
+    focusRequester: FocusRequester? = null,
+    onFocused: (() -> Unit)? = null,
     onToggleFollow: () -> Unit,
 ) {
     val tokens = MaterialTheme.nuvio
-    var focused by remember { mutableStateOf(false) }
+    val interaction = rememberSportsInteraction(baseScale = 1.02f, label = "sportsFollowLeagueZoom")
+    val shape = tokens.shapes.compactCard
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(tokens.shapes.compactCard)
-            .background(if (focused) tokens.colors.focusBackground else tokens.colors.surfaceCard)
-            .border(
-                tokens.borders.hairline,
-                if (focused) tokens.colors.borderFocus else tokens.colors.borderSubtle,
-                tokens.shapes.compactCard,
+            .sportsInteractive(
+                state = interaction,
+                focusRequester = focusRequester,
+                onFocused = onFocused,
+                onClick = onToggleFollow,
             )
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(role = Role.Checkbox, onClick = onToggleFollow)
+            .clip(shape)
+            .background(
+                if (interaction.highlighted) SolidColor(tokens.colors.focusBackground)
+                else SolidColor(tokens.colors.surfaceCard),
+            )
+            .smoothBorder(
+                width = if (interaction.focused) 2.dp else tokens.borders.hairline,
+                color = when {
+                    interaction.focused -> tokens.colors.borderFocus
+                    followed -> tokens.colors.borderSelected
+                    else -> tokens.colors.borderSubtle
+                },
+                shape = shape,
+            )
             .padding(tokens.spacing.cardPaddingCompact),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
@@ -264,7 +314,7 @@ private fun SportsPickerLeagueHeader(
         Text(
             text = league.name,
             style = MaterialTheme.typography.bodyMedium,
-            fontWeight = FontWeight.Medium,
+            fontWeight = if (interaction.focused || followed) FontWeight.SemiBold else FontWeight.Medium,
             color = tokens.colors.textPrimary,
             modifier = Modifier.weight(1f),
             maxLines = 1,
@@ -281,22 +331,38 @@ private fun SportsPickerLeagueHeader(
 
 /** A team row, indented under its league. */
 @Composable
-private fun SportsPickerTeamRow(team: Team, followed: Boolean, onToggle: () -> Unit) {
+private fun SportsPickerTeamRow(
+    team: Team,
+    followed: Boolean,
+    focusRequester: FocusRequester? = null,
+    onFocused: (() -> Unit)? = null,
+    onToggle: () -> Unit,
+) {
     val tokens = MaterialTheme.nuvio
-    var focused by remember { mutableStateOf(false) }
+    val interaction = rememberSportsInteraction(baseScale = 1.02f, label = "sportsFollowTeamZoom")
+    val shape = tokens.shapes.compactCard
     Row(
         modifier = Modifier
             .fillMaxWidth()
             .padding(start = tokens.icons.md)
-            .clip(tokens.shapes.compactCard)
-            .background(if (focused) tokens.colors.focusBackground else Color.Transparent)
-            .border(
-                tokens.borders.hairline,
-                if (focused) tokens.colors.borderFocus else Color.Transparent,
-                tokens.shapes.compactCard,
+            .sportsInteractive(
+                state = interaction,
+                focusRequester = focusRequester,
+                onFocused = onFocused,
+                onClick = onToggle,
             )
-            .onFocusChanged { focused = it.isFocused }
-            .clickable(role = Role.Checkbox, onClick = onToggle)
+            .clip(shape)
+            .background(
+                if (interaction.highlighted) SolidColor(tokens.colors.focusBackground)
+                else SolidColor(Color.Transparent),
+            )
+            .then(
+                if (interaction.focused) {
+                    Modifier.smoothBorder(2.dp, tokens.colors.borderFocus, shape)
+                } else {
+                    Modifier
+                },
+            )
             .padding(tokens.spacing.cardPaddingCompact),
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),

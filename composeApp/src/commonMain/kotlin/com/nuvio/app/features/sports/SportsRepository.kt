@@ -44,6 +44,7 @@ internal object SportsRepository {
         const val FUTURE_MS = 30 * 60_000L
         const val PAST_MS = 24 * 60 * 60_000L
         const val TEAMS_MS = 7 * 24 * 60 * 60_000L
+        const val STANDINGS_MS = 60 * 60_000L
     }
 
     data class DayState(
@@ -61,6 +62,8 @@ internal object SportsRepository {
     private val states = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<DayState>>()
     private val locks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
     private val teamsCache = java.util.concurrent.ConcurrentHashMap<String, List<Team>>()
+    private val standingsCache = java.util.concurrent.ConcurrentHashMap<String, Pair<List<Standing>, Long>>()
+    private val standingsLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
 
     private val _version = MutableStateFlow(0)
 
@@ -109,8 +112,7 @@ internal object SportsRepository {
                     }
                 }
                 val now = System.currentTimeMillis()
-                val age = now - state.value.fetchedAtMs
-                if (!force && state.value.fetchedAtMs > 0L && age < ttlFor(day)) return@launch
+                if (!force && !daySnapshotStale(day, state.value.games, state.value.fetchedAtMs, now)) return@launch
 
                 state.update { it.copy(loading = true, error = null) }
                 try {
@@ -177,21 +179,120 @@ internal object SportsRepository {
             .getOrNull()
     }
 
-    /** A league's table, or null when it has none (most cup competitions do not). */
-    suspend fun standings(leagueId: String): List<Standing>? {
-        val league = SportsCatalog.league(leagueId) ?: return null
-        return runCatching { SportsFeeds.current.standings(league) }
-            .onFailure { error ->
-                if (error is CancellationException) throw error
-                log.w { "Could not load ${league.name} standings: ${error.message}" }
-            }
-            .getOrNull()
-            ?.takeIf { it.isNotEmpty() }
+    sealed interface StandingsResult {
+        data class Loaded(val rows: List<Standing>, val stale: Boolean = false) : StandingsResult
+        data object NoTable : StandingsResult
+        data object Failed : StandingsResult
     }
 
-    /** Drops every league's games in memory and on disk, for Settings > Clear sports cache. */
+    /**
+     * Loads [leagueId]'s standings from memory/disk cache (fresh for [Freshness.STANDINGS_MS]) or
+     * the feed. Distinguishes a cup competition with no table ([StandingsResult.NoTable]) from a
+     * failed network request ([StandingsResult.Failed]), and keeps cached rows if a refresh fails.
+     */
+    suspend fun loadStandings(leagueId: String, force: Boolean = false): StandingsResult {
+        val league = SportsCatalog.league(leagueId) ?: return StandingsResult.NoTable
+        val lock = standingsLocks.getOrPut(leagueId) { Mutex() }
+        return lock.withLock {
+            val now = System.currentTimeMillis()
+            val inMem = standingsCache[leagueId]
+            if (!force && inMem != null && now - inMem.second < Freshness.STANDINGS_MS) {
+                return@withLock if (inMem.first.isEmpty()) StandingsResult.NoTable else StandingsResult.Loaded(inMem.first)
+            }
+            val onDisk = if (inMem == null) SportsCache.readStandings(leagueId) else null
+            if (onDisk != null) {
+                standingsCache[leagueId] = onDisk.rows to onDisk.fetchedAtMs
+                if (!force && now - onDisk.fetchedAtMs < Freshness.STANDINGS_MS) {
+                    return@withLock if (onDisk.rows.isEmpty()) StandingsResult.NoTable else StandingsResult.Loaded(onDisk.rows)
+                }
+            }
+            val fallbackRows = inMem?.first ?: onDisk?.rows
+            try {
+                val fresh = SportsFeeds.current.standings(league)
+                val fetchedAt = System.currentTimeMillis()
+                standingsCache[leagueId] = fresh to fetchedAt
+                SportsCache.writeStandings(leagueId, fresh, fetchedAt)
+                if (fresh.isEmpty()) StandingsResult.NoTable else StandingsResult.Loaded(fresh)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Throwable) {
+                log.w { "Could not load ${league.name} standings: ${error.message}" }
+                if (!fallbackRows.isNullOrEmpty()) {
+                    StandingsResult.Loaded(fallbackRows, stale = true)
+                } else {
+                    StandingsResult.Failed
+                }
+            }
+        }
+    }
+
+    /** A league's table, or null when it has none or could not be reached. */
+    suspend fun standings(leagueId: String): List<Standing>? =
+        (loadStandings(leagueId) as? StandingsResult.Loaded)?.rows
+
+    /** Every game already loaded in memory for [leagueId], ordered by kick-off. */
+    fun knownGames(leagueId: String): List<SportsEvent> =
+        states.values.asSequence()
+            .map { it.value }
+            .filter { it.leagueId == leagueId }
+            .flatMap { it.games.asSequence() }
+            .distinctBy { it.id }
+            .sortedBy { it.startMs }
+            .toList()
+
+    /**
+     * The days after today, fetched as one range call for the "games ahead" rows under a followed
+     * team. Memory only — the day cache stays keyed to the day strip — and refreshed on the same
+     * cadence as any future-day snapshot.
+     */
+    data class AheadState(
+        val leagueId: String,
+        val games: List<SportsEvent> = emptyList(),
+        val loading: Boolean = false,
+        val fetchedAtMs: Long = 0L,
+    )
+
+    private val aheadCache = java.util.concurrent.ConcurrentHashMap<String, MutableStateFlow<AheadState>>()
+    private val aheadLocks = java.util.concurrent.ConcurrentHashMap<String, Mutex>()
+
+    fun aheadState(leagueId: String): StateFlow<AheadState> =
+        aheadCache.getOrPut(leagueId) { MutableStateFlow(AheadState(leagueId)) }.asStateFlow()
+
+    fun refreshAhead(leagueId: String, aheadDays: Int = 21, force: Boolean = false) {
+        val league = SportsCatalog.league(leagueId) ?: return
+        val state = aheadCache.getOrPut(leagueId) { MutableStateFlow(AheadState(leagueId)) }
+        val lock = aheadLocks.getOrPut(leagueId) { Mutex() }
+        if (!lock.tryLock()) return
+        scope.launch {
+            try {
+                val now = System.currentTimeMillis()
+                if (!force && state.value.games.isNotEmpty() && now - state.value.fetchedAtMs < Freshness.FUTURE_MS) {
+                    return@launch
+                }
+                state.update { it.copy(loading = true) }
+                val from = LocalDate.now().plusDays(1).format(dayFormatter)
+                val to = LocalDate.now().plusDays(aheadDays.toLong()).format(dayFormatter)
+                try {
+                    val games = SportsFeeds.current.scoreboard(league, from, to)
+                    state.value = AheadState(leagueId, games, loading = false, fetchedAtMs = now)
+                    _version.update { it + 1 }
+                    log.i { "Loaded ${league.name} ahead: ${games.size} games" }
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Throwable) {
+                    state.update { it.copy(loading = false) }
+                    log.w { "Sports ahead fetch failed for ${league.id}: ${e.message}" }
+                }
+            } finally {
+                lock.unlock()
+            }
+        }
+    }
+
+    /** Drops every league's games and tables in memory and on disk, for Settings > Clear sports cache. */
     fun clear() {
         states.values.forEach { state -> state.update { DayState(it.leagueId, it.day) } }
+        standingsCache.clear()
         SportsCache.clearGames()
         _version.update { it + 1 }
     }
@@ -200,23 +301,38 @@ internal object SportsRepository {
         states.clear()
         locks.clear()
         teamsCache.clear()
+        standingsCache.clear()
+        standingsLocks.clear()
     }
 
     /**
-     * How long [day]'s games stay fresh. A live game moves constantly, today's schedule barely at
-     * all, and a day that has finished never changes again — so the intervals are far apart, and
-     * the cheap ones do not hammer a feed that has no rate limit but also no obligation to us.
+     * Whether [day]'s cached snapshot is old enough that a fetch is worth making. Age against the
+     * day's TTL decides in the normal case — a live day changes constantly, a future day barely at
+     * all, and a finished day never again — so the intervals stay far apart and the cheap ones do
+     * not hammer a feed that has no rate limit but also no obligation to us.
+     *
+     * The content check is the bug this exists for: a past-day snapshot captured while its games
+     * were still in progress used to sit under the 24-hour TTL, so going back to yesterday served
+     * the frozen "Live" scoreboard of the moment it was cached — a live match interface, clock
+     * stopped, for a game that had been over for hours. A snapshot of a past day in which any game
+     * has not clearly finished is treated as stale, forcing one corrective fetch that overwrites
+     * the cache with the finished states. (A past day can legitimately hold a live game — a match
+     * that bleeds across local midnight, or a multi-day contest — and the corrective fetch keeps
+     * it live rather than breaking it.)
      */
-    private fun ttlFor(day: String): Long {
+    internal fun daySnapshotStale(day: String, games: List<SportsEvent>, fetchedAtMs: Long, nowMs: Long): Boolean {
+        if (fetchedAtMs <= 0L) return true
         val today = today()
-        return when {
+        val ttl = when {
             day > today -> Freshness.FUTURE_MS
             day < today -> Freshness.PAST_MS
-            // Today is the only day that changes while it is being watched: the scoreboard carries a
-            // running clock and a live score. A five-minute cache over it (which is what this was)
-            // served the same frozen numbers for the whole first five minutes of every visit, so the
-            // page looked dead even once the page started asking again on a timer.
+            // Today is the only day that changes while it is being watched: the scoreboard carries
+            // a running clock and a live score. A five-minute cache over it (which is what this
+            // once was) served the same frozen numbers for the whole first five minutes of every
+            // visit, so the page looked dead even once it started asking again on a timer.
             else -> Freshness.LIVE_MS
         }
+        if (nowMs - fetchedAtMs >= ttl) return true
+        return day < today && games.any { it.state != GameState.POST }
     }
 }

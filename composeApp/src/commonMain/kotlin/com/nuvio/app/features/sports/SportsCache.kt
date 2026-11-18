@@ -52,6 +52,14 @@ internal object SportsCache {
         val teams: List<Team>,
     )
 
+    @Serializable
+    private class CachedStandings(
+        val version: Int,
+        val leagueId: String,
+        val fetchedAtMs: Long,
+        val rows: List<Standing>,
+    )
+
     private val root: Path get() = SportsCacheFiles.dir()
 
     private fun file(name: String): Path =
@@ -60,6 +68,8 @@ internal object SportsCache {
     data class CachedEvents(val games: List<SportsEvent>, val fetchedAtMs: Long)
 
     data class CachedTeamList(val teams: List<Team>, val fetchedAtMs: Long)
+
+    data class CachedStandingsList(val rows: List<Standing>, val fetchedAtMs: Long)
 
     /** A league's games for one date range, or null when nothing usable is cached. */
     @OptIn(ExperimentalSerializationApi::class)
@@ -108,12 +118,38 @@ internal object SportsCache {
         }
     }
 
-    /** Drops every cached game; the follow picker's team lists are kept, as they barely change. */
+    @OptIn(ExperimentalSerializationApi::class)
+    fun readStandings(leagueId: String): CachedStandingsList? = runCatching {
+        val target = file(standingsName(leagueId))
+        if (!target.exists()) return null
+        target.inputStream().use { input ->
+            json.decodeFromStream(CachedStandings.serializer(), GZIPInputStream(input.buffered()))
+        }
+    }.onFailure { log.w { "Unreadable sports standings cache: ${it.message}" } }.getOrNull()
+        ?.takeIf { it.version == CACHE_VERSION }
+        ?.let { CachedStandingsList(it.rows, it.fetchedAtMs) }
+
+    fun writeStandings(leagueId: String, rows: List<Standing>, fetchedAtMs: Long) {
+        write(file(standingsName(leagueId))) { out ->
+            GZIPOutputStream(out.buffered()).use { gzip ->
+                json.encodeToStream(
+                    CachedStandings.serializer(),
+                    CachedStandings(CACHE_VERSION, leagueId, fetchedAtMs, rows),
+                    gzip,
+                )
+            }
+        }
+    }
+
+    /** Drops every cached game and table; the follow picker's team lists are kept, as they barely change. */
     fun clearGames() {
         runCatching {
             if (!root.exists()) return
             Files.list(root).use { paths ->
-                paths.filter { it.fileName.toString().startsWith("games_") }.forEach { it.deleteIfExists() }
+                paths.filter {
+                    val name = it.fileName.toString()
+                    name.startsWith("games_") || name.startsWith("standings_")
+                }.forEach { it.deleteIfExists() }
             }
         }.onFailure { log.w { "Failed to clear the sports games cache: ${it.message}" } }
     }
@@ -129,6 +165,8 @@ internal object SportsCache {
         "games_${leagueId.replace('/', '_')}_${fromDay}_$toDay.json.gz"
 
     private fun teamsName(leagueId: String) = "teams_${leagueId.replace('/', '_')}.json.gz"
+
+    private fun standingsName(leagueId: String) = "standings_${leagueId.replace('/', '_')}.json.gz"
 
     /** Through a temp file and an atomic move, so a crash never leaves half a file to be read back. */
     private fun write(target: Path, block: (java.io.OutputStream) -> Unit) {

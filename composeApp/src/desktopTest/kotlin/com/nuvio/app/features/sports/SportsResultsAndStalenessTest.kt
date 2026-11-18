@@ -101,4 +101,101 @@ class SportsResultsAndStalenessTest {
         val now = 1_000_000_000_000L
         assertEquals("just now", relativeAge(now + 60_000L, now))
     }
+
+    // ---- Live-state sanity: the feed's state is trusted unless it is impossible.
+
+    private val now = 1_760_000_000_000L
+
+    @Test
+    fun `a recently started live game stays live`() {
+        val live = game("l", GameState.LIVE, now - 90 * 60_000L)
+
+        assertEquals(GameState.LIVE, resolvedGameState(live, now))
+    }
+
+    @Test
+    fun `a live game whose start was many hours ago reads as finished`() {
+        // The stale snapshot a past-day cache or a stuck feed can leave behind: the game ended
+        // last night but still carries "Live 3rd · 9:42". It must not draw a live interface.
+        val stale = game("l", GameState.LIVE, now - 20 * 60 * 60_000L)
+
+        assertEquals(GameState.POST, resolvedGameState(stale, now))
+        assertEquals(GameState.POST, stale.withResolvedState(now).state)
+    }
+
+    @Test
+    fun `a game marked live before its kick-off reads as upcoming`() {
+        // The provider flips some games to "in" early; within the slack it stays live, beyond it
+        // the feed is plainly wrong about the clock.
+        assertEquals(GameState.LIVE, resolvedGameState(game("l", GameState.LIVE, now + 5 * 60_000L), now))
+        assertEquals(GameState.PRE, resolvedGameState(game("l", GameState.LIVE, now + 3 * 60 * 60_000L), now))
+    }
+
+    @Test
+    fun `a cricket match running into a second day is still live`() {
+        // Test matches legitimately run for days; the long-window clamp must not end them.
+        val cricket = SportsEvent(
+            id = "c",
+            leagueId = "cricket/8039",
+            startMs = now - 30 * 60 * 60_000L, // 30 hours ago
+            state = GameState.LIVE,
+            away = GameSide(Team("1", "England", "England", "ENG")),
+            home = GameSide(Team("2", "Australia", "Australia", "AUS")),
+        )
+
+        assertEquals(GameState.LIVE, resolvedGameState(cricket, now))
+    }
+
+    @Test
+    fun `pre and post states pass through untouched`() {
+        assertEquals(GameState.PRE, resolvedGameState(game("p", GameState.PRE, now + 60_000L), now))
+        assertEquals(GameState.POST, resolvedGameState(game("f", GameState.POST, now - 60_000L), now))
+    }
+
+    @Test
+    fun `resolving an already-true state keeps the same game`() {
+        val live = game("l", GameState.LIVE, now - 90 * 60_000L)
+
+        assertTrue(live.withResolvedState(now) === live, "unchanged games must keep identity so keyed items do not rebuild")
+    }
+
+    // ---- Snapshot staleness: what the repository refetches, and what it may keep serving.
+
+    private val today = SportsRepository.today()
+    private val yesterday = SportsRepository.day(1)
+
+    private fun snapshotGames(state: GameState) = listOf(game("g", state, now - 3 * 60 * 60_000L))
+
+    @Test
+    fun `a past-day snapshot within its TTL with finished games is fresh`() {
+        val fetched = now - 2 * 60 * 60_000L
+
+        assertTrue(!SportsRepository.daySnapshotStale(yesterday, snapshotGames(GameState.POST), fetched, now))
+    }
+
+    @Test
+    fun `a past-day snapshot that caught games mid-play is stale, whatever its age`() {
+        // Frozen ten minutes ago or ten hours ago: a game that was live then and is cached now
+        // would otherwise draw yesterday as a live match interface for the rest of the TTL.
+        val fetched = now - 10 * 60_000L
+
+        assertTrue(SportsRepository.daySnapshotStale(yesterday, snapshotGames(GameState.LIVE), fetched, now))
+        assertTrue(SportsRepository.daySnapshotStale(yesterday, snapshotGames(GameState.PRE), fetched, now))
+    }
+
+    @Test
+    fun `beyond the TTL any snapshot is stale, finished games included`() {
+        val fetched = now - SportsRepository.Freshness.PAST_MS - 60_000L
+
+        assertTrue(SportsRepository.daySnapshotStale(yesterday, snapshotGames(GameState.POST), fetched, now))
+    }
+
+    @Test
+    fun `never fetched is stale, and a live today snapshot inside its TTL is not`() {
+        assertTrue(SportsRepository.daySnapshotStale(yesterday, emptyList(), 0L, now))
+        assertTrue(
+            !SportsRepository.daySnapshotStale(today, snapshotGames(GameState.LIVE), now - 10_000L, now),
+            "today's own 30-second TTL already governs its live scoreboard",
+        )
+    }
 }
