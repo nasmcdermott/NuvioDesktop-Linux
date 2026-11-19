@@ -56,10 +56,16 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.layout.Layout
+import androidx.compose.ui.layout.Measurable
+import androidx.compose.ui.layout.MeasureResult
+import androidx.compose.ui.layout.MeasureScope
+import androidx.compose.ui.layout.MultiContentMeasurePolicy
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Constraints
 import androidx.compose.ui.unit.dp
 import kotlinx.coroutines.Job
 import com.nuvio.app.core.ui.KeyRouteLayer
@@ -1853,23 +1859,90 @@ private fun SportsOddsNewsColumn(
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
-    Column(
-        modifier = modifier,
-        verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
-    ) {
-        if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
-        if (news.isNotEmpty()) {
-            SportsTeamNews(
-                event = event,
-                news = news,
-                modifier = if (stretchNews) Modifier.weight(1f) else Modifier,
-                fillHeight = stretchNews,
-            )
-        } else if (stretchNews && leaders.isNotEmpty()) {
-            Spacer(Modifier.weight(1f))
+    val gap = tokens.spacing.controlGap
+    val hasNews = news.isNotEmpty()
+    val hasLeaders = leaders.isNotEmpty()
+    if (!stretchNews) {
+        Column(
+            modifier = modifier,
+            verticalArrangement = Arrangement.spacedBy(gap),
+        ) {
+            if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
+            if (hasNews) SportsTeamNews(event = event, news = news)
+            if (hasLeaders) SportsSeasonLeaders(event, leaders)
         }
-        if (leaders.isNotEmpty()) SportsSeasonLeaders(event, leaders)
+        return
     }
+
+    val contents = buildList<@Composable () -> Unit> {
+        if (moneyline != null) {
+            add { SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth()) }
+        }
+        if (hasNews) add { SportsTeamNews(event = event, news = news) }
+        if (hasLeaders) add { SportsSeasonLeaders(event, leaders) }
+    }
+    if (contents.isEmpty()) return
+
+    var cursor = 0
+    if (moneyline != null) cursor++
+    val newsIndex = if (hasNews) cursor++ else -1
+    val leadersIndex = if (hasLeaders) cursor++ else -1
+    val flexible = listOfNotNull(
+        newsIndex.takeIf { it >= 0 },
+        leadersIndex.takeIf { it >= 0 },
+    )
+
+    // The column's height is set by team stats. Take whatever space the odds and the two cards'
+    // own content leave over and share it evenly between the news and the leaders, rather than
+    // letting the news card swallow all of it.
+    Layout(
+        contents = contents,
+        modifier = modifier.fillMaxWidth(),
+        measurePolicy = object : MultiContentMeasurePolicy {
+            override fun MeasureScope.measure(
+                measurables: List<List<Measurable>>,
+                constraints: Constraints,
+            ): MeasureResult {
+                val width = constraints.maxWidth
+                val gapPx = gap.roundToPx()
+                val children = measurables.map { it.first() }
+                val natural = children.map { it.measure(Constraints(maxWidth = width)) }
+                val gaps = gapPx * (natural.size - 1).coerceAtLeast(0)
+                val heights = natural.map { it.height }.toMutableList()
+                if (constraints.hasBoundedHeight && flexible.isNotEmpty()) {
+                    val extra = (constraints.maxHeight - natural.sumOf { it.height } - gaps).coerceAtLeast(0)
+                    val share = extra / flexible.size
+                    var remainder = extra % flexible.size
+                    flexible.forEach { index ->
+                        heights[index] += share
+                        if (remainder > 0) {
+                            heights[index]++
+                            remainder--
+                        }
+                    }
+                }
+                val placed = natural.mapIndexed { index, placeable ->
+                    if (index in flexible && heights[index] != placeable.height) {
+                        children[index].measure(Constraints.fixed(width, heights[index]))
+                    } else {
+                        placeable
+                    }
+                }
+                val total = placed.sumOf { it.height } + gaps
+                return layout(
+                    width = width,
+                    height = if (constraints.hasBoundedHeight) maxOf(total, constraints.maxHeight) else total,
+                ) {
+                    var y = 0
+                    placed.forEachIndexed { index, placeable ->
+                        placeable.place(0, y)
+                        y += placeable.height
+                        if (index != placed.lastIndex) y += gapPx
+                    }
+                }
+            }
+        },
+    )
 }
 
 @Composable

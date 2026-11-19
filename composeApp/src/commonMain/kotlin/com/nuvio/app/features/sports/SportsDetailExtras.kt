@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
-import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -220,18 +219,12 @@ private fun TeamMark(team: Team) {
     }
 }
 
-/**
- * Recent stories for each team, under the moneyline panel: picture, headline and short body.
- *
- * [fillHeight] lets the detail page stretch this card to close a column, so the cards below it
- * (season leaders) finish level with the neighbouring column instead of leaving a ragged edge.
- */
+/** Recent stories for each team, under the moneyline panel: picture, headline and short body. */
 @Composable
 internal fun SportsTeamNews(
     event: SportsEvent,
     news: List<TeamNews>,
     modifier: Modifier = Modifier,
-    fillHeight: Boolean = false,
 ) {
     val tokens = MaterialTheme.nuvio
     val byTeam = remember(news) { news.associateBy { it.teamId } }
@@ -277,9 +270,6 @@ internal fun SportsTeamNews(
                 articles.forEach { article -> NewsRow(article) }
             }
         }
-        // When the card is stretched, keep the stories at the top and let the card's own surface
-        // take the extra height, so the cards below it line up with the other column.
-        if (fillHeight) Spacer(Modifier.weight(1f))
     }
 }
 
