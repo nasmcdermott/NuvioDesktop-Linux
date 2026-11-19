@@ -74,6 +74,12 @@ canonical .desktop entry and a 512px icon), owns every file `root:root`, and req
 names for what it does not bundle, WebKitGTK 4.1 and the GStreamer/GLib networking pieces
 included. Install it with `sudo dnf install <path>`.
 
+Likewise [dev_flatpak.py](dev_flatpak.py) wraps the same JVM app image in a local Flatpak using the
+already-installed pinned `org.gnome.Platform` runtime, for a testable development bundle without
+building the GraalVM native image. It is not the release bundle: the image carries a JDK and the
+application JARs, and no `verify.py` check accepts it. It still applies the release launcher layout,
+desktop entry, 512px icon and sandbox permissions, and refuses an app image without `lib/native`.
+
 Output is ignored `build/linux-packaging/`: `canonical/`, `deb-root/`,
 `rpmbuild/`, `Nuvio.AppDir/`, `flatpak-build/`, `artifacts/`, dependency
 reports and `SHA256SUMS`.
