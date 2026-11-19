@@ -92,8 +92,8 @@ internal fun linuxInPlaceUpdateOptionDescription(format: LinuxInstallFormat): St
 
 /** Which releases and assets of the Linux fork's repository this install accepts. */
 internal object LinuxReleaseRules : PlatformReleaseRules {
-    override val repository: String = "iamSlokker/NuvioDesktop-Linux"
-    override val projectUrl: String = "https://github.com/iamSlokker/NuvioDesktop-Linux"
+    override val repository: String = "nasmcdermott/NuvioHTPC-Linux"
+    override val projectUrl: String = "https://github.com/nasmcdermott/NuvioHTPC-Linux"
     override val nightlyChannelAvailable: Boolean = false
 
     /** Exactly `vX.Y.Z`: never the `vX.Y.Z-source` archive release or any other suffix. */

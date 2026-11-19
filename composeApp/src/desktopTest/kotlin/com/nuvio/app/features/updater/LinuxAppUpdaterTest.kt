@@ -49,8 +49,8 @@ class LinuxAppUpdaterTest {
     fun linuxFollowsTheLinuxForkStableReleasesOnly() {
         val rules = assertNotNull(desktopPlatformReleaseRules("Linux"))
         assertSame(LinuxReleaseRules, rules)
-        assertEquals("iamSlokker/NuvioDesktop-Linux", rules.repository)
-        assertEquals("https://github.com/iamSlokker/NuvioDesktop-Linux", rules.projectUrl)
+        assertEquals("nasmcdermott/NuvioHTPC-Linux", rules.repository)
+        assertEquals("https://github.com/nasmcdermott/NuvioHTPC-Linux", rules.projectUrl)
         assertFalse(rules.nightlyChannelAvailable)
     }
 
@@ -569,7 +569,7 @@ class LinuxAppUpdaterTest {
 
     private fun asset(name: String) = GitHubAssetDto(
         name = name,
-        browserDownloadUrl = "https://github.com/iamSlokker/NuvioDesktop-Linux/releases/download/x/$name",
+        browserDownloadUrl = "https://github.com/nasmcdermott/NuvioHTPC-Linux/releases/download/x/$name",
         digest = "sha256:" + "a".repeat(64),
     )
 
