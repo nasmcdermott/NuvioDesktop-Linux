@@ -1472,6 +1472,7 @@ private fun NavController.navigateToPlayer(
     launch: PlayerLaunch,
     builder: NavOptionsBuilder.() -> Unit = {},
 ): Boolean {
+    if (com.nuvio.app.features.player.PlayerBrowsePip.expandSportsPlayerIfMatching(launch)) return false
     if (currentDestination?.hasRoute<PlayerRoute>() == true) return false
     navigate(PlayerRoute(launchId = PlayerLaunchStore.put(launch)), builder)
     return true
@@ -1604,6 +1605,20 @@ private fun MainAppContent(
         // A video handed over to from one in the corner box (the YouTube queue, a related pick): its
         // route opens the player straight into the box and goes again, the app staying on screen.
         var pendingBoxLaunchId by remember { mutableStateOf<Long?>(null) }
+        fun detachSportsPlayerForBrowse(): Boolean {
+            val entry = navController.currentBackStackEntry ?: return false
+            val route = runCatching { entry.toRoute<PlayerRoute>() }.getOrNull() ?: return false
+            val launch = PlayerLaunchStore.get(route.launchId)?.takeIf { it.sportsEventId != null } ?: return false
+            val player = hostedPlayer?.takeIf { it.launchId == route.launchId && !it.detached } ?: return false
+            player.detached = true
+            com.nuvio.app.features.player.PlayerBrowsePip.setSportsPlayerIdentity(
+                launch.sportsEventId,
+                launch.sourceIdentityKey,
+            )
+            com.nuvio.app.features.player.PlayerBrowsePip.setActive(true)
+            navController.popBackStack()
+            return true
+        }
         val endDetachedPlayer: (com.nuvio.app.features.player.HostedPlayer) -> Unit = remember {
             { player ->
                 if (player.detached) {
@@ -1682,13 +1697,21 @@ private fun MainAppContent(
                     }
                     return@collect
                 }
+                // Sports Back leaves the prior page usable around the same live player in its corner.
+                if (navController.currentDestination?.hasRoute<PlayerRoute>() == true && detachSportsPlayerForBrowse()) {
+                    return@collect
+                }
                 // fork:youtube-mini-player - over the tab the mini player draws, Back steps back inside the
                 // tab and never closes the video (the box's X does). From a YouTube tab video's page, Back
                 // goes to the mini player, as the player's own Back does (handleYouTubeMiniPlayerBack).
                 if (navController.currentDestination?.hasRoute<PlayerRoute>() == true) {
                     val youTubeLayout = com.nuvio.app.features.youtube.YouTubeWatchLayout
                     if (youTubeLayout.available.value && youTubeLayout.browsing.value) {
-                        com.nuvio.app.core.ui.TabBackInterceptor.handle()
+                        // The tab's page ladder gets the first Back. Once it is spent, hand off
+                        // to the visible app navigation; the mini-player route bypasses AppTabHost.
+                        if (!com.nuvio.app.core.ui.TabBackInterceptor.handle()) {
+                            RootNavFocus.enterSidebar() || RootNavFocus.enterFloatingTopBar()
+                        }
                         return@collect
                     }
                     if (
@@ -3915,7 +3938,7 @@ private fun MainAppContent(
                         when {
                             reattachingHostedPlayer -> hostedPlayer
                             openInBox -> com.nuvio.app.features.player.HostedPlayer(route.launchId).also { it.detached = true }
-                            com.nuvio.app.features.player.PlayerBrowsePip.enabled.value &&
+                            (launch.sportsEventId != null || com.nuvio.app.features.player.PlayerBrowsePip.enabled.value) &&
                                 launch.autoPlayMode != PlayerAutoPlayMode.Playlist ->
                                 com.nuvio.app.features.player.HostedPlayer(route.launchId)
                             else -> null
@@ -3977,11 +4000,13 @@ private fun MainAppContent(
                                     .drop(1).take(6).joinToString(" < ") { it.trim().removePrefix("at ") }
                                 co.touchlab.kermit.Logger.withTag("YouTubeMiniPlayer").i { "player closed from: $caller" }
                             }
-                            lastPlayerExitBackMark = TimeSource.Monotonic.markNow()
-                            ResumePromptRepository.markPlayerExitedNormally()
-                            PlayerLaunchStore.remove(route.launchId)
-                            if (launch.autoPlayMode == PlayerAutoPlayMode.Playlist) {
-                                PlaylistPlaybackSession.onPlayerExited()
+                            if (hosted?.detached != true) {
+                                lastPlayerExitBackMark = TimeSource.Monotonic.markNow()
+                                ResumePromptRepository.markPlayerExitedNormally()
+                                PlayerLaunchStore.remove(route.launchId)
+                                if (launch.autoPlayMode == PlayerAutoPlayMode.Playlist) {
+                                    PlaylistPlaybackSession.onPlayerExited()
+                                }
                             }
                         },
                     )
@@ -4037,7 +4062,16 @@ private fun MainAppContent(
                                             }
                                         }
                                     }
-                                    Box(Modifier.fillMaxSize()) {
+                                    Box(
+                                        Modifier
+                                            .fillMaxSize()
+                                            .tabSidebarHandoff(
+                                                homeSelected = { false },
+                                                sidebarAvailable = { miniSidebar },
+                                                onBack = { TabBackInterceptor.handle() },
+                                                topBarAvailable = { miniTopBar },
+                                            ),
+                                    ) {
                                         youTubeMiniStateHolder.SaveableStateProvider("youtube-mini-player") {
                                             com.nuvio.app.features.youtube.YouTubeTabScreen(
                                                 onPlay = { next ->
@@ -4171,7 +4205,22 @@ private fun MainAppContent(
                         onBack = if (hosted == null) {
                             onBackFromPlayer
                         } else {
-                            { if (hosted.detached) endDetachedPlayer(hosted) else onBackFromPlayer() }
+                            {
+                                if (hosted.detached) {
+                                    endDetachedPlayer(hosted)
+                                } else if (launch.sportsEventId != null) {
+                                    hosted.detached = true
+                                    com.nuvio.app.features.player.PlayerBrowsePip.setSportsPlayerIdentity(
+                                        launch.sportsEventId,
+                                        launch.sourceIdentityKey,
+                                    )
+                                    com.nuvio.app.features.player.PlayerBrowsePip.setActive(true)
+                                    navController.popBackStack()
+                                    Unit
+                                } else {
+                                    onBackFromPlayer()
+                                }
+                            }
                         },
                         onPlaybackCompleted = completed@{
                             if (hosted != null && hosted.detached) {
@@ -6428,6 +6477,7 @@ private fun MainAppContent(
                         providerAddonId = stream.addonId,
                         contentType = launch.type,
                         videoId = effectiveVideoId,
+                        sportsEventId = launch.videoId.takeIf { launch.type.equals("sports", ignoreCase = true) },
                         parentMetaId = launch.parentMetaId ?: effectiveVideoId,
                         parentMetaType = launch.parentMetaType ?: launch.type,
                         watchProgressSource = launch.watchProgressSource,

@@ -22,7 +22,9 @@ import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.rounded.Close
 import androidx.compose.material.icons.rounded.EmojiEvents
+import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -43,6 +45,7 @@ import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
@@ -50,6 +53,7 @@ import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.nuvio.app.core.ui.arrowFocusDirection
 import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import com.nuvio.app.core.ui.keyLayer
@@ -88,6 +92,7 @@ internal fun SportsScreen(
     onPlaySportsStream: (SportsEvent, League, StreamItem) -> Unit = { _, _, _ -> },
 ) {
     val tokens = MaterialTheme.nuvio
+    val browsePipActive by com.nuvio.app.features.player.PlayerBrowsePip.active.collectAsStateWithLifecycle()
     val settings by SportsSettingsRepository.settings.collectAsState()
     val days = remember { sportsDays(LocalDate.now(), radius = 8) }
     var selectedDay by rememberSaveable {
@@ -233,6 +238,9 @@ internal fun SportsScreen(
                 mySportsOnly = mySportsOnly,
                 followedCount = SportsFollows.count(settings),
                 liveCount = rememberLiveGameCount(visibleLeagues, selectedDay),
+                showExpandPlayer = browsePipActive,
+                onExpandPlayer = com.nuvio.app.features.player.PlayerBrowsePip::requestExpand,
+                onClosePlayer = com.nuvio.app.features.player.PlayerBrowsePip::requestClose,
                 headerBandFocus = headerBandFocus,
                 modeGamesFocus = modeGamesFocus,
                 onSelectTablesMode = { wantTables ->
@@ -386,6 +394,9 @@ private fun SportsHeaderBand(
     mySportsOnly: Boolean,
     followedCount: Int,
     liveCount: Int,
+    showExpandPlayer: Boolean,
+    onExpandPlayer: () -> Unit,
+    onClosePlayer: () -> Unit,
     headerBandFocus: FocusRequester,
     modeGamesFocus: FocusRequester,
     onSelectTablesMode: (Boolean) -> Unit,
@@ -457,6 +468,18 @@ private fun SportsHeaderBand(
                 )
             }
         }
+        if (showExpandPlayer) {
+            SportsHeaderPill(
+                label = "Expand player",
+                icon = Icons.Rounded.Fullscreen,
+                onClick = onExpandPlayer,
+            )
+            SportsHeaderPill(
+                label = "Close mini player",
+                icon = Icons.Rounded.Close,
+                onClick = onClosePlayer,
+            )
+        }
         SportsHeaderPill(label = "✎ Follow Teams & Leagues", onClick = onOpenPicker)
         SportsHeaderPill(label = "↻", onClick = onRefresh)
         SportsHeaderPill(label = "⚙", onClick = onOpenSettings)
@@ -467,6 +490,7 @@ private fun SportsHeaderBand(
 private fun SportsHeaderPill(
     label: String,
     onClick: () -> Unit,
+    icon: ImageVector? = null,
 ) {
     val tokens = MaterialTheme.nuvio
     val interaction = rememberSportsInteraction(baseScale = 1.05f, label = "sportsHeaderPillZoom")
@@ -484,16 +508,25 @@ private fun SportsHeaderPill(
                 color = if (interaction.focused) tokens.colors.borderFocus else tokens.colors.borderSubtle,
                 shape = shape,
             )
-            .padding(horizontal = 12.dp, vertical = 6.dp),
+            .then(if (icon == null) Modifier.padding(horizontal = 12.dp, vertical = 6.dp) else Modifier.size(36.dp)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = label,
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = if (interaction.focused) FontWeight.SemiBold else FontWeight.Medium,
-            color = if (interaction.highlighted) tokens.colors.accent else tokens.colors.textSecondary,
-            maxLines = 1,
-        )
+        if (icon != null) {
+            Icon(
+                imageVector = icon,
+                contentDescription = label,
+                tint = if (interaction.highlighted) tokens.colors.accent else tokens.colors.textSecondary,
+                modifier = Modifier.size(18.dp),
+            )
+        } else {
+            Text(
+                text = label,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = if (interaction.focused) FontWeight.SemiBold else FontWeight.Medium,
+                color = if (interaction.highlighted) tokens.colors.accent else tokens.colors.textSecondary,
+                maxLines = 1,
+            )
+        }
     }
 }
 

@@ -5,12 +5,15 @@ import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
+import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
@@ -510,7 +513,7 @@ internal fun SportsGameDetail(
                         if (event.state == GameState.POST && option.canCatchup) {
                             SportsWatch.playFromStart(event, option, allOptions)
                         } else {
-                            SportsWatch.play(option, allOptions)
+                            SportsWatch.play(option, allOptions, SportsWatch.eventStreamId(event))
                         }
                     },
                     onPlayFromStart = if (option.canCatchup) {
@@ -615,87 +618,96 @@ internal fun SportsGameDetail(
                     }
                 }
             }
-            if (loadedSummary.playByPlay.isNotEmpty() || moneyline != null) {
-                val plays = playByPlayEntries
-                item(key = "play-by-play-and-odds") {
-                    Row(
-                        modifier = Modifier.fillMaxWidth(),
-                        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap),
-                        verticalAlignment = Alignment.Top,
-                    ) {
-                        Column(
-                            modifier = Modifier.weight(0.62f),
-                            verticalArrangement = Arrangement.spacedBy(10.dp),
-                        ) {
-                            if (plays.isEmpty()) {
-                                Text(
-                                    text = "Play-by-play isn't available for this event.",
-                                    style = MaterialTheme.typography.bodySmall,
-                                    color = tokens.colors.textMuted,
-                                )
-                            } else {
-                                playPeriodGroups.forEachIndexed { index, (period, periodPlays) ->
-                                    val periodExpanded = period in expandedPlayPeriods
-                                    Column(
-                                        modifier = Modifier
-                                            .fillMaxWidth()
-                                            .clip(tokens.shapes.compactCard)
-                                            .background(tokens.colors.surfaceCard)
-                                            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.compactCard)
-                                            .padding(tokens.spacing.cardPaddingCompact),
-                                        verticalArrangement = Arrangement.spacedBy(4.dp),
-                                    ) {
-                                        Row(
+            if (loadedSummary.playByPlay.isNotEmpty() || loadedSummary.teamStats.isNotEmpty() || moneyline != null) {
+                item(key = "play-by-play-stats-odds") {
+                    BoxWithConstraints(Modifier.fillMaxWidth()) {
+                        val playsContent: @Composable () -> Unit = {
+                            if (loadedSummary.playByPlay.isNotEmpty()) {
+                                Column(
+                                    modifier = Modifier.fillMaxWidth(),
+                                    verticalArrangement = Arrangement.spacedBy(10.dp),
+                                ) {
+                                    playPeriodGroups.forEachIndexed { index, (period, periodPlays) ->
+                                        val periodExpanded = period in expandedPlayPeriods
+                                        Column(
                                             modifier = Modifier
                                                 .fillMaxWidth()
-                                                .onPreviewKeyEvent { keyEvent ->
-                                                    if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                                    when (keyEvent.navigationKey()) {
-                                                        Key.DirectionDown -> scrollDetail(1)
-                                                        Key.DirectionUp -> scrollDetail(-1)
-                                                        else -> false
-                                                    }
-                                                },
+                                                .clip(tokens.shapes.compactCard)
+                                                .background(tokens.colors.surfaceCard)
+                                                .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.compactCard)
+                                                .padding(tokens.spacing.cardPaddingCompact),
+                                            verticalArrangement = Arrangement.spacedBy(4.dp),
                                         ) {
-                                            if (index == 0) {
-                                                Text(
-                                                    text = period,
-                                                    style = MaterialTheme.typography.labelLarge,
-                                                    fontWeight = FontWeight.SemiBold,
-                                                    color = tokens.colors.textSecondary,
-                                                )
-                                            } else {
-                                                SportsSmallPill(
-                                                    label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
-                                                    selected = periodExpanded,
-                                                    focusRequester = periodFocusRequesters[index],
-                                                    onClick = {
-                                                        expandedPlayPeriods = if (periodExpanded) {
-                                                            expandedPlayPeriods - period
-                                                        } else {
-                                                            expandedPlayPeriods + period
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .onPreviewKeyEvent { keyEvent ->
+                                                        if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                                        when (keyEvent.navigationKey()) {
+                                                            Key.DirectionDown -> scrollDetail(1)
+                                                            Key.DirectionUp -> scrollDetail(-1)
+                                                            else -> false
                                                         }
                                                     },
-                                                )
+                                            ) {
+                                                if (index == 0) {
+                                                    Text(
+                                                        text = period,
+                                                        style = MaterialTheme.typography.labelLarge,
+                                                        fontWeight = FontWeight.SemiBold,
+                                                        color = tokens.colors.textSecondary,
+                                                    )
+                                                } else {
+                                                    SportsSmallPill(
+                                                        label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
+                                                        selected = periodExpanded,
+                                                        focusRequester = periodFocusRequesters[index],
+                                                        onClick = {
+                                                            expandedPlayPeriods = if (periodExpanded) {
+                                                                expandedPlayPeriods - period
+                                                            } else {
+                                                                expandedPlayPeriods + period
+                                                            }
+                                                        },
+                                                    )
+                                                }
                                             }
-                                        }
-                                        val visiblePeriodPlays = if (periodExpanded) periodPlays else if (event.isLive) {
-                                            periodPlays.take(5)
-                                        } else {
-                                            periodPlays.takeLast(5)
-                                        }
-                                        visiblePeriodPlays.forEach { play ->
-                                            SportsPlayByPlayRow(play, clockSettings.twelveHour)
+                                            val visiblePeriodPlays = if (periodExpanded) periodPlays else if (event.isLive) {
+                                                periodPlays.take(5)
+                                            } else {
+                                                periodPlays.takeLast(5)
+                                            }
+                                            visiblePeriodPlays.forEach { play ->
+                                                SportsPlayByPlayRow(play, clockSettings.twelveHour)
+                                            }
                                         }
                                     }
                                 }
                             }
                         }
-                        SportsMoneylinePanel(
-                            event = event,
-                            odds = moneyline,
-                            modifier = Modifier.weight(0.38f),
-                        )
+                        if (maxWidth >= 1100.dp) {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+                                verticalAlignment = Alignment.Top,
+                            ) {
+                                if (loadedSummary.playByPlay.isNotEmpty()) {
+                                    Column(Modifier.weight(1.35f)) { playsContent() }
+                                }
+                                if (loadedSummary.teamStats.isNotEmpty()) {
+                                    SportsTeamStats(event, loadedSummary.teamStats, Modifier.weight(1.1f))
+                                }
+                                if (moneyline != null) {
+                                    SportsMoneylinePanel(event, moneyline, Modifier.weight(0.75f))
+                                }
+                            }
+                        } else {
+                            Column(verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap)) {
+                                playsContent()
+                                if (loadedSummary.teamStats.isNotEmpty()) SportsTeamStats(event, loadedSummary.teamStats)
+                                if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
+                            }
+                        }
                     }
                 }
             }
@@ -711,19 +723,6 @@ internal fun SportsGameDetail(
                 item(key = "scoring-body") {
                     val orderedPlays = if (event.isLive) loadedSummary.scoring.asReversed() else loadedSummary.scoring
                     SportsScoringPlays(orderedPlays)
-                }
-            }
-            if (loadedSummary.teamStats.isNotEmpty()) {
-                item(key = "team-stats-header") {
-                    Text(
-                        text = "Team stats",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tokens.colors.textPrimary,
-                    )
-                }
-                item(key = "team-stats-body") {
-                    SportsTeamStats(loadedSummary.teamStats, event)
                 }
             }
             if (loadedSummary.categories.isNotEmpty()) {
@@ -798,6 +797,7 @@ internal fun SportsGameDetail(
                         isManualPick = true,
                     ),
                     allOptions,
+                    SportsWatch.eventStreamId(event),
                 )
             },
         )
@@ -896,7 +896,7 @@ private fun SportsDetailActionRow(
                     label = "▶ Watch on $chName$qualSuffix",
                     selected = true,
                     focusRequester = primaryFocus,
-                    onClick = { SportsWatch.play(bestOption, allOptions) },
+                    onClick = { SportsWatch.play(bestOption, allOptions, SportsWatch.eventStreamId(event)) }
                 )
             }
         } else if (replayOption != null && event.state == GameState.POST) {
@@ -1594,58 +1594,82 @@ internal fun SportsSectionHeader(
 }
 
 @Composable
-private fun SportsTeamStats(stats: List<TeamStatPair>, event: SportsEvent) {
+private fun SportsTeamStats(
+    event: SportsEvent,
+    stats: List<TeamStatPair>,
+    modifier: Modifier = Modifier,
+) {
     val tokens = MaterialTheme.nuvio
+    val awayColor = event.away.team.color?.let(::Color) ?: Color(0xFF232A32)
+    val homeColor = event.home.team.color?.let(::Color) ?: Color(0xFF232A32)
+    val awayBarColor = sportsTeamShade(awayColor, 0.34f)
+    val homeBarColor = sportsTeamShade(homeColor, 0.62f)
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(tokens.shapes.card)
             .background(tokens.colors.surfaceCard)
             .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
-            .padding(tokens.spacing.cardPadding),
-        verticalArrangement = Arrangement.spacedBy(6.dp),
+            .padding(tokens.spacing.cardPaddingCompact),
+        verticalArrangement = Arrangement.spacedBy(5.dp),
     ) {
-        Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-            Text(
-                text = event.away.team.shortName,
-                style = MaterialTheme.typography.labelSmall,
-                color = tokens.colors.textMuted,
-                modifier = Modifier.weight(1f),
-            )
-            Text(
-                text = event.home.team.shortName,
-                style = MaterialTheme.typography.labelSmall,
-                color = tokens.colors.textMuted,
-                textAlign = TextAlign.End,
-                modifier = Modifier.weight(1f),
-            )
-        }
+        Text(
+            text = "TEAM STATS",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textSecondary,
+        )
         stats.forEach { stat ->
-            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                Text(
-                    text = stat.away,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = if (stat.awayLeads) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (stat.awayLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
-                    modifier = Modifier.weight(1f),
-                )
-                Text(
-                    text = stat.label,
-                    style = MaterialTheme.typography.labelSmall,
-                    color = tokens.colors.textMuted,
-                    modifier = Modifier.weight(1.4f),
-                    textAlign = TextAlign.Center,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis,
-                )
-                Text(
-                    text = stat.home,
-                    style = MaterialTheme.typography.bodySmall,
-                    fontWeight = if (stat.homeLeads) FontWeight.SemiBold else FontWeight.Normal,
-                    color = if (stat.homeLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
-                    modifier = Modifier.weight(1f),
-                    textAlign = TextAlign.End,
-                )
+            val awayNumber = stat.away.substringBefore('(').replace(",", "").replace("%", "").trim()
+                .toFloatOrNull()?.let { kotlin.math.abs(it) }
+            val homeNumber = stat.home.substringBefore('(').replace(",", "").replace("%", "").trim()
+                .toFloatOrNull()?.let { kotlin.math.abs(it) }
+            val total = (awayNumber ?: 0f) + (homeNumber ?: 0f)
+            val awayShare = if (total > 0f) ((awayNumber ?: 0f) / total).coerceIn(0.04f, 0.96f) else 0.5f
+            Column(verticalArrangement = Arrangement.spacedBy(2.dp)) {
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text(
+                        text = stat.away,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (stat.awayLeads) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (stat.awayLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
+                        modifier = Modifier.weight(0.65f),
+                        maxLines = 1,
+                    )
+                    Text(
+                        text = stat.label,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        modifier = Modifier.weight(1.7f),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                    Text(
+                        text = stat.home,
+                        style = MaterialTheme.typography.bodySmall,
+                        fontWeight = if (stat.homeLeads) FontWeight.SemiBold else FontWeight.Normal,
+                        color = if (stat.homeLeads) tokens.colors.textPrimary else tokens.colors.textSecondary,
+                        modifier = Modifier.weight(0.65f),
+                        textAlign = TextAlign.End,
+                        maxLines = 1,
+                    )
+                }
+                Row(
+                    Modifier.fillMaxWidth().height(4.dp),
+                    horizontalArrangement = Arrangement.spacedBy(2.dp),
+                ) {
+                    Box(
+                        Modifier.weight(awayShare).fillMaxHeight()
+                            .clip(RoundedCornerShape(50))
+                            .background(awayBarColor),
+                    )
+                    Box(
+                        Modifier.weight(1f - awayShare).fillMaxHeight()
+                            .clip(RoundedCornerShape(50))
+                            .background(homeBarColor),
+                    )
+                }
             }
         }
     }
@@ -1677,14 +1701,14 @@ private fun SportsMoneylinePanel(
         odds?.provider?.takeIf { it.isNotBlank() }?.let { provider ->
             Text(provider, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
         }
-        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
-            Column(horizontalAlignment = Alignment.Start) {
-                Text(event.away.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
-                Text(odds?.away ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary)
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
+                Text(event.away.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted, maxLines = 1)
+                Text(odds?.away ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary, maxLines = 1)
             }
-            Column(horizontalAlignment = Alignment.End) {
-                Text(event.home.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
-                Text(odds?.home ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary)
+            Column(Modifier.weight(1f), horizontalAlignment = Alignment.End) {
+                Text(event.home.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted, maxLines = 1)
+                Text(odds?.home ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary, maxLines = 1)
             }
         }
         odds?.spread?.let { value ->

@@ -188,7 +188,11 @@ internal object SportsWatch {
      * Plays [option], passing its duplicate [Option.backups] as automatic stream failover alternates
      * and the playlist's other matched options for this game as the Channel Up/Down zap list.
      */
-    fun play(option: Option, allOptionsForGame: List<Option> = emptyList()): Boolean {
+    fun play(
+        option: Option,
+        allOptionsForGame: List<Option> = emptyList(),
+        sportsEventId: String? = null,
+    ): Boolean {
         val samePlaylistZap = allOptionsForGame
             .filter { it.playlist.id == option.playlist.id }
             .map { it.channel }
@@ -204,6 +208,7 @@ internal object SportsWatch {
             channel = option.channel,
             zapList = zapList,
             alternates = alternates,
+            sportsEventId = sportsEventId,
         )
     }
 
@@ -228,6 +233,7 @@ internal object SportsWatch {
             entry = entry,
             zapList = zapList,
             alternates = alternates,
+            sportsEventId = eventStreamId(event),
         )
     }
 
@@ -242,7 +248,7 @@ internal object SportsWatch {
             val replayable = options.firstOrNull { it.canCatchup } ?: return false
             return playFromStart(event, replayable, options)
         }
-        return play(best, options)
+        return play(best, options, eventStreamId(event))
     }
 
     fun playBest(
@@ -252,8 +258,12 @@ internal object SportsWatch {
     ): Boolean {
         val options = optionsFor(event, pickedChannelKey, blocked)
         val best = options.firstOrNull() ?: return false
-        return play(best, options)
+        return play(best, options, eventStreamId(event))
     }
+
+    internal fun eventStreamId(event: SportsEvent): String =
+        SportsCatalog.league(event.leagueId)?.let { sportsEventStreamId(it, event) }
+            ?: "sports:${event.leagueId}:${event.id}"
 
     // region Internal helpers
 

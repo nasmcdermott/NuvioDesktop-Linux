@@ -129,7 +129,10 @@ internal fun PlayerScreenRuntime.handleYouTubeMiniPlayerBack(): Boolean {
     }
     if (pictureInPictureActive) return closing("picture in picture")
     if (layout.browsing.value) {
-        com.nuvio.app.core.ui.TabBackInterceptor.handle()
+        if (!com.nuvio.app.core.ui.TabBackInterceptor.handle()) {
+            com.nuvio.app.core.ui.RootNavFocus.enterSidebar() ||
+                com.nuvio.app.core.ui.RootNavFocus.enterFloatingTopBar()
+        }
         return true
     }
     if (!YouTubeFeedRepository.miniPlayerOnBack.value) return closing("mini player off")

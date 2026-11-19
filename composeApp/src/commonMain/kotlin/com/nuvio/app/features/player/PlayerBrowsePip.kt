@@ -61,12 +61,30 @@ internal object PlayerBrowsePip {
     /** The video is in its corner box and the app is in use around it. */
     val active: StateFlow<Boolean> = _active.asStateFlow()
 
+    private val _sportsPlayerIdentity = MutableStateFlow<Pair<String, String>?>(null)
+
+    /** Source identity for the Sports game currently playing in the corner box. */
+    internal fun setSportsPlayerIdentity(eventId: String?, sourceIdentityKey: String?) {
+        _sportsPlayerIdentity.value = if (eventId != null && sourceIdentityKey != null) eventId to sourceIdentityKey else null
+    }
+
+    /** A matching source selection from the same Sports game expands the existing player in place. */
+    fun expandSportsPlayerIfMatching(launch: PlayerLaunch): Boolean {
+        val identity = _sportsPlayerIdentity.value ?: return false
+        if (!_active.value || launch.sportsEventId != identity.first || launch.sourceIdentityKey != identity.second) return false
+        requestExpand()
+        return true
+    }
+
     internal fun setActive(active: Boolean) {
         // The box stays up while one video in it hands over to the next (the YouTube queue, a related
         // pick): the outgoing player's end would otherwise let trailers and music in for a moment.
         if (!active && handoffPending) return
         _active.value = active
-        if (!active) interactionMode = 0
+        if (!active) {
+            interactionMode = 0
+            _sportsPlayerIdentity.value = null
+        }
     }
 
     /** A video in the box is handing over to the next, which opens in the box too (App.kt). */

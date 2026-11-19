@@ -75,6 +75,8 @@ data class PlayerLaunch(
     val stream: com.nuvio.app.features.streams.StreamItem? = null,
     /** The source was taken from the reuse-last-link cache, not picked fresh from add-ons. */
     val sourceFromLinkCache: Boolean = false,
+    /** Sports match identity for returning to its page with the player in the corner. */
+    val sportsEventId: String? = null,
 )
 
 enum class PlayerAutoPlayMode {

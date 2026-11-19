@@ -86,13 +86,13 @@ internal fun SportsHero(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(shade(awayColor, 0.34f), shade(awayColor, 0.08f)))),
+                    .background(Brush.verticalGradient(listOf(sportsTeamShade(awayColor, 0.34f), sportsTeamShade(awayColor, 0.08f)))),
             )
             Box(
                 Modifier
                     .weight(1f)
                     .fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(shade(homeColor, 0.62f), shade(homeColor, 0.28f)))),
+                    .background(Brush.verticalGradient(listOf(sportsTeamShade(homeColor, 0.62f), sportsTeamShade(homeColor, 0.28f)))),
             )
         }
 
@@ -288,7 +288,7 @@ internal fun heroEyebrow(event: SportsEvent, followedTeamName: String?): String 
 }
 
 /** Mixes a colour toward black by [strength] (1f = unchanged), for the hero's panel shading. */
-private fun shade(color: Color, strength: Float): Color = Color(
+internal fun sportsTeamShade(color: Color, strength: Float): Color = Color(
     red = color.red * strength,
     green = color.green * strength,
     blue = color.blue * strength,

@@ -4,15 +4,21 @@ import androidx.compose.foundation.focusable
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.size
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.focus.FocusManager
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.focus.onFocusChanged
+import androidx.compose.ui.input.key.Key
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.test.ExperimentalTestApi
+import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.performKeyInput
+import androidx.compose.ui.test.pressKey
 import androidx.compose.ui.test.runComposeUiTest
 import androidx.compose.ui.unit.dp
+import androidx.compose.ui.platform.testTag
 import kotlin.test.AfterTest
 import kotlin.test.Test
 import kotlin.test.assertFalse
@@ -32,6 +38,65 @@ class NavFocusLeaveTest {
     fun forgetRememberedControl() {
         // RootNavFocus is a singleton shared by every test in the run.
         RootNavFocus.forgetContentFocus()
+        RootNavFocus.sidebarAvailable = false
+    }
+
+    @Test
+    fun leftAtEmbeddedPageEdgeHandsFocusToTheSidebar() = runComposeUiTest {
+        var pageFocused = false
+        var sidebarFocused = false
+        val sidebarRequester = FocusRequester()
+        val pageRequester = FocusRequester()
+        setContent {
+            LaunchedEffect(sidebarRequester) {
+                RootNavFocus.enterRequests.collect { sidebarRequester.requestFocus() }
+            }
+            Box(
+                Modifier
+                    .tabSidebarHandoff(
+                        homeSelected = { false },
+                        sidebarAvailable = { true },
+                        onBack = { false },
+                    ),
+            ) {
+                Row {
+                    Box(
+                        Modifier
+                            .testTag("sidebar")
+                            .size(40.dp)
+                            .focusRequester(sidebarRequester)
+                            .onFocusChanged { sidebarFocused = it.hasFocus }
+                            .focusable(),
+                    )
+                    Box(
+                        Modifier
+                            .testTag("page")
+                            .size(40.dp)
+                            .focusRequester(pageRequester)
+                            .arrowKeyFocusNavigation(releaseWhenStuck = true)
+                            .onFocusChanged { pageFocused = it.hasFocus }
+                            .focusable(),
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        RootNavFocus.sidebarAvailable = true
+        runOnIdle { pageRequester.requestFocus() }
+        waitForIdle()
+        assertTrue(pageFocused)
+
+        onNodeWithTag("page").performKeyInput { pressKey(Key.Backspace) }
+        waitForIdle()
+        assertTrue(sidebarFocused, "Back with no tab page to close should enter the sidebar")
+        assertFalse(pageFocused)
+
+        runOnIdle { pageRequester.requestFocus() }
+        waitForIdle()
+        onNodeWithTag("page").performKeyInput { pressKey(Key.DirectionLeft) }
+        waitForIdle()
+        assertTrue(sidebarFocused, "Left with no further focusable control should enter the sidebar")
+        assertFalse(pageFocused)
     }
 
     @Test

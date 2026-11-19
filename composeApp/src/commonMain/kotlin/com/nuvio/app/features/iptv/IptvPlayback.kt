@@ -256,17 +256,20 @@ object IptvPlaybackRequests {
         zapList: List<IptvChannel> = emptyList(),
         /** fork:live-tv-on-now - see [IptvPlaybackSession.Active.alternates]. */
         alternates: Map<Int, List<IptvChannel>> = emptyMap(),
+        sportsEventId: String? = null,
     ): Boolean {
         linkJob?.cancel()
         if (IptvPlaybackSession.needsLink(playlist, channel)) {
             linkJob = scope.launch {
                 val candidates = StalkerClient.streamCandidates(playlist, channel)
-                IptvPlaybackSession.launchFor(playlist, channel, zapList, candidates, alternates)?.let { _requests.tryEmit(it) }
+                IptvPlaybackSession.launchFor(playlist, channel, zapList, candidates, alternates)
+                    ?.let { it.withSportsIdentity(sportsEventId, playlist, channel) }
+                    ?.let { _requests.tryEmit(it) }
             }
             return true
         }
         val launch = IptvPlaybackSession.launchFor(playlist, channel, zapList, alternates = alternates) ?: return false
-        return _requests.tryEmit(launch)
+        return _requests.tryEmit(launch.withSportsIdentity(sportsEventId, playlist, channel))
     }
 
     /** fork:live-tv-on-now - [entry] from its beginning (see [IptvPlaybackSession.launchCatchup]); false when it cannot be. */
@@ -276,9 +279,19 @@ object IptvPlaybackRequests {
         entry: IptvEpgEntry,
         zapList: List<IptvChannel> = emptyList(),
         alternates: Map<Int, List<IptvChannel>> = emptyMap(),
+        sportsEventId: String? = null,
     ): Boolean {
         linkJob?.cancel()
         val launch = IptvPlaybackSession.launchCatchup(playlist, channel, entry, zapList, alternates) ?: return false
-        return _requests.tryEmit(launch)
+        return _requests.tryEmit(launch.withSportsIdentity(sportsEventId, playlist, channel.primary))
     }
+
+    private fun PlayerLaunch.withSportsIdentity(
+        eventId: String?,
+        playlist: IptvPlaylist,
+        channel: IptvChannel,
+    ): PlayerLaunch = copy(
+        sportsEventId = eventId,
+        sourceIdentityKey = eventId?.let { "sports:$it:iptv:${playlist.id}:${channel.key}" } ?: sourceIdentityKey,
+    )
 }

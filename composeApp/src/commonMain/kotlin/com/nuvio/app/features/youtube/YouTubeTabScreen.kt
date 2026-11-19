@@ -811,6 +811,9 @@ fun YouTubeTabScreen(
                 YouTubeSectionTab(Icons.Rounded.Fullscreen, "Watch page", on = false) {
                     YouTubeWatchLayout.stopBrowsing()
                 }
+                YouTubeSectionTab(Icons.Rounded.Close, "Close mini player", on = false) {
+                    YouTubeWatchLayout.requestCloseFromCorner()
+                }
             }
             if (auth.signedIn) {
                 // Named like the sections; lit while the filter is on.
