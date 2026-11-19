@@ -1556,11 +1556,7 @@ if (isWindowsHost) {
  */
 fun resolveDesktopChannel(override: String?, logger: org.gradle.api.logging.Logger): String {
     if (override != null) return override
-    val appData = System.getenv("LOCALAPPDATA")
-        ?.takeIf { it.isNotBlank() }
-        ?.let(::File)
-        ?: File(System.getProperty("user.home"), "AppData/Local")
-    val updaterPrefs = File(appData, "NuvioHTPC/nuvio_updater.properties")
+    val updaterPrefs = File(resolveDesktopAppDataDir(), "nuvio_updater.properties")
     val stored = runCatching {
         Properties()
             .apply { updaterPrefs.inputStream().use { load(it) } }
@@ -1576,6 +1572,34 @@ fun resolveDesktopChannel(override: String?, logger: org.gradle.api.logging.Logg
                 "No Update Channel setting found at ${updaterPrefs.absolutePath}; stamping this image as nightly.",
             )
             "nightly"
+        }
+    }
+}
+
+/**
+ * The normal per-user Nuvio desktop data directory, resolved the same way as the running app
+ * (`DesktopStorage.resolveAppDataDir`). The package build reads its update channel from here, so a
+ * Linux build follows the same `~/.config/nuviohtpc` profile the installed app uses instead of
+ * looking in a Windows-only `%LOCALAPPDATA%` folder that does not exist on this machine.
+ */
+fun resolveDesktopAppDataDir(): File {
+    val osName = System.getProperty("os.name").orEmpty().lowercase()
+    val userHome = File(System.getProperty("user.home").orEmpty())
+    return when {
+        osName.contains("win") -> {
+            val localAppData = System.getenv("LOCALAPPDATA")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::File)
+                ?: File(userHome, "AppData/Local")
+            File(localAppData, "NuvioHTPC")
+        }
+        osName.contains("mac") -> File(userHome, "Library/Application Support/NuvioHTPC")
+        else -> {
+            val parent = System.getenv("XDG_CONFIG_HOME")
+                ?.takeIf { it.isNotBlank() }
+                ?.let(::File)
+                ?: File(userHome, ".config")
+            File(parent, "nuviohtpc")
         }
     }
 }

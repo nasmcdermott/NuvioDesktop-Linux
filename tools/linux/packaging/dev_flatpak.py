@@ -14,7 +14,11 @@ Two differences follow, and they are why nothing here is named or checked like a
     format). The Flatpak still uses the GNOME runtime's WebKit, and carries the same launcher
     layout, desktop entry, icon and sandbox permissions as the release bundle.
 
-Usage (the packageDevFlatpak Gradle task runs exactly this):
+It deliberately shares the installed app's `~/.config/nuviohtpc` profile (via `XDG_CONFIG_HOME` and
+a scoped Flatpak filesystem permission), so a dev bundle opens with the same login, settings and
+account data as the regular app.
+
+Usage:
 
   python3 tools/linux/packaging/dev_flatpak.py \
       --app-image composeApp/build/compose/binaries/main-release/app/nuvio \
@@ -71,6 +75,8 @@ def launcher_text() -> str:
     return '''#!/bin/sh
 set -eu
 unset LD_PRELOAD
+# Development bundles share the installed app's profile instead of a sandbox-only one.
+export XDG_CONFIG_HOME="$HOME/.config"
 exec /app/lib/nuvio-desktop/bin/nuvio "$@"
 '''
 
@@ -120,6 +126,7 @@ def build(app_image: pathlib.Path, version: str, work: pathlib.Path, output: pat
         icons / f'{app_id}.png')
 
     permissions = json.loads((HERE / 'flatpak-permissions.json').read_text())
+    permissions.append('--filesystem=xdg-config/nuviohtpc:create')
     subprocess.run(
         ['flatpak', 'build-finish', '--command=nuvio-desktop', *permissions, str(root)], check=True)
     grant_input_device(root / 'metadata')

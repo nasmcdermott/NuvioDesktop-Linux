@@ -79,6 +79,9 @@ already-installed pinned `org.gnome.Platform` runtime, for a testable developmen
 building the GraalVM native image. It is not the release bundle: the image carries a JDK and the
 application JARs, and no `verify.py` check accepts it. It still applies the release launcher layout,
 desktop entry, 512px icon and sandbox permissions, and refuses an app image without `lib/native`.
+Unlike the release bundle, it deliberately shares the installed app's `~/.config/nuviohtpc` profile
+through `XDG_CONFIG_HOME` and a scoped `xdg-config/nuviohtpc` permission, so it opens with the same
+login and settings instead of a sandbox-only profile.
 
 Output is ignored `build/linux-packaging/`: `canonical/`, `deb-root/`,
 `rpmbuild/`, `Nuvio.AppDir/`, `flatpak-build/`, `artifacts/`, dependency
