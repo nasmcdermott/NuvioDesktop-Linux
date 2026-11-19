@@ -14,7 +14,7 @@
 
 [![Nuvio TV Mode Demo](https://img.youtube.com/vi/txiM8_y2aD8/maxresdefault.jpg)](https://youtu.be/txiM8_y2aD8)
 
-This fork is unaffiliated with the Nuvio team. Don't worry about the commit disparity, Nuvio's team makes many small commits while I bundle everything into a single release commit for simplicity as this is mostly a solo focused project. 
+This fork is unaffiliated with the Nuvio team. Don't worry about the commit disparity, Nuvio's team makes many small commits while everything is bundled into a single release commit for simplicity as this is mostly a solo focused project. 
 
 Built off [Slokker's Linux fork](https://github.com/iamSlokker/NuvioDesktop-Linux) of [UmbraProject's NuvioHTPC](https://github.com/UmbraProjects/NuvioDesktop) version of [Nuvio Desktop](https://github.com/NuvioMedia/NuvioDesktop). It supports appimage, flatpack, debian and RPM. It's based on the nightly releases of this project.
 
