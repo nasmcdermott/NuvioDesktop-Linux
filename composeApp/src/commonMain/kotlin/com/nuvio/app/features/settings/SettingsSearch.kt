@@ -753,7 +753,7 @@ private fun settingsSearchEntries(
             icon = Icons.Rounded.LiveTv,
         )
     }
-    // fork:sports - only on a build that carries the feature (see AppFeaturePolicy.sportsEnabled).
+    // fork:sports - always on in this fork (see AppFeaturePolicy.sportsEnabled).
     if (AppFeaturePolicy.sportsEnabled) {
         val sportsPage = "Sports"
         addPage(

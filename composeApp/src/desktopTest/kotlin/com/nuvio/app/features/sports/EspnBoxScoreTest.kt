@@ -26,22 +26,22 @@ class EspnBoxScoreTest {
          "boxscore":{
            "teams":[
              {"statistics":[
-               {"name":"totalYards","displayValue":"312"},
-               {"name":"turnovers","displayValue":"2"},
-               {"name":"thirdDownEff","displayValue":"45% (3/7)"}
+               {"name":"totalYards","label":"Total Yards","displayValue":"312"},
+               {"name":"turnovers","label":"Turnovers","displayValue":"2"},
+               {"name":"thirdDownEff","label":"3rd down efficiency","displayValue":"45% (3/7)"}
              ]},
              {"statistics":[
-               {"name":"totalYards","displayValue":"388"},
-               {"name":"turnovers","displayValue":"1"},
-               {"name":"thirdDownEff","displayValue":"58% (4/7)"}
+               {"name":"totalYards","label":"Total Yards","displayValue":"388"},
+               {"name":"turnovers","label":"Turnovers","displayValue":"1"},
+               {"name":"thirdDownEff","label":"3rd down efficiency","displayValue":"58% (4/7)"}
              ]}
            ],
            "players":[
-             {"statistics":[{"name":"passing","athletes":[
+             {"statistics":[{"name":"passing","labels":["C/ATT","YDS","TD","INT"],"athletes":[
                {"athlete":{"displayName":"Justin Fields","position":{"abbreviation":"QB"}},
                 "stats":["22/31","248","2","1"]}
              ]}]},
-             {"statistics":[{"name":"passing","athletes":[
+             {"statistics":[{"name":"passing","labels":["C/ATT","YDS","TD","INT"],"athletes":[
                {"athlete":{"displayName":"Jared Goff","position":{"abbreviation":"QB"}},
                 "stats":["25/33","301","3","0"]}
              ]}]}
@@ -58,7 +58,7 @@ class EspnBoxScoreTest {
         val loaded = feed(summary).summary(nfl, "1")
 
         assertEquals(3, loaded.teamStats.size)
-        val yards = loaded.teamStats.first { it.label == "TotalYards" }
+        val yards = loaded.teamStats.first { it.label == "Total Yards" }
         assertEquals("312", yards.away)
         assertEquals("388", yards.home)
         assertTrue(yards.homeLeads, "the larger number leads")
@@ -66,10 +66,38 @@ class EspnBoxScoreTest {
     }
 
     @Test
+    fun `basketball stats show the provider's label, not the API name`() = runBlocking {
+        val body = """
+            {"boxscore":{"teams":[
+              {"statistics":[{"name":"fieldGoalsMade-fieldGoalsAttempted","label":"FG","displayValue":"34-82"}]},
+              {"statistics":[{"name":"fieldGoalsMade-fieldGoalsAttempted","label":"FG","displayValue":"30-78"}]}
+            ]}}
+        """.trimIndent()
+
+        val stat = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").teamStats.single()
+
+        assertEquals("FG", stat.label)
+    }
+
+    @Test
+    fun `a stat with no label is humanized rather than shown as an API name`() = runBlocking {
+        val body = """
+            {"boxscore":{"teams":[
+              {"statistics":[{"name":"fieldGoalsMade-fieldGoalsAttempted","displayValue":"34-82"}]},
+              {"statistics":[{"name":"fieldGoalsMade-fieldGoalsAttempted","displayValue":"30-78"}]}
+            ]}}
+        """.trimIndent()
+
+        val stat = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").teamStats.single()
+
+        assertEquals("Field Goals Made / Field Goals Attempted", stat.label)
+    }
+
+    @Test
     fun `a percentage stat compares on its number, not its text`() = runBlocking {
         val loaded = feed(summary).summary(nfl, "1")
 
-        val third = loaded.teamStats.first { it.label == "ThirdDownEff" }
+        val third = loaded.teamStats.first { it.label == "3rd down efficiency" }
         // 58% beats 45%; compared as text, "5" > "4" would agree here but "100%" vs "99%" would not.
         assertTrue(third.homeLeads)
     }
@@ -91,6 +119,54 @@ class EspnBoxScoreTest {
     }
 
     @Test
+    fun `scoring plays carry their points and the team that scored them`() = runBlocking {
+        val body = """
+            {"header":{"competitions":[{"competitors":[
+              {"homeAway":"home","team":{"id":"24"}},
+              {"homeAway":"away","team":{"id":"18"}}
+            ]}]},
+             "plays":[
+               {"id":"p1","text":"Jump Ball","period":{"displayValue":"1st Quarter"},
+                "clock":{"displayValue":"12:00"},"awayScore":0,"homeScore":0},
+               {"id":"p2","text":"A. Player makes 3-pointer","period":{"displayValue":"1st Quarter"},
+                "clock":{"displayValue":"11:40"},"awayScore":0,"homeScore":3,"scoringPlay":true,
+                "scoreValue":3,"team":{"id":"24"}},
+               {"id":"p3","text":"B. Player makes layup","period":{"displayValue":"1st Quarter"},
+                "clock":{"displayValue":"11:10"},"awayScore":2,"homeScore":3,"scoringPlay":true}
+             ]}
+        """.trimIndent()
+
+        val plays = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").playByPlay
+
+        assertNull(plays[0].points)
+        assertEquals(3, plays[1].points)
+        assertEquals("24", plays[1].scoringTeamId)
+        // This play has no scoreValue or team: both come from the running score.
+        assertEquals(2, plays[2].points)
+        assertEquals("18", plays[2].scoringTeamId)
+    }
+
+    @Test
+    fun `a football score with no tagged points still reads as points`() = runBlocking {
+        val body = """
+            {"header":{"competitions":[{"competitors":[
+              {"homeAway":"home","team":{"id":"17"}},
+              {"homeAway":"away","team":{"id":"19"}}
+            ]}]},
+             "plays":[
+               {"id":"p1","text":"Kickoff","period":{"displayValue":"1st"},"clock":{"displayValue":"15:00"},"awayScore":0,"homeScore":0},
+               {"id":"p2","text":"A.Borregales 22 yard field goal is GOOD","period":{"displayValue":"1st"},
+                "clock":{"displayValue":"9:14"},"awayScore":0,"homeScore":3,"scoringPlay":true}
+             ]}
+        """.trimIndent()
+
+        val play = feed(body).summary(nfl, "1").playByPlay.last()
+
+        assertEquals(3, play.points)
+        assertEquals("17", play.scoringTeamId)
+    }
+
+    @Test
     fun `one team alone is not a comparison`() = runBlocking {
         val body = """{"boxscore":{"teams":[{"statistics":[{"name":"sacks","displayValue":"3"}]}]}}"""
 
@@ -107,6 +183,87 @@ class EspnBoxScoreTest {
         assertEquals(listOf("Justin Fields", "Jared Goff"), passing.players.map { it.name })
         assertEquals("QB", passing.players.first().position)
         assertEquals("22/31 248 2 1", passing.players.first().headline)
+        assertEquals(listOf("C/ATT", "YDS", "TD", "INT"), passing.players.first().stats.map { it.label })
+        assertEquals("22/31", passing.players.first().stats.first().value)
+    }
+
+    @Test
+    fun `a category with no name still shows its players`() = runBlocking {
+        // NBA sends no category heading at all; only labels and the athletes.
+        val body = """
+            {"boxscore":{"players":[{"statistics":[{"labels":["PTS","REB","AST"],"athletes":[
+              {"athlete":{"displayName":"A. Player","position":{"abbreviation":"G"}},"stats":["25","7","4"]}
+            ]}]}]}}
+        """.trimIndent()
+
+        val category = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").categories.single()
+
+        assertEquals("Players", category.name)
+        assertEquals(listOf("PTS", "REB", "AST"), category.players.single().stats.map { it.label })
+    }
+
+    @Test
+    fun `a baseball leader shows its own number, not the whole season line`() {
+        // The provider sends the full season line for every baseball category; only the rate or
+        // count the category ranks matters in the leader row.
+        assertEquals(
+            ".331",
+            sportsLeaderValue("Batting Average", "179-541, 53 HR, 30 2B, 114 RBI", 0.3308686912059784),
+        )
+        assertEquals("60", sportsLeaderValue("Home Runs", "147-596, 60 HR, 24 2B", 60.0))
+        assertEquals("4707", sportsLeaderValue("Passing Yards", "4707", 4707.0))
+    }
+
+    @Test
+    fun `season leaders and team news arrive with the summary`() = runBlocking {
+        val summary = """
+            {"header":{"season":{"year":2026,"type":2},"competitions":[{"competitors":[
+              {"team":{"id":"18"}},{"team":{"id":"24"}}
+            ]}]}}
+        """.trimIndent()
+        val leaders = """
+            {"categories":[{"name":"pointsPerGame","displayName":"Points Per Game","leaders":[
+              {"displayValue":"26.0","team":{"${'$'}ref":"http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/teams/18"},
+               "athlete":{"${'$'}ref":"http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/athletes/1"}},
+              {"displayValue":"25.0","team":{"${'$'}ref":"http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/teams/24"},
+               "athlete":{"${'$'}ref":"http://sports.core.api.espn.com/v2/sports/basketball/leagues/nba/seasons/2026/athletes/2"}}
+            ]}]}
+        """.trimIndent()
+        val knicksNews = """
+            {"articles":[{"id":7,"headline":"Knicks win again","description":"A short body.",
+              "images":[{"type":"header","url":"https://cdn/header.jpg"}],
+              "links":{"web":{"href":"https://espn/story"}}}]}
+        """.trimIndent()
+        val spursNews = """{"articles":[{"id":8,"headline":"Spurs update","description":"Another body."}]}"""
+        val feed = EspnSportsFeed { url ->
+            when {
+                url.contains("team=18") -> knicksNews
+                url.contains("team=24") -> spursNews
+                url.contains("athletes/1") ->
+                    """{"displayName":"Jalen Brunson","position":{"abbreviation":"G"},"headshot":{"href":"https://cdn/brunson.png"}}"""
+                url.contains("athletes/2") ->
+                    """{"displayName":"Victor Wembanyama","position":{"abbreviation":"F"}}"""
+                url.contains("/leaders?") -> leaders
+                else -> summary
+            }
+        }
+
+        val loaded = feed.summary(SportsCatalog.league("basketball/nba")!!, "1")
+
+        val knicks = loaded.leaders.first { it.teamId == "18" }
+        assertEquals("Points Per Game", knicks.categories.single().name)
+        assertEquals("Jalen Brunson", knicks.categories.single().leader.name)
+        assertEquals("G", knicks.categories.single().leader.position)
+        assertEquals("https://cdn/brunson.png", knicks.categories.single().leader.headshot)
+        assertEquals("26.0", knicks.categories.single().leader.value)
+        assertEquals("Victor Wembanyama", loaded.leaders.first { it.teamId == "24" }.categories.single().leader.name)
+
+        val awayNews = loaded.news.first { it.teamId == "18" }.articles.single()
+        assertEquals("Knicks win again", awayNews.headline)
+        assertEquals("A short body.", awayNews.description)
+        assertEquals("https://cdn/header.jpg", awayNews.image)
+        assertEquals("https://espn/story", awayNews.link)
+        assertEquals("Spurs update", loaded.news.first { it.teamId == "24" }.articles.single().headline)
     }
 
     @Test

@@ -66,6 +66,9 @@ internal object LinuxMusicMpris {
     }
 
     private fun command(player: MusicPlayer, method: String, value: Double) {
+        // A film has the music paused and holds its place; its own MPRIS player is the one that should
+        // take the transport keys then, or the music would start behind the picture.
+        if (MusicAutoPause.controller.isHeld) return
         val action = musicMprisCommand(method, value, player.state.value.positionMs) ?: return
         // A key can arrive both here (the desktop routes it) and as an AWT event; only one acts.
         action.gateAction()?.let { gate -> if (!MusicMediaKeyGate.claim(gate)) return }

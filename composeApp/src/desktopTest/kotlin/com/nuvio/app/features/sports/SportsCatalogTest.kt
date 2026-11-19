@@ -25,6 +25,7 @@ class SportsCatalogTest {
             assertTrue(league.path.isNotBlank(), "${league.id} has no path")
             assertTrue(league.name.isNotBlank(), "${league.id} has no name")
             assertTrue(league.shortName.isNotBlank(), "${league.id} has no short name")
+            assertTrue(league.logo?.startsWith("https://") == true, "${league.id} has no HTTPS league logo")
             assertTrue(league.minutes in 30..600, "${league.id} has an implausible duration: ${league.minutes}")
         }
     }

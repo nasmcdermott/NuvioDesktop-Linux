@@ -55,6 +55,8 @@ data class League(
     val minutes: Int = 150,
     /** The league's brand colour, for the chip and card accents. */
     val color: Long = 0xFF3B4A63,
+    /** Public league mark from the feed/CDN, when available. */
+    val logo: String? = null,
 ) {
     companion object {
         /** A league offered everywhere; the default for the ones no region should hide. */
@@ -214,11 +216,55 @@ data class PlayByPlayEntry(
     val scoring: Boolean = false,
     /** ESPN's per-play wall-clock instant, independent of the game clock. */
     val wallclockMs: Long? = null,
+    /** Points this play put on the board ("+3", "+7"), when it scored. */
+    val points: Int? = null,
+    /** The team awarded those points, so the row can tint them in its colour. */
+    val scoringTeamId: String? = null,
 )
 
 /** One numbered statistic of a team ("Total Yards", "3rd down efficiency"): label plus display text. */
 @Serializable
 data class TeamStat(val label: String, val value: String, val category: String? = null)
+
+/** One player leading a team in a season stat category ("Points Per Game", "Passing Yards"). */
+@Serializable
+data class SeasonLeader(
+    val name: String,
+    val position: String? = null,
+    val headshot: String? = null,
+    val value: String,
+)
+
+/** One season stat category of a team's leaders, with the player who leads it. */
+@Serializable
+data class TeamLeaderCategory(
+    val name: String,
+    val leader: SeasonLeader,
+)
+
+/** A team's season leaders, keyed by the team the game is between. */
+@Serializable
+data class TeamLeaders(
+    val teamId: String,
+    val categories: List<TeamLeaderCategory> = emptyList(),
+)
+
+/** One news story for a team: the picture, headline and short body text the detail page shows. */
+@Serializable
+data class NewsArticle(
+    val id: String,
+    val headline: String,
+    val description: String? = null,
+    val image: String? = null,
+    val link: String? = null,
+)
+
+/** The news stories for one of the game's teams. */
+@Serializable
+data class TeamNews(
+    val teamId: String,
+    val articles: List<NewsArticle> = emptyList(),
+)
 
 /** A stat line for one player. [headline] is the provider's own summary of them. */
 @Serializable
@@ -256,6 +302,10 @@ data class GameSummary(
     val venue: String? = null,
     /** Both teams' comparison numbers, away first. */
     val teamStats: List<TeamStatPair> = emptyList(),
+    /** Season leaders per team, away first when the provider supplies them. */
+    val leaders: List<TeamLeaders> = emptyList(),
+    /** Recent news for each of the game's two teams. */
+    val news: List<TeamNews> = emptyList(),
     /** Per-player categories (passing, rushing, receiving…), in the provider's order. */
     val categories: List<StatCategory> = emptyList(),
     /** Moneyline/line data from the summary's pickcenter when the scoreboard has none. */

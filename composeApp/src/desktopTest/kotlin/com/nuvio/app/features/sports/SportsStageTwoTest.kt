@@ -16,6 +16,22 @@ import kotlin.test.assertTrue
 class SportsStageTwoTest {
 
     @Test
+    fun `moneyline colors split in proportion to normalized implied chances`() {
+        // +120 implies 45.45%, -140 implies 58.33%; normalize their sum to remove the vig.
+        val share = moneylineAwayShare(MoneylineOdds(away = "+120", home = "-140"))
+
+        assertEquals(45.45f / (45.45f + 58.33f), share, 0.001f)
+    }
+
+    @Test
+    fun `moneyline color split handles one quote and missing or invalid quotes`() {
+        assertEquals(100f / 220f, moneylineAwayShare(MoneylineOdds(away = "+120")), 0.001f)
+        assertEquals(1f - 140f / 240f, moneylineAwayShare(MoneylineOdds(home = "-140")), 0.001f)
+        assertEquals(0.5f, moneylineAwayShare(null))
+        assertEquals(0.5f, moneylineAwayShare(MoneylineOdds(away = "EVEN", home = "—")))
+    }
+
+    @Test
     fun `the strip is a full week centred on today`() {
         val today = LocalDate.of(2026, 11, 17)
         val days = sportsDays(today, radius = 3, locale = Locale.US)

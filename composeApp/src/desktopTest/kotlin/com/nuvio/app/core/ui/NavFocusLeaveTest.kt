@@ -39,6 +39,7 @@ class NavFocusLeaveTest {
         // RootNavFocus is a singleton shared by every test in the run.
         RootNavFocus.forgetContentFocus()
         RootNavFocus.sidebarAvailable = false
+        RootNavFocus.topBarAvailable = false
     }
 
     @Test
@@ -97,6 +98,64 @@ class NavFocusLeaveTest {
         waitForIdle()
         assertTrue(sidebarFocused, "Left with no further focusable control should enter the sidebar")
         assertFalse(pageFocused)
+    }
+
+    @Test
+    fun leftAtThePageEdgeEntersTheFloatingTopBarWhenNoSidebarIsDrawn() = runComposeUiTest {
+        // fork:sports-navbar - a window navigated by the bar across the top has no sidebar on the
+        // left, so a Left the page could not use steps out into that bar instead of doing nothing.
+        var pageFocused = false
+        var barFocused = false
+        val barRequester = FocusRequester()
+        val pageRequester = FocusRequester()
+        setContent {
+            LaunchedEffect(barRequester) {
+                RootNavFocus.topBarEnterRequests.collect { barRequester.requestFocus() }
+            }
+            Box(
+                Modifier
+                    .tabSidebarHandoff(
+                        homeSelected = { false },
+                        sidebarAvailable = { false },
+                        onBack = { false },
+                        topBarAvailable = { true },
+                    ),
+            ) {
+                Row {
+                    Box(
+                        Modifier
+                            .testTag("topbar")
+                            .size(40.dp)
+                            .focusRequester(barRequester)
+                            .onFocusChanged { barFocused = it.hasFocus }
+                            .focusable(),
+                    )
+                    Box(
+                        Modifier
+                            .testTag("page")
+                            .size(40.dp)
+                            .focusRequester(pageRequester)
+                            .arrowKeyFocusNavigation(releaseWhenStuck = true)
+                            .onFocusChanged { pageFocused = it.hasFocus }
+                            .focusable(),
+                    )
+                }
+            }
+        }
+        waitForIdle()
+        RootNavFocus.topBarAvailable = true
+        try {
+            runOnIdle { pageRequester.requestFocus() }
+            waitForIdle()
+            assertTrue(pageFocused)
+
+            onNodeWithTag("page").performKeyInput { pressKey(Key.DirectionLeft) }
+            waitForIdle()
+            assertTrue(barFocused, "Left with no sidebar and no further control enters the top bar")
+            assertFalse(pageFocused)
+        } finally {
+            RootNavFocus.topBarAvailable = false
+        }
     }
 
     @Test

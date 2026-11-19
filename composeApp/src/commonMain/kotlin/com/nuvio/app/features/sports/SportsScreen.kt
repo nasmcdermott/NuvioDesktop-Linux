@@ -12,7 +12,6 @@ import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
-import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.GridItemSpan
@@ -23,12 +22,12 @@ import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.rounded.Close
-import androidx.compose.material.icons.rounded.EmojiEvents
 import androidx.compose.material.icons.rounded.Fullscreen
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
@@ -47,6 +46,7 @@ import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.graphics.vector.ImageVector
 import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.ui.input.key.KeyEventType
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
@@ -54,6 +54,7 @@ import androidx.compose.ui.input.key.type
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.nuvio.app.core.ui.RootNavFocus
 import com.nuvio.app.core.ui.arrowFocusDirection
 import com.nuvio.app.core.ui.arrowKeyFocusNavigation
 import com.nuvio.app.core.ui.keyLayer
@@ -87,7 +88,6 @@ import kotlinx.coroutines.withContext
 internal fun SportsScreen(
     modifier: Modifier = Modifier,
     topChromePadding: androidx.compose.ui.unit.Dp? = null,
-    onOpenSettings: () -> Unit = {},
     onFindSportsStreams: (SportsEvent, League, String?) -> Unit = { _, _, _ -> },
     onPlaySportsStream: (SportsEvent, League, StreamItem) -> Unit = { _, _, _ -> },
 ) {
@@ -260,7 +260,6 @@ internal fun SportsScreen(
                         visibleLeagues.forEach { SportsRepository.refresh(it.id, selectedDay, force = true) }
                     }
                 },
-                onOpenSettings = onOpenSettings,
                 onDown = {
                     when {
                         openGame != null && !tablesMode -> detailBandFocus.requestFocusLogged()
@@ -403,13 +402,27 @@ private fun SportsHeaderBand(
     onToggleMySports: () -> Unit,
     onOpenPicker: () -> Unit,
     onRefresh: () -> Unit,
-    onOpenSettings: () -> Unit,
     onDown: () -> Boolean,
 ) {
     val tokens = MaterialTheme.nuvio
     val mySportsChipFocus = remember { FocusRequester() }
     val allEventsChipFocus = remember { FocusRequester() }
     val tablesChipFocus = remember { FocusRequester() }
+    val followPillFocus = remember { FocusRequester() }
+    // The chips and pills are the two halves of the row the floating bar sits in the middle of.
+    // Registering them lets the bar's ends step into them (RootNavFocus.focusBarSide).
+    val sideHandoffOwner = remember { Any() }
+    val covered = com.nuvio.app.core.ui.LocalScreenCovered.current
+    DisposableEffect(sideHandoffOwner, covered) {
+        if (!covered) {
+            RootNavFocus.registerBarSideHandoff(
+                sideHandoffOwner,
+                left = { tablesChipFocus.requestFocusLogged() },
+                right = { followPillFocus.requestFocusLogged() },
+            )
+        }
+        onDispose { RootNavFocus.unregisterBarSideHandoff(sideHandoffOwner) }
+    }
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -424,19 +437,6 @@ private fun SportsHeaderBand(
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
     ) {
-        Icon(
-            imageVector = Icons.Rounded.EmojiEvents,
-            contentDescription = null,
-            tint = tokens.colors.textPrimary,
-            modifier = Modifier.size(tokens.icons.lg),
-        )
-        Text(
-            text = "Sports",
-            style = MaterialTheme.typography.headlineSmall,
-            fontWeight = FontWeight.Bold,
-            color = tokens.colors.textPrimary,
-        )
-        Spacer(Modifier.width(4.dp))
         LazyRow(
             modifier = Modifier.weight(1f),
             horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
@@ -464,6 +464,11 @@ private fun SportsHeaderBand(
                     label = "Tables",
                     selected = tablesMode,
                     focusRequester = tablesChipFocus,
+                    // The bar is drawn to the right of these chips: Right keeps walking into it
+                    // instead of stepping over it to the pills on its other side.
+                    onExtraKey = { ev ->
+                        arrowFocusDirection(ev) == FocusDirection.Right && RootNavFocus.enterTopBar()
+                    },
                     onClick = { onSelectTablesMode(!tablesMode) },
                 )
             }
@@ -480,9 +485,16 @@ private fun SportsHeaderBand(
                 onClick = onClosePlayer,
             )
         }
-        SportsHeaderPill(label = "✎ Follow Teams & Leagues", onClick = onOpenPicker)
+        SportsHeaderPill(
+            label = "✎ Follow Teams & Leagues",
+            focusRequester = followPillFocus,
+            // …and Left from the first pill on the bar's other side comes back into it.
+            onExtraKey = { ev ->
+                arrowFocusDirection(ev) == FocusDirection.Left && RootNavFocus.enterTopBar()
+            },
+            onClick = onOpenPicker,
+        )
         SportsHeaderPill(label = "↻", onClick = onRefresh)
-        SportsHeaderPill(label = "⚙", onClick = onOpenSettings)
     }
 }
 
@@ -491,13 +503,20 @@ private fun SportsHeaderPill(
     label: String,
     onClick: () -> Unit,
     icon: ImageVector? = null,
+    focusRequester: FocusRequester? = null,
+    onExtraKey: ((KeyEvent) -> Boolean)? = null,
 ) {
     val tokens = MaterialTheme.nuvio
     val interaction = rememberSportsInteraction(baseScale = 1.05f, label = "sportsHeaderPillZoom")
     val shape = RoundedCornerShape(50)
     Box(
         modifier = Modifier
-            .sportsInteractive(state = interaction, onClick = onClick)
+            .sportsInteractive(
+                state = interaction,
+                focusRequester = focusRequester,
+                onExtraKey = onExtraKey,
+                onClick = onClick,
+            )
             .clip(shape)
             .background(
                 if (interaction.highlighted) SolidColor(tokens.colors.focusBackground)

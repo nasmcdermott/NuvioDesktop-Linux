@@ -621,6 +621,17 @@ fun main(args: Array<String>) {
     System.out.println("Info: (DesktopStartup) entering Compose application")
 
     application {
+        // fork:music-mini-player - on Linux the music player publishes itself over MPRIS, so the
+        // desktop routes the hardware transport keys (play/pause, next, previous, and fast
+        // forward/rewind as track transport) to it on any page. While a film is up the music is
+        // held and its session reports Paused, which leaves the video player's own MPRIS active.
+        // The AWT handler further down stays as the fallback for desktops that send the keys to the
+        // focused window instead of the media player.
+        LaunchedEffect(Unit) {
+            if (DesktopHostOs.current == DesktopHostOs.LINUX) {
+                com.nuvio.app.features.music.LinuxMusicMpris.start()
+            }
+        }
         remember {
             System.out.println(
                 "Info: (DesktopStartup) Compose application composition entered after " +
@@ -699,10 +710,10 @@ fun main(args: Array<String>) {
                     exitDesktopApplication()
                 }
             },
-            // fork:sports — an ordinary build and a `-Pnuvio.sports=true` build otherwise open the
-            // same window and, in a dev run, carry no build stamp to tell them apart.
+            // fork:sports — Sports is part of the normal build now, so the title carries no
+            // build-mode suffix; only the player smoke run gets its own title.
             title = if (smokePlayerUrl == null) {
-                "Nuvio HTPC" + if (com.nuvio.app.core.build.AppFeaturePolicy.sportsEnabled) " — Sports" else ""
+                "Nuvio HTPC"
             } else {
                 "Nuvio Player Smoke"
             },
@@ -1233,6 +1244,27 @@ fun main(args: Array<String>) {
                                 }
                             }
                             if (event.isCtrlPressed) return@onKeyEvent false
+                            // fork:music-mini-player - multimedia transport keys drive the music that is
+                            // loaded, whichever page is up and whatever the keys are on. A card that owns
+                            // a MediaPlayPause quick-launch consumes it before this handler sees it.
+                            val mediaAction = com.nuvio.app.features.input
+                                .desktopMediaKeyAction(event.key.nativeKeyCode)
+                            val musicHeldByPlayback =
+                                com.nuvio.app.features.music.MusicAutoPause.controller.isHeld
+                            if (mediaAction != null && !musicHeldByPlayback &&
+                                com.nuvio.app.features.music.MusicPlayback.player.state.value.isActive
+                            ) {
+                                val music = com.nuvio.app.features.music.MusicPlayback.player
+                                if (com.nuvio.app.features.music.MusicMediaKeyGate.claim(mediaAction.gateName)) {
+                                    when (mediaAction) {
+                                        com.nuvio.app.features.input.DesktopMediaKeyAction.PlayPause ->
+                                            music.togglePlayback()
+                                        com.nuvio.app.features.input.DesktopMediaKeyAction.Next -> music.next()
+                                        com.nuvio.app.features.input.DesktopMediaKeyAction.Previous -> music.previous()
+                                    }
+                                }
+                                return@onKeyEvent true
+                            }
                             // Compose text fields may leave ordinary key-down events unconsumed.
                             // Do not turn content searches or Settings edits into global navigation.
                             if (TextInputFocusTracker.active.value) return@onKeyEvent false

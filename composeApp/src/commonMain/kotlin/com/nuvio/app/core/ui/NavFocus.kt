@@ -34,8 +34,22 @@ import kotlinx.coroutines.flow.asSharedFlow
  * ordinary key events, so nothing here is gamepad-specific.
  */
 object RootNavFocus {
+    private val sidebarOwners = mutableSetOf<Any>()
     @Volatile
-    var sidebarAvailable: Boolean = false
+    private var sidebarManuallyAvailable = false
+
+    /** True while any sidebar instance is drawn; routes can temporarily draw overlapping sidebars. */
+    var sidebarAvailable: Boolean
+        get() = sidebarManuallyAvailable || sidebarOwners.isNotEmpty()
+        set(value) { sidebarManuallyAvailable = value }
+
+    internal fun registerSidebar(owner: Any) {
+        sidebarOwners += owner
+    }
+
+    internal fun unregisterSidebar(owner: Any) {
+        sidebarOwners -= owner
+    }
 
     /**
      * The sidebar's counterpart above the page: a bar drawn across the top of the screen with its row
@@ -48,16 +62,73 @@ object RootNavFocus {
      * Back there goes up a level and then back to the tab Settings was opened from, so the row must
      * not take it ([enterFloatingTopBar]). Up is the same at both ([enterTopBar]).
      */
+    private val topBarOwners = mutableSetOf<Any>()
     @Volatile
-    var topBarAvailable: Boolean = false
+    private var topBarManuallyAvailable = false
+
+    /** True while any floating top bar is drawn. */
+    var topBarAvailable: Boolean
+        get() = topBarManuallyAvailable || topBarOwners.isNotEmpty()
+        set(value) { topBarManuallyAvailable = value }
+
+    internal fun registerTopBar(owner: Any) {
+        topBarOwners += owner
+    }
+
+    internal fun unregisterTopBar(owner: Any) {
+        topBarOwners -= owner
+    }
+
+    private val settingsTopBarOwners = mutableSetOf<Any>()
+    @Volatile
+    private var settingsTopBarManuallyAvailable = false
 
     /** The Settings screen's own row of tab icons; see [topBarAvailable]. */
-    @Volatile
-    var settingsTopBarAvailable: Boolean = false
+    var settingsTopBarAvailable: Boolean
+        get() = settingsTopBarManuallyAvailable || settingsTopBarOwners.isNotEmpty()
+        set(value) { settingsTopBarManuallyAvailable = value }
+
+    internal fun registerSettingsTopBar(owner: Any) {
+        settingsTopBarOwners += owner
+    }
+
+    internal fun unregisterSettingsTopBar(owner: Any) {
+        settingsTopBarOwners -= owner
+    }
 
     /** Whether either bar across the top is drawn, which is what decides if Up has anywhere to go. */
     val anyTopBarDrawn: Boolean
         get() = topBarAvailable || settingsTopBarAvailable
+
+    /**
+     * A page that draws its own controls on the floating bar's line (the Sports page's chips and
+     * pills, YouTube's section tabs) registers how to take the keys when the bar leaves sideways.
+     * [left] focuses the page's control nearest the bar's left end, [right] the one nearest its right
+     * end; each says whether it took the keys. The page's own edge controls ask for the bar with
+     * [enterTopBar], so the two sides hand the keys to each other instead of stepping over the bar.
+     *
+     * The page unregisters while covered, so a page kept alive behind another never answers for it.
+     */
+    class BarSideHandoff(
+        internal val left: () -> Boolean,
+        internal val right: () -> Boolean,
+    )
+
+    private val barSideHandoffOwners = mutableMapOf<Any, BarSideHandoff>()
+
+    internal fun registerBarSideHandoff(owner: Any, left: () -> Boolean, right: () -> Boolean) {
+        barSideHandoffOwners[owner] = BarSideHandoff(left, right)
+    }
+
+    internal fun unregisterBarSideHandoff(owner: Any) {
+        barSideHandoffOwners.remove(owner)
+    }
+
+    /** Steps the keys out of the bar's [left] or right end into the page's controls beside it. */
+    fun focusBarSide(left: Boolean): Boolean {
+        val handoff = barSideHandoffOwners.values.lastOrNull() ?: return false
+        return runCatching { if (left) handoff.left() else handoff.right() }.getOrDefault(false)
+    }
 
     /**
      * Set by a screen that closes itself as it asks for the bar (game mode is drawn over the bar), so
@@ -493,7 +564,10 @@ internal fun Modifier.tabSidebarHandoff(
         TabHandoffKey.Back, TabHandoffKey.Escape ->
             if (onBack()) true else sidebarAvailable() && RootNavFocus.enterSidebar() ||
                 RootNavFocus.enterFloatingTopBar()
-        TabHandoffKey.Left -> sidebarAvailable() && RootNavFocus.enterSidebar()
+        // Left at the page's own left edge steps out of it: to the sidebar when one is drawn, and
+        // otherwise to the bar across the top, which is the only navigation the window has.
+        TabHandoffKey.Left ->
+            (sidebarAvailable() && RootNavFocus.enterSidebar()) || RootNavFocus.enterFloatingTopBar()
         TabHandoffKey.Up -> RootNavFocus.enterTopBar()
         null -> false
     }

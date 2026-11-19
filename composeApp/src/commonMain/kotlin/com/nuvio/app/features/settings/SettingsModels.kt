@@ -159,7 +159,7 @@ internal enum class SettingsPage(
         category = SettingsCategory.General,
         parentPage = Root,
     ),
-    /** fork:sports - only present on a build launched with -Pnuvio.sports=true. */
+    /** fork:sports - always present in this fork. */
     Sports(
         titleRes = Res.string.sports_settings_section,
         category = SettingsCategory.General,

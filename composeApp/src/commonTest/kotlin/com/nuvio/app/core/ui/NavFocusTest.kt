@@ -68,6 +68,76 @@ class NavFocusTest {
     }
 
     @Test
+    fun disposingOneOverlappingSidebarKeepsTheOtherAvailable() {
+        val wasAvailable = RootNavFocus.sidebarAvailable
+        val first = Any()
+        val second = Any()
+        try {
+            RootNavFocus.sidebarAvailable = false
+            RootNavFocus.registerSidebar(first)
+            RootNavFocus.registerSidebar(second)
+            assertTrue(RootNavFocus.sidebarAvailable)
+
+            RootNavFocus.unregisterSidebar(second)
+            assertTrue(RootNavFocus.sidebarAvailable, "the still-visible sidebar remains available")
+            assertTrue(RootNavFocus.enterSidebar(), "the remaining sidebar still accepts navigation focus")
+
+            RootNavFocus.unregisterSidebar(first)
+            assertFalse(RootNavFocus.sidebarAvailable)
+        } finally {
+            RootNavFocus.unregisterSidebar(first)
+            RootNavFocus.unregisterSidebar(second)
+            RootNavFocus.sidebarAvailable = wasAvailable
+        }
+    }
+
+    @Test
+    fun disposingOneOverlappingFloatingTopBarKeepsTheOtherAvailable() {
+        val wasAvailable = RootNavFocus.topBarAvailable
+        val first = Any()
+        val second = Any()
+        try {
+            RootNavFocus.topBarAvailable = false
+            RootNavFocus.registerTopBar(first)
+            RootNavFocus.registerTopBar(second)
+            assertTrue(RootNavFocus.topBarAvailable)
+
+            RootNavFocus.unregisterTopBar(second)
+            assertTrue(RootNavFocus.topBarAvailable, "the still-visible top bar remains available")
+
+            RootNavFocus.unregisterTopBar(first)
+            assertFalse(RootNavFocus.topBarAvailable)
+        } finally {
+            RootNavFocus.unregisterTopBar(first)
+            RootNavFocus.unregisterTopBar(second)
+            RootNavFocus.topBarAvailable = wasAvailable
+        }
+    }
+
+    @Test
+    fun disposingOneOverlappingSettingsTopBarKeepsTheOtherAvailable() {
+        val wasAvailable = RootNavFocus.settingsTopBarAvailable
+        val first = Any()
+        val second = Any()
+        try {
+            RootNavFocus.settingsTopBarAvailable = false
+            RootNavFocus.registerSettingsTopBar(first)
+            RootNavFocus.registerSettingsTopBar(second)
+            assertTrue(RootNavFocus.settingsTopBarAvailable)
+
+            RootNavFocus.unregisterSettingsTopBar(second)
+            assertTrue(RootNavFocus.settingsTopBarAvailable, "the still-visible Settings top bar remains available")
+
+            RootNavFocus.unregisterSettingsTopBar(first)
+            assertFalse(RootNavFocus.settingsTopBarAvailable)
+        } finally {
+            RootNavFocus.unregisterSettingsTopBar(first)
+            RootNavFocus.unregisterSettingsTopBar(second)
+            RootNavFocus.settingsTopBarAvailable = wasAvailable
+        }
+    }
+
+    @Test
     fun leftLeavesTheRowForTheSidebarOnlyFromTheFirstCard() {
         // Left at the first card goes to the sidebar; anywhere else it steps back within the row.
         // moveItem clamps at zero, so without this the key would be swallowed at the first card.
@@ -305,5 +375,33 @@ class NavFocusTest {
         assertEquals(3, clampSidebarIndex(3, 5, -1))
         // An empty sidebar leaves the cursor on the profile row rather than at a negative index.
         assertEquals(-1, clampSidebarIndex(0, 0, -1))
+    }
+
+    @Test
+    fun theBarSideHandoffAnswersOnlyWhileItsPageIsDrawn() {
+        val owner = Any()
+        try {
+            // Nothing registered: the bar falls back to the focus system.
+            assertFalse(RootNavFocus.focusBarSide(left = true))
+            RootNavFocus.registerBarSideHandoff(owner, left = { true }, right = { false })
+            assertTrue(RootNavFocus.focusBarSide(left = true))
+            assertFalse(RootNavFocus.focusBarSide(left = false))
+            RootNavFocus.unregisterBarSideHandoff(owner)
+            assertFalse(RootNavFocus.focusBarSide(left = true))
+        } finally {
+            RootNavFocus.unregisterBarSideHandoff(owner)
+        }
+    }
+
+    @Test
+    fun aPageThatCannotTakeTheBarSideLeavesTheKeyToTheFocusSystem() {
+        val owner = Any()
+        try {
+            RootNavFocus.registerBarSideHandoff(owner, left = { error("no control") }, right = { false })
+            // A handoff that throws is a handoff that declined; the bar must not crash on it.
+            assertFalse(RootNavFocus.focusBarSide(left = true))
+        } finally {
+            RootNavFocus.unregisterBarSideHandoff(owner)
+        }
     }
 }

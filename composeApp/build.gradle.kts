@@ -2179,13 +2179,6 @@ compose.desktop {
         mainClass = "com.nuvio.app.MainKt"
         val smokePlayerUrl = providers.gradleProperty("nuvio.desktop.smokePlayerUrl").orNull
             ?: System.getenv("NUVIO_DESKTOP_SMOKE_PLAYER_URL")
-        // fork:sports — opt-in (-Pnuvio.sports=true). Forwards the flag into the app process as a
-        // system property, which is what AppFeaturePolicy.sportsEnabled reads. Absent, the Sports
-        // tab, its settings page and its store are all left out of the build, so a plain
-        // `gradlew run` behaves exactly as upstream does.
-        val sportsEnabled = providers.gradleProperty("nuvio.sports").orNull
-            ?.trim()
-            ?.equals("true", ignoreCase = true) == true
         // Direct3D, matching DesktopRendererApi's default and what Settings shows. main() overwrites
         // this from the saved setting before the first window, so it only matters if that step
         // fails. OpenGL was the default in 1.15.0 and
@@ -2315,8 +2308,6 @@ compose.desktop {
             // high after start, take this line out and say so in TESTING.md; the better long-term fix is splitting them.
             "-XX:-DontCompileHugeMethods",
             smokePlayerUrl?.takeIf { it.isNotBlank() }?.let { "-Dnuvio.desktop.smokePlayerUrl=$it" },
-            // fork:sports — read by AppFeaturePolicy.sportsEnabled (see the provider above).
-            if (sportsEnabled) "-Dnuvio.sports.build=true" else null,
         )
 
         nativeDistributions {

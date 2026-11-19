@@ -19,7 +19,6 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
@@ -365,10 +364,29 @@ private fun SportsLeaguePill(
     ) {
         Box(
             modifier = Modifier
-                .size(8.dp)
-                .clip(CircleShape)
+                .size(18.dp)
+                .clip(RoundedCornerShape(4.dp))
                 .background(Color(league.color)),
-        )
+            contentAlignment = Alignment.Center,
+        ) {
+            val logo = league.logo?.takeIf(String::isNotBlank)
+            if (logo == null) {
+                Text(
+                    text = league.shortName.take(3),
+                    style = MaterialTheme.typography.labelSmall,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            } else {
+                NuvioAsyncImage(
+                    model = logo,
+                    contentDescription = null,
+                    modifier = Modifier.size(18.dp),
+                    contentScale = ContentScale.Fit,
+                )
+            }
+        }
         Text(
             text = (if (starred) "★ " else "") + league.name,
             style = MaterialTheme.typography.labelLarge,
@@ -979,6 +997,7 @@ private fun SportsTableRow(
 @Composable
 private fun TableTeamCrest(team: Team, size: Dp) {
     val tokens = MaterialTheme.nuvio
+    val logo = team.logo?.takeIf(String::isNotBlank)
     Box(
         modifier = Modifier.size(size),
         contentAlignment = Alignment.Center,
@@ -990,16 +1009,18 @@ private fun TableTeamCrest(team: Team, size: Dp) {
                 .background(team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = team.abbreviation.take(3),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-            )
+            if (logo == null) {
+                Text(
+                    text = team.abbreviation.take(3),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
         }
-        team.logo?.let { logo ->
+        logo?.let {
             NuvioAsyncImage(
-                model = logo,
+                model = it,
                 contentDescription = null,
                 modifier = Modifier.size(size),
                 contentScale = ContentScale.Fit,

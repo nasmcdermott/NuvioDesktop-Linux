@@ -2,7 +2,11 @@ package com.nuvio.app.features.sports
 
 import co.touchlab.kermit.Logger
 import com.nuvio.app.features.addons.httpGetText
+import java.util.concurrent.ConcurrentHashMap
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitAll
+import kotlinx.coroutines.coroutineScope
 import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonArray
 import kotlinx.serialization.json.JsonElement
@@ -10,6 +14,7 @@ import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.booleanOrNull
 import kotlinx.serialization.json.contentOrNull
+import kotlinx.serialization.json.doubleOrNull
 import kotlinx.serialization.json.intOrNull
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -70,14 +75,19 @@ internal class EspnSportsFeed(
             ?: return GameSummary(eventId)
         val header = root["header"]?.jsonObject
         val boxscore = root["boxscore"]?.jsonObjectOrNull()
+        val teamIds = competitorTeamIds(header)
+        val (awayTeamId, homeTeamId) = competitorSides(header)
+        val extras = summaryExtras(eventId, league, header, root, teamIds)
         return GameSummary(
             eventId = eventId,
             scoring = scoringPlays(root["scoringPlays"]?.asArray() ?: JsonArray(emptyList())),
-            playByPlay = playByPlay(root),
+            playByPlay = playByPlay(root, awayTeamId, homeTeamId),
             standings = standingsOf(header),
             venue = header?.get("competitions")?.asArray()?.firstOrNull()?.jsonObject
                 ?.get("venue")?.jsonObject?.get("fullName")?.stringOrNull(),
             teamStats = teamStats(boxscore),
+            leaders = extras.first,
+            news = extras.second,
             categories = statCategories(boxscore),
             moneyline = moneylineOf(root),
         )
@@ -473,7 +483,11 @@ internal class EspnSportsFeed(
         color = obj["color"]?.stringOrNull()?.let { parseHexColor(it) },
     )
 
-    private fun playByPlay(root: JsonObject): List<PlayByPlayEntry> {
+    private fun playByPlay(
+        root: JsonObject,
+        awayTeamId: String?,
+        homeTeamId: String?,
+    ): List<PlayByPlayEntry> {
         val directPlays = root["plays"]?.asArray()
         val plays = if (directPlays != null) {
             directPlays
@@ -487,7 +501,7 @@ internal class EspnSportsFeed(
                 }
             }.orEmpty()
         }
-        return plays.mapIndexedNotNull { index, element ->
+        val entries = plays.mapIndexedNotNull { index, element ->
             val obj = element.jsonObjectOrNull() ?: return@mapIndexedNotNull null
             val text = obj["text"]?.stringOrNull()?.takeIf { it.isNotBlank() }
                 ?: obj["shortDescription"]?.stringOrNull()?.takeIf { it.isNotBlank() }
@@ -502,8 +516,75 @@ internal class EspnSportsFeed(
                 homeScore = obj["homeScore"]?.stringOrNull(),
                 scoring = obj["scoringPlay"]?.jsonPrimitive?.booleanOrNull == true,
                 wallclockMs = obj["wallclock"]?.stringOrNull()?.let(::parseEpoch)?.takeIf { it > 0L },
+                points = obj["scoreValue"]?.jsonPrimitive?.intOrNull?.takeIf { it > 0 },
+                scoringTeamId = obj["team"]?.jsonObjectOrNull()?.get("id")?.stringOrNull(),
             )
         }.distinctBy { it.id }
+        return withScoringDeltas(entries, awayTeamId, homeTeamId)
+    }
+
+    /**
+     * Fills in the points and scoring team for plays the feed does not tag itself.
+     *
+     * Basketball and hockey send `scoreValue` and the scoring team, but football's plays carry
+     * neither — only the running score. The running score is compared with the previous play, so a
+     * touchdown reads "+6", a field goal "+3" and a free throw "+1" even on those feeds.
+     */
+    private fun withScoringDeltas(
+        plays: List<PlayByPlayEntry>,
+        awayTeamId: String?,
+        homeTeamId: String?,
+    ): List<PlayByPlayEntry> {
+        var previousAway: Int? = null
+        var previousHome: Int? = null
+        return plays.map { play ->
+            val away = play.awayScore?.trim()?.toIntOrNull()
+            val home = play.homeScore?.trim()?.toIntOrNull()
+            var points = play.points
+            var teamId = play.scoringTeamId
+            if (away != null && home != null) {
+                val lastAway = previousAway
+                val lastHome = previousHome
+                if (lastAway != null && lastHome != null) {
+                    val awayAdded = (away - lastAway).coerceAtLeast(0)
+                    val homeAdded = (home - lastHome).coerceAtLeast(0)
+                    val added = awayAdded + homeAdded
+                    if (added > 0) {
+                        if (points == null || points <= 0) points = added
+                        if (teamId == null) {
+                            teamId = when {
+                                awayAdded > 0 && homeAdded == 0 -> awayTeamId
+                                homeAdded > 0 && awayAdded == 0 -> homeTeamId
+                                else -> null
+                            }
+                        }
+                    }
+                }
+                previousAway = away
+                previousHome = home
+            }
+            play.copy(
+                points = points?.takeIf { it > 0 },
+                scoringTeamId = teamId?.takeIf { it.isNotBlank() },
+            )
+        }
+    }
+
+    /** The competitors' team ids split into away and home, from the summary's header. */
+    private fun competitorSides(header: JsonObject?): Pair<String?, String?> {
+        var away: String? = null
+        var home: String? = null
+        header?.get("competitions")?.asArray()?.firstOrNull()?.jsonObjectOrNull()
+            ?.get("competitors")?.asArray().orEmpty()
+            .forEach { element ->
+                val obj = element.jsonObjectOrNull() ?: return@forEach
+                val id = obj["team"]?.jsonObjectOrNull()?.get("id")?.stringOrNull() ?: return@forEach
+                when (obj["homeAway"]?.stringOrNull()) {
+                    "away" -> away = id
+                    "home" -> home = id
+                }
+            }
+        return away to home
     }
 
     private fun scoringPlays(plays: JsonArray): List<ScoringPlay> = plays.mapNotNull { element ->
@@ -548,23 +629,29 @@ internal class EspnSportsFeed(
     private fun teamStats(boxscore: JsonObject?): List<TeamStatPair> {
         val teams = boxscore?.get("teams")?.asArray() ?: return emptyList()
         if (teams.size < 2) return emptyList()
-        fun statsOf(index: Int): Map<String, String> =
+
+        // name -> (readable label, display value); the raw name is only the join key, never shown.
+        fun statsOf(index: Int): Map<String, Pair<String, String>> {
+            val out = LinkedHashMap<String, Pair<String, String>>()
             teams.getOrNull(index)?.jsonObjectOrNull()
                 ?.get("statistics")?.asArray()
-                ?.mapNotNull { entry ->
-                    val obj = entry.jsonObjectOrNull() ?: return@mapNotNull null
-                    val name = obj["name"]?.stringOrNull() ?: obj["label"]?.stringOrNull() ?: return@mapNotNull null
-                    name to (obj["displayValue"]?.stringOrNull() ?: return@mapNotNull null)
+                ?.forEach { entry ->
+                    val obj = entry.jsonObjectOrNull() ?: return@forEach
+                    val name = obj["name"]?.stringOrNull() ?: obj["label"]?.stringOrNull() ?: return@forEach
+                    val value = obj["displayValue"]?.stringOrNull() ?: return@forEach
+                    // Some feeds list the same name twice ("interceptions"); the first is enough.
+                    if (name !in out) out[name] = statLabel(obj, name) to value
                 }
-                ?.toMap()
-                .orEmpty()
+            return out
+        }
 
         val away = statsOf(0)
         val home = statsOf(1)
-        return away.map { (name, awayValue) ->
-            val homeValue = home[name] ?: "—"
+        return away.map { (name, awayStat) ->
+            val (label, awayValue) = awayStat
+            val homeValue = home[name]?.second ?: "—"
             TeamStatPair(
-                label = name.replaceFirstChar { it.uppercase() },
+                label = label,
                 away = awayValue,
                 home = homeValue,
                 // Numeric comparisons only; a "3rd down efficiency" string cannot be ordered sensibly.
@@ -575,6 +662,31 @@ internal class EspnSportsFeed(
             )
         }
     }
+
+    /**
+     * The provider's own readable name for a stat, so the column reads "FG", "3rd down efficiency"
+     * or "Power Play Goals" depending on the sport rather than the API's `name` spelling
+     * ("fieldGoalsMade-fieldGoalsAttempted"). Every league labels its own stats, which is what keeps
+     * the wording correct per sport without a table here inventing one sport's terms for another.
+     */
+    private fun statLabel(stat: JsonObject, name: String): String {
+        val provided = stat["label"]?.stringOrNull()
+            ?: stat["displayName"]?.stringOrNull()
+            ?: stat["shortDisplayName"]?.stringOrNull()
+        return provided?.trim()
+            ?.takeIf { it.isNotEmpty() }
+            ?.replaceFirstChar { it.uppercase() }
+            ?: humanizeStatName(name)
+    }
+
+    /** Last resort for a stat with no label: "fieldGoalsMade-fieldGoalsAttempted" → "Field Goals Made / Field Goals Attempted". */
+    private fun humanizeStatName(name: String): String = name
+        .split('-', '_')
+        .filter { it.isNotBlank() }
+        .joinToString(" / ") { part ->
+            part.replace(CAMEL_BOUNDARY, "$1 $2").replaceFirstChar { it.uppercase() }
+        }
+        .ifBlank { name }
 
     /** "45% (3/7)" and "312" parse; "—" and "10:32" do not, which is the intent. */
     private fun numeric(value: String): Double? =
@@ -587,9 +699,16 @@ internal class EspnSportsFeed(
             val teamObj = teamEntry.jsonObjectOrNull() ?: return@mapNotNull null
             teamObj["statistics"]?.asArray()?.mapNotNull { statEntry ->
                 val statObj = statEntry.jsonObjectOrNull() ?: return@mapNotNull null
+                // NBA sends no heading at all, MLB sends only `type` ("batting"); either way the
+                // category is worth showing rather than dropping its players silently.
                 val name = statObj["name"]?.stringOrNull()
                     ?: statObj["type"]?.stringOrNull()
-                    ?: return@mapNotNull null
+                    ?: statObj["displayName"]?.stringOrNull()
+                    ?: "Players"
+                val labels = statObj["labels"]?.asArray()?.map { it.stringOrNull().orEmpty() }
+                    ?: statObj["names"]?.asArray()?.map { it.stringOrNull().orEmpty() }
+                    ?: statObj["keys"]?.asArray()?.map { it.stringOrNull().orEmpty() }
+                    ?: emptyList()
                 val rows = statObj["athletes"]?.asArray() ?: return@mapNotNull null
                 val lines = rows.mapNotNull { athleteEntry ->
                     val athleteObj = athleteEntry.jsonObjectOrNull() ?: return@mapNotNull null
@@ -605,18 +724,261 @@ internal class EspnSportsFeed(
                             } ?: emptyList()
                             parts.filter { it.isNotBlank() }.joinToString(" ").takeIf { it.isNotBlank() }
                         },
-                        stats = athleteObj["stats"]?.asArray()?.map { element ->
-                            StandingValue("", element.stringOrNull().orEmpty())
+                        stats = athleteObj["stats"]?.asArray()?.mapIndexed { index, element ->
+                            StandingValue(
+                                label = labels.getOrNull(index).orEmpty(),
+                                value = element.stringOrNull().orEmpty(),
+                            )
                         }.orEmpty(),
                     )
                 }
-                if (lines.isEmpty()) null else StatCategory(name.replaceFirstChar { it.uppercase() }, lines)
+                if (lines.isEmpty()) null else StatCategory(humanizeStatName(name), lines)
             }.orEmpty()
         }.flatten()
             // The same category arrives once per team; fold them so "Passing" holds both sides.
             .groupBy { it.name }
             .map { (name, group) -> StatCategory(name, group.flatMap { it.players }) }
     }
+
+    // region Season leaders and news
+
+    /**
+     * The two optional extras the detail page adds below the box score: season leaders per team and
+     * recent news for each team. Both are best-effort — a feed that does not carry them, or a call
+     * that fails, leaves the section out rather than failing the summary they travel with.
+     */
+    private suspend fun summaryExtras(
+        eventId: String,
+        league: League,
+        header: JsonObject?,
+        root: JsonObject,
+        teamIds: List<String>,
+    ): Pair<List<TeamLeaders>, List<TeamNews>> = coroutineScope {
+        val leaders = async {
+            fresh(leadersCache, eventId, LEADER_CACHE_MS) ?: run {
+                val value = optional { seasonLeaders(league, header, root, teamIds) }.orEmpty()
+                if (value.isNotEmpty()) remember(leadersCache, eventId, value)
+                value
+            }
+        }
+        val news = teamIds.take(2).map { teamId ->
+            async {
+                val key = "${league.path}:$teamId"
+                fresh(newsCache, key, NEWS_CACHE_MS) ?: optional { teamNews(league, teamId) }?.also {
+                    remember(newsCache, key, it)
+                }
+            }
+        }
+        leaders.await() to news.awaitAll().filterNotNull()
+    }
+
+    /** Season leaders and team news barely change during a game, so a live refresh reuses them. */
+    private data class Cached<T>(val atMs: Long, val value: T)
+
+    private val leadersCache = ConcurrentHashMap<String, Cached<List<TeamLeaders>>>()
+    private val newsCache = ConcurrentHashMap<String, Cached<TeamNews>>()
+
+    private fun <T> fresh(cache: ConcurrentHashMap<String, Cached<T>>, key: String, ttlMs: Long): T? {
+        val hit = cache[key] ?: return null
+        if (System.currentTimeMillis() - hit.atMs <= ttlMs) return hit.value
+        cache.remove(key)
+        return null
+    }
+
+    private fun <T> remember(cache: ConcurrentHashMap<String, Cached<T>>, key: String, value: T) {
+        if (cache.size > 24) cache.clear()
+        cache[key] = Cached(System.currentTimeMillis(), value)
+    }
+
+    /** The two competitors' team ids, in the provider's order, for leaders and news lookups. */
+    private fun competitorTeamIds(header: JsonObject?): List<String> =
+        header?.get("competitions")?.asArray()?.firstOrNull()?.jsonObjectOrNull()
+            ?.get("competitors")?.asArray()
+            ?.mapNotNull { it.jsonObjectOrNull()?.get("team")?.jsonObjectOrNull()?.get("id")?.stringOrNull() }
+            ?.filter { it.isNotBlank() && it.all(Char::isDigit) }
+            .orEmpty()
+
+    private suspend fun <T> optional(block: suspend () -> T?): T? = try {
+        block()
+    } catch (e: CancellationException) {
+        throw e
+    } catch (e: Throwable) {
+        log.w { "Optional sports feed request failed: ${e.message}" }
+        null
+    }
+
+    /**
+     * Season leaders, from the season/type the summary's header reports.
+     *
+     * The game summary only carries *game* leaders, so the league's season leader table is fetched
+     * separately and filtered to the two competitors. Soccer is the exception: its summary leaders
+     * are already season totals, so they are read straight from the summary.
+     */
+    private suspend fun seasonLeaders(
+        league: League,
+        header: JsonObject?,
+        root: JsonObject,
+        teamIds: List<String>,
+    ): List<TeamLeaders> {
+        if (teamIds.size < 2) return emptyList()
+        if (league.sport == Sport.FOOTBALL) return soccerSeasonLeaders(root, teamIds)
+        if (league.sport !in LEADER_CATEGORIES) return emptyList()
+
+        val season = header?.get("season")?.jsonObjectOrNull() ?: return emptyList()
+        val year = season["year"]?.jsonPrimitive?.intOrNull ?: return emptyList()
+        val type = season["type"]?.jsonPrimitive?.intOrNull ?: 2
+        val path = league.path.split('/')
+        if (path.size < 2) return emptyList()
+
+        val url = "https://sports.core.api.espn.com/v2/sports/${path[0]}/leagues/${path[1]}" +
+            "/seasons/$year/types/$type/leaders?limit=100"
+        val doc = fetchObject(url) ?: return emptyList()
+        val categories = doc["categories"]?.asArray() ?: return emptyList()
+        val preferred = LEADER_CATEGORIES[league.sport].orEmpty()
+        val chosen = if (preferred.isEmpty()) {
+            categories.take(3)
+        } else {
+            preferred.mapNotNull { wanted ->
+                categories.firstOrNull {
+                    it.jsonObjectOrNull()?.get("name")?.stringOrNull() == wanted
+                }
+            }
+        }
+
+        // team id -> that team's top entry in each chosen category, in category order.
+        val picks = LinkedHashMap<String, MutableList<LeaderPick>>()
+        chosen.forEach { element ->
+            val category = element.jsonObjectOrNull() ?: return@forEach
+            val name = category["displayName"]?.stringOrNull()
+                ?: category["name"]?.stringOrNull() ?: return@forEach
+            val seen = mutableSetOf<String>()
+            category["leaders"]?.asArray()?.forEach { leaderElement ->
+                val entry = leaderElement.jsonObjectOrNull() ?: return@forEach
+                val teamId = teamIdFromRef(entry["team"]?.jsonObjectOrNull()?.get("\$ref")?.stringOrNull())
+                    ?: return@forEach
+                if (teamId !in teamIds || !seen.add(teamId)) return@forEach
+                val athleteRef = entry["athlete"]?.jsonObjectOrNull()?.get("\$ref")?.stringOrNull()
+                    ?: return@forEach
+                val display = entry["displayValue"]?.stringOrNull() ?: return@forEach
+                val numeric = entry["value"]?.jsonPrimitive?.doubleOrNull
+                picks.getOrPut(teamId) { mutableListOf() } +=
+                    LeaderPick(name, sportsLeaderValue(name, display, numeric), athleteRef.toHttps())
+            }
+        }
+        if (picks.isEmpty()) return emptyList()
+
+        val athletes = coroutineScope {
+            picks.values.flatten().map { it.athleteRef }.distinct()
+                .map { async { it to optional { athlete(it) } } }
+                .awaitAll()
+                .toMap()
+        }
+
+        return teamIds.mapNotNull { teamId ->
+            val teamPicks = picks[teamId] ?: return@mapNotNull null
+            val rows = teamPicks.mapNotNull { pick ->
+                val player = athletes[pick.athleteRef] ?: return@mapNotNull null
+                TeamLeaderCategory(
+                    name = pick.category,
+                    leader = SeasonLeader(
+                        name = player.name,
+                        position = player.position,
+                        headshot = player.headshot,
+                        value = pick.value,
+                    ),
+                )
+            }
+            TeamLeaders(teamId, rows).takeIf { rows.isNotEmpty() }
+        }
+    }
+
+    /** Soccer's summary leaders are season totals, already grouped per team. */
+    private fun soccerSeasonLeaders(root: JsonObject, teamIds: List<String>): List<TeamLeaders> {
+        val blocks = root["leaders"]?.asArray() ?: return emptyList()
+        return blocks.mapNotNull { blockElement ->
+            val block = blockElement.jsonObjectOrNull() ?: return@mapNotNull null
+            val teamId = block["team"]?.jsonObjectOrNull()?.get("id")?.stringOrNull()
+                ?: return@mapNotNull null
+            if (teamId !in teamIds) return@mapNotNull null
+            val rows = block["leaders"]?.asArray().orEmpty().take(3).mapNotNull { categoryElement ->
+                val category = categoryElement.jsonObjectOrNull() ?: return@mapNotNull null
+                val name = category["displayName"]?.stringOrNull()
+                    ?: category["name"]?.stringOrNull() ?: return@mapNotNull null
+                val first = category["leaders"]?.asArray()?.firstOrNull()?.jsonObjectOrNull()
+                    ?: return@mapNotNull null
+                val athlete = first["athlete"]?.jsonObjectOrNull() ?: return@mapNotNull null
+                val playerName = athlete["displayName"]?.stringOrNull() ?: return@mapNotNull null
+                val rawValue = first["displayValue"]?.stringOrNull() ?: return@mapNotNull null
+                // "Matches: 10, Goals: 9" → "Goals: 9"; the match count is not the statistic.
+                val value = rawValue.substringAfter(", ", rawValue)
+                TeamLeaderCategory(
+                    name = name,
+                    leader = SeasonLeader(
+                        name = playerName,
+                        position = athlete["position"]?.jsonObjectOrNull()?.get("abbreviation")?.stringOrNull(),
+                        headshot = athlete["headshot"]?.jsonObjectOrNull()?.get("href")?.stringOrNull(),
+                        value = value,
+                    ),
+                )
+            }
+            TeamLeaders(teamId, rows).takeIf { rows.isNotEmpty() }
+        }
+    }
+
+    private data class LeaderPick(val category: String, val value: String, val athleteRef: String)
+
+    private data class AthleteInfo(val name: String, val position: String?, val headshot: String?)
+
+    /** A player's name, position and headshot, resolved from a leaders table's athlete reference. */
+    private suspend fun athlete(url: String): AthleteInfo? {
+        val root = fetchObject(url) ?: return null
+        val name = root["displayName"]?.stringOrNull() ?: return null
+        return AthleteInfo(
+            name = name,
+            position = root["position"]?.jsonObjectOrNull()?.get("abbreviation")?.stringOrNull(),
+            headshot = root["headshot"]?.jsonObjectOrNull()?.get("href")?.stringOrNull(),
+        )
+    }
+
+    /** "…/seasons/2025/teams/18" → "18". */
+    private fun teamIdFromRef(ref: String?): String? =
+        ref?.let { TeamRef.find(it)?.groupValues?.getOrNull(1) }
+
+    private fun String.toHttps(): String = replaceFirst("http://", "https://")
+
+    /** Up to two recent stories for one team, with the header picture the detail page shows. */
+    private suspend fun teamNews(league: League, teamId: String): TeamNews? {
+        if (teamId.isBlank() || !teamId.all(Char::isDigit)) return null
+        val root = fetchObject("${ESPN}${league.path}/news?team=$teamId&limit=2") ?: return null
+        val articles = root["articles"]?.asArray().orEmpty().take(2).mapNotNull { element ->
+            val article = element.jsonObjectOrNull() ?: return@mapNotNull null
+            val headline = article["headline"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+                ?: return@mapNotNull null
+            NewsArticle(
+                id = article["id"]?.stringOrNull() ?: headline,
+                headline = headline,
+                description = article["description"]?.stringOrNull()?.takeIf { it.isNotBlank() },
+                image = articleImage(article),
+                link = article["links"]?.jsonObjectOrNull()?.get("web")?.jsonObjectOrNull()
+                    ?.get("href")?.stringOrNull(),
+            )
+        }
+        return TeamNews(teamId, articles).takeIf { articles.isNotEmpty() }
+    }
+
+    /** The article's header photo, falling back to any picture rather than a blank card. */
+    private fun articleImage(article: JsonObject): String? {
+        val images = article["images"]?.asArray() ?: return null
+        val header = images.firstOrNull {
+            it.jsonObjectOrNull()?.get("type")?.stringOrNull() == "header"
+        }?.jsonObjectOrNull()?.get("url")?.stringOrNull()
+        if (!header.isNullOrBlank()) return header
+        return images.firstNotNullOfOrNull {
+            it.jsonObjectOrNull()?.get("url")?.stringOrNull()?.takeIf(String::isNotBlank)
+        }
+    }
+
+    // endregion
 
     private suspend fun fetchObject(url: String): JsonObject? = try {
         json.parseToJsonElement(get(url)).jsonObjectOrNull()
@@ -660,15 +1022,53 @@ internal class EspnSportsFeed(
         val META_STAT_NAMES = setOf("rank", "rankChange", "clincher", "playoffSeed")
         val FIELD_EVENT_SPORTS = setOf(Sport.RACING, Sport.GOLF)
 
+        /** The season-leader categories worth showing per sport, in reading order. */
+        val LEADER_CATEGORIES = mapOf(
+            Sport.BASKETBALL to listOf("pointsPerGame", "reboundsPerGame", "assistsPerGame"),
+            Sport.AMERICAN_FOOTBALL to listOf("passingYards", "rushingYards", "receivingYards"),
+            Sport.HOCKEY to listOf("goals", "assists", "points"),
+            Sport.BASEBALL to listOf("avg", "homeRuns", "RBIs"),
+        )
+
+        /** The team id at the end of a core-API reference ("…/teams/18"). */
+        val TeamRef = Regex("""/teams/(\d+)""")
+
+        /** How long the detail page reuses season leaders and team news across live refreshes. */
+        const val LEADER_CACHE_MS = 5 * 60_000L
+        const val NEWS_CACHE_MS = 3 * 60_000L
+
         val IsoTimestamp = Regex(
             """(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?""",
         )
+
+        /** The boundary between words in an API stat name ("fieldGoals" → "field Goals"). */
+        val CAMEL_BOUNDARY = Regex("([a-z0-9])([A-Z])")
     }
 }
 
 /** A feed request that failed. Carries the URL so the UI can say which league, not just "error". */
 internal class SportsFeedException(val url: String, cause: Throwable) :
     Exception("Sports feed request failed: $url", cause)
+
+/**
+ * The number a season-leader category is ranked by.
+ *
+ * Baseball's leaders send a whole season line ("179-541, 53 HR, …") as the display value even for
+ * "Batting Average", so the category's own numeric `value` is formatted instead when the display
+ * text is a full line rather than a single number.
+ */
+internal fun sportsLeaderValue(category: String, display: String, numeric: Double?): String {
+    if (numeric == null || !display.contains(", ")) return display
+    val isRate = category.contains("Average", ignoreCase = true) ||
+        category.contains("Percentage", ignoreCase = true) ||
+        category.contains("Pct", ignoreCase = true)
+    if (!isRate) return kotlin.math.round(numeric).toLong().toString()
+    // Fixed three decimals, then strip the leading zero: ".331" is how a rate reads.
+    val scaled = kotlin.math.round(numeric * 1000.0).toLong()
+    val fraction = (scaled % 1000).toString().padStart(3, '0')
+    val formatted = "${scaled / 1000}.$fraction"
+    return if (formatted.startsWith("0.")) formatted.drop(1) else formatted
+}
 
 // region JSON helpers — small and total, so a missing or wrong-typed field never throws.
 

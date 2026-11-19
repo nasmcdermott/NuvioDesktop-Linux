@@ -108,13 +108,23 @@ internal fun SportsGameCard(
                         .background(accent.copy(alpha = 0.9f)),
                     contentAlignment = Alignment.Center,
                 ) {
-                    Text(
-                        text = league.shortName.take(4),
-                        style = MaterialTheme.typography.labelSmall,
-                        fontWeight = FontWeight.Bold,
-                        color = Color.White,
-                        maxLines = 1,
-                    )
+                    val logo = league.logo?.takeIf(String::isNotBlank)
+                    if (logo == null) {
+                        Text(
+                            text = league.shortName.take(4),
+                            style = MaterialTheme.typography.labelSmall,
+                            fontWeight = FontWeight.Bold,
+                            color = Color.White,
+                            maxLines = 1,
+                        )
+                    } else {
+                        NuvioAsyncImage(
+                            model = logo,
+                            contentDescription = null,
+                            modifier = Modifier.size(20.dp),
+                            contentScale = ContentScale.Fit,
+                        )
+                    }
                 }
                 Text(
                     text = league.name,

@@ -4575,6 +4575,13 @@ private fun MainAppContent(
                                 useFloatingTopBar && selectedTab == AppScreenTab.Music &&
                                     !desktopTopBarAlwaysVisible ->
                                     max(WindowInsets.statusBars.asPaddingValues().calculateTopPadding() + 24.dp, 48.dp) + 24.dp
+                                // fork:sports - the page's own header row (the trophy and title are
+                                // gone) shares the top bar's line, so the tab starts one bare bar-row
+                                // up instead of leaving its whole strip empty above the chips.
+                                useFloatingTopBar && selectedTab == AppScreenTab.Sports -> {
+                                    val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
+                                    statusBarPadding + NavBarTopOffset
+                                }
                                 useFloatingTopBar || selectedTab == AppScreenTab.Search -> {
                                     val statusBarPadding = WindowInsets.statusBars.asPaddingValues().calculateTopPadding()
                                     max(statusBarPadding + 24.dp, 48.dp) + 64.dp
@@ -4878,10 +4885,6 @@ private fun MainAppContent(
                                             onNavigateToMusic = { handleRootTabClick(AppScreenTab.Music) }, // fork:music
                                             onLiveTvSettingsClick = {
                                                 requestedSettingsPageName = "Iptv"
-                                                handleRootTabClick(AppScreenTab.Settings)
-                                            },
-                                            onSportsSettingsClick = { // fork:sports
-                                                requestedSettingsPageName = "Sports"
                                                 handleRootTabClick(AppScreenTab.Settings)
                                             },
                                             onMusicNavigate = { navController.navigateIfResumed(it) }, // fork:music
@@ -7029,7 +7032,6 @@ private fun AppTabHost(
     onNavigateToLiveTv: (() -> Unit)? = null,
     onNavigateToMusic: (() -> Unit)? = null,
     onLiveTvSettingsClick: () -> Unit = {},
-    onSportsSettingsClick: () -> Unit = {}, // fork:sports
     onMusicNavigate: (Any) -> Unit = {}, // fork:music
     onPlayYouTube: (PlayerLaunch) -> Unit = {}, // fork:youtube-mode
     onYouTubeSettingsClick: () -> Unit = {},
@@ -7177,7 +7179,6 @@ private fun AppTabHost(
                     com.nuvio.app.features.sports.SportsScreen(
                         modifier = Modifier.fillMaxSize(),
                         topChromePadding = topChromePadding,
-                        onOpenSettings = onSportsSettingsClick,
                         onFindSportsStreams = { event, league, addonId ->
                             val sportsId = com.nuvio.app.features.sports.sportsEventStreamId(league, event)
                             StreamPickerController.open(
@@ -7442,9 +7443,10 @@ private fun DesktopHoverSidebar(
         }
         runCatching { navFocusRequester.requestFocus() }
     }
-    DisposableEffect(Unit) {
-        RootNavFocus.sidebarAvailable = true
-        onDispose { RootNavFocus.sidebarAvailable = false }
+    val sidebarOwner = remember { Any() }
+    DisposableEffect(sidebarOwner) {
+        RootNavFocus.registerSidebar(sidebarOwner)
+        onDispose { RootNavFocus.unregisterSidebar(sidebarOwner) }
     }
     // The page gives up its keys here, and Back, Dismiss, Right or selecting the row of the page that
     // is already open give them back: the control the page had is remembered first, so stepping out
@@ -8138,9 +8140,10 @@ val youTubeMiniPlayerShown = youTubeBrowsing
 
     // Read a level up, by the tab host's key hand-off: Up only leaves the page for a bar that is
     // really drawn, so a page whose top is the top of the window keeps its Up.
-    DisposableEffect(barRowDrawn) {
-        RootNavFocus.topBarAvailable = barRowDrawn
-        onDispose { RootNavFocus.topBarAvailable = false }
+    val topBarOwner = remember { Any() }
+    DisposableEffect(topBarOwner, barRowDrawn) {
+        if (barRowDrawn) RootNavFocus.registerTopBar(topBarOwner)
+        onDispose { RootNavFocus.unregisterTopBar(topBarOwner) }
     }
     // Down, Back, Dismiss, or selecting the icon of the page already open: the keys go back to the
     // control the page had when the bar took them, so stepping out of a row lands back on that row.
@@ -8528,10 +8531,16 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                             .onFocusChanged { barHasFocus = it.hasFocus }
                             .focusable()
                             // At either end of the row, step into the page icons drawn beside the
-                            // bar (YouTube's section tabs and its own search sit there) instead of
-                            // pinning the keys to the first/last tab.
+                            // bar (YouTube's section tabs and its own search, the Sports page's
+                            // chips and pills) instead of pinning the keys to the first/last tab.
                             .onPreviewKeyEvent { event ->
                                 if (event.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                // The Sports page's own header row shares this line: its chips sit
+                                // left of the bar and its Follow/Refresh pills right of it. Leaving
+                                // the bar sideways must reach them, or Left/Right at either end is a
+                                // dead end.
+                                val sideIconsBesideBar = selectedTab == AppScreenTab.YouTube ||
+                                    selectedTab == AppScreenTab.Sports
                                 // At the right end of an ordinary tab's bar there is nothing beside
                                 // it to move to. Keep the key on the bar; releasing it here let
                                 // Compose's traversal jump into the poster/card rows below.
@@ -8539,21 +8548,25 @@ val youTubeMiniPlayerShown = youTubeBrowsing
                                         key = event.navigationKey(),
                                         index = barIndex,
                                         count = topBarSlots,
-                                        sideIconsBesideBar = selectedTab == AppScreenTab.YouTube,
+                                        sideIconsBesideBar = sideIconsBesideBar,
                                     )
                                 ) {
                                     return@onPreviewKeyEvent true
                                 }
-                                // Only the YouTube tab has icons laid out beside the bar; on the
-                                // other tabs the edge keys stay on the bar as they always did.
-                                if (selectedTab != AppScreenTab.YouTube) return@onPreviewKeyEvent false
+                                // On the other tabs the edge keys stay on the bar as they always did.
+                                if (!sideIconsBesideBar) return@onPreviewKeyEvent false
                                 val key = event.navigationKey()
                                 val leaveLeft = key == Key.DirectionLeft && barIndex <= 0
                                 val leaveRight = key == Key.DirectionRight && barIndex >= topBarSlots - 1
                                 if (!leaveLeft && !leaveRight) return@onPreviewKeyEvent false
-                                focusManager.moveFocus(
-                                    if (leaveLeft) FocusDirection.Left else FocusDirection.Right,
-                                )
+                                // A page beside the bar can name the control its end steps into
+                                // (the Sports page's chips and pills, through RootNavFocus). YouTube
+                                // has no handoff of its own and leans on the focus system; either
+                                // way the key stays off the content rows under the bar.
+                                RootNavFocus.focusBarSide(left = leaveLeft) ||
+                                    focusManager.moveFocus(
+                                        if (leaveLeft) FocusDirection.Left else FocusDirection.Right,
+                                    )
                                 true
                             }
                             .topBarKeyNavigation(

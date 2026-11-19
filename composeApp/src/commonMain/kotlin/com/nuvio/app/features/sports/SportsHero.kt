@@ -6,7 +6,6 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
-import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
@@ -19,6 +18,9 @@ import androidx.compose.runtime.Composable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.draw.drawBehind
+import androidx.compose.ui.geometry.Offset
+import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.graphics.Brush
@@ -58,9 +60,6 @@ internal fun SportsHero(
     val interaction = rememberSportsInteraction(baseScale = 1.03f, label = "sportsHeroZoom")
     val shape = RoundedCornerShape(22.dp)
     val isFieldEvent = event.away.team.id.endsWith(":event")
-    val awayColor = event.away.team.color?.let(::Color) ?: Color(0xFF232A32)
-    val homeColor = event.home.team.color?.let(::Color) ?: Color(0xFF232A32)
-
     Box(
         modifier = modifier
             .fillMaxWidth()
@@ -74,35 +73,21 @@ internal fun SportsHero(
             }
             .sportsInteractive(state = interaction, focusRequester = focusRequester, onClick = onClick)
             .clip(shape)
+            .sportsMatchupGradientBackground(event)
             .smoothBorder(
                 width = if (interaction.focused) 2.dp else tokens.borders.hairline,
                 color = if (interaction.focused) tokens.colors.borderFocus else tokens.colors.borderSubtle,
                 shape = shape,
             ),
     ) {
-        // The two team-coloured halves behind everything.
-        Row(modifier = Modifier.matchParentSize()) {
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(sportsTeamShade(awayColor, 0.34f), sportsTeamShade(awayColor, 0.08f)))),
-            )
-            Box(
-                Modifier
-                    .weight(1f)
-                    .fillMaxHeight()
-                    .background(Brush.verticalGradient(listOf(sportsTeamShade(homeColor, 0.62f), sportsTeamShade(homeColor, 0.28f)))),
-            )
-        }
-
         Column(
             modifier = Modifier
                 .matchParentSize()
                 .padding(horizontal = 22.dp, vertical = 14.dp),
         ) {
-            // Eyebrow + league mark.
-            Row(verticalAlignment = Alignment.CenterVertically) {
+            // Eyebrow, league mark, live clock. The two side slots take equal width, so the mark
+            // lands on the banner's horizontal centre instead of wherever the eyebrow text ends.
+            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
                 Text(
                     text = heroEyebrow(event, followedTeamName),
                     style = MaterialTheme.typography.labelMedium,
@@ -111,17 +96,16 @@ internal fun SportsHero(
                     color = tokens.colors.textPrimary,
                     maxLines = 1,
                     overflow = TextOverflow.Ellipsis,
-                    modifier = Modifier.weight(1f, fill = false),
+                    modifier = Modifier.weight(1f),
                 )
-                if (event.state == GameState.LIVE) {
-                    Spacer(Modifier.width(10.dp))
-                    SportsStatusBadge(event, hideScores = hideScores)
-                }
-                Spacer(Modifier.weight(1f))
                 if (league != null) SportsLeagueMark(league)
+                Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                    if (event.state == GameState.LIVE) SportsStatusBadge(event, hideScores = hideScores)
+                }
             }
 
-            // The match-up.
+            // The match-up. Both sides get an equal slot so the "AT" badge stays on the hero's
+            // centre line even when one team's name or score is wider than the other's.
             Row(
                 modifier = Modifier.weight(1f).fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically,
@@ -138,10 +122,13 @@ internal fun SportsHero(
                         modifier = Modifier.weight(1f),
                     )
                 } else {
-                    HeroCrest(event.away.team)
-                    Spacer(Modifier.width(14.dp))
-                    HeroTeamName(event.away, event, hideScores)
-                    Spacer(Modifier.weight(1f))
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterStart) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            HeroCrest(event.away.team)
+                            Spacer(Modifier.width(14.dp))
+                            HeroTeamName(event.away, event, hideScores)
+                        }
+                    }
                     Box(
                         modifier = Modifier
                             .clip(RoundedCornerShape(50))
@@ -155,10 +142,13 @@ internal fun SportsHero(
                             color = tokens.colors.textPrimary,
                         )
                     }
-                    Spacer(Modifier.weight(1f))
-                    HeroTeamName(event.home, event, hideScores, alignEnd = true)
-                    Spacer(Modifier.width(14.dp))
-                    HeroCrest(event.home.team)
+                    Box(Modifier.weight(1f), contentAlignment = Alignment.CenterEnd) {
+                        Row(verticalAlignment = Alignment.CenterVertically) {
+                            HeroTeamName(event.home, event, hideScores, alignEnd = true)
+                            Spacer(Modifier.width(14.dp))
+                            HeroCrest(event.home.team)
+                        }
+                    }
                 }
             }
 
@@ -267,13 +257,23 @@ private fun SportsLeagueMark(league: League) {
             .background(Color(league.color)),
         contentAlignment = Alignment.Center,
     ) {
-        Text(
-            text = league.shortName.take(5),
-            style = MaterialTheme.typography.labelMedium,
-            fontWeight = FontWeight.Bold,
-            color = Color.White,
-            maxLines = 1,
-        )
+        val logo = league.logo?.takeIf(String::isNotBlank)
+        if (logo == null) {
+            Text(
+                text = league.shortName.take(5),
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold,
+                color = Color.White,
+                maxLines = 1,
+            )
+        } else {
+            NuvioAsyncImage(
+                model = logo,
+                contentDescription = null,
+                modifier = Modifier.size(34.dp),
+                contentScale = ContentScale.Fit,
+            )
+        }
     }
 }
 
@@ -284,6 +284,28 @@ internal fun heroEyebrow(event: SportsEvent, followedTeamName: String?): String 
         "Next up · $date"
     } else {
         "Next for $followedTeamName · $date"
+    }
+}
+
+/** The away/home vertical team-color halves shared by the hero and matchup detail cards. */
+internal fun Modifier.sportsMatchupGradientBackground(
+    event: SportsEvent,
+    awayShare: Float = 0.5f,
+): Modifier {
+    val awayColor = event.away.team.color?.let(::Color) ?: Color(0xFF232A32)
+    val homeColor = event.home.team.color?.let(::Color) ?: Color(0xFF232A32)
+    return drawBehind {
+        val splitX = size.width * awayShare.coerceIn(0.04f, 0.96f)
+        drawRect(
+            brush = Brush.verticalGradient(listOf(sportsTeamShade(awayColor, 0.34f), sportsTeamShade(awayColor, 0.08f))),
+            topLeft = Offset.Zero,
+            size = Size(splitX, size.height),
+        )
+        drawRect(
+            brush = Brush.verticalGradient(listOf(sportsTeamShade(homeColor, 0.62f), sportsTeamShade(homeColor, 0.28f))),
+            topLeft = Offset(splitX, 0f),
+            size = Size(size.width - splitX, size.height),
+        )
     }
 }
 

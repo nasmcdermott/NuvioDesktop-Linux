@@ -7,6 +7,7 @@ import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.IntrinsicSize
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Spacer
@@ -22,6 +23,8 @@ import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.DropdownMenu
 import androidx.compose.material3.DropdownMenuItem
@@ -37,10 +40,12 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.compose.runtime.withFrameNanos
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
+import androidx.compose.ui.focus.FocusDirection
 import androidx.compose.ui.focus.FocusRequester
 import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
@@ -51,10 +56,12 @@ import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.input.key.onPreviewKeyEvent
 import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
+import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import kotlinx.coroutines.Job
 import com.nuvio.app.core.ui.KeyRouteLayer
 import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.navigationKey
@@ -73,6 +80,31 @@ import com.nuvio.app.features.streams.isSelectableForPlayback
 import com.nuvio.app.features.tonight.TonightSettingsRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
+
+private val detailLog = co.touchlab.kermit.Logger.withTag("Sports")
+
+/**
+ * The quarter whose toggle Left/Right moves to from [index], or null at either end (the key keeps
+ * whatever meaning it had there). The quarters are stacked, so they are siblings of one another
+ * sideways; Up and Down stay with the page's scrolling.
+ */
+internal fun periodSideStepTarget(key: Key?, index: Int, lastIndex: Int): Int? = when (key) {
+    Key.DirectionLeft -> index - 1
+    Key.DirectionRight -> index + 1
+    else -> null
+}?.takeIf { it in 0..lastIndex }
+
+/**
+ * Reading rank of a play-by-play period: descending order puts the newest first. A numbered period
+ * reads its number ("1st Quarter" → 1, "4th" → 4); overtime and any other untimed period rank above
+ * regulation, and a bucket the feed could not name ("Other") sorts last.
+ */
+internal fun sportsPeriodOrder(period: String): Int {
+    val text = period.trim()
+    if (text.equals("Other", ignoreCase = true)) return -1
+    if (text.isEmpty()) return -1
+    return Regex("""^\d+""").find(text)?.value?.toIntOrNull() ?: 50
+}
 
 /**
  * A game's detail page: live scoreboard, period linescores, quick IPTV playback & channel matching
@@ -187,6 +219,7 @@ internal fun SportsGameDetail(
 
     val listState = rememberLazyListState()
     val scope = rememberCoroutineScope()
+    val pageFocus = LocalFocusManager.current
 
     val backFocus = remember { FocusRequester() }
     val playByPlayFocus = remember { FocusRequester() }
@@ -216,35 +249,104 @@ internal fun SportsGameDetail(
         }
     }
 
-    // Items 0..3 are header, scoreboard, actions, channels-header; channel rows start at index 4.
-    val firstChannelLazyIndex = 4
     val playByPlayEntries = if (event.isLive) {
         summary?.playByPlay.orEmpty().asReversed().take(MAX_LIVE_PLAY_BY_PLAY)
     } else {
         summary?.playByPlay.orEmpty()
     }
-    val playPeriodGroups = playByPlayEntries.groupBy { it.period?.takeIf(String::isNotBlank) ?: "Other" }.toList()
+    val playPeriodGroups = playByPlayEntries
+        .groupBy { it.period?.takeIf(String::isNotBlank) ?: "Other" }
+        .toList()
+        // Newest period first — the 4th quarter above the 1st — for live and finished games alike.
+        .sortedByDescending { sportsPeriodOrder(it.first) }
     val playPeriodNames = playPeriodGroups.map { it.first }
     val periodFocusRequesters = remember(event.id, playPeriodNames) {
         List(playPeriodNames.size) { index -> if (index == 0) playByPlayFocus else FocusRequester() }
     }
-    val hasPlayByPlayControl = !hideScores && playPeriodGroups.isNotEmpty()
-    val playByPlayLazyIndex = firstChannelLazyIndex + if (visibleOptions.isEmpty()) {
-        1 // The empty-channel message occupies the first item after the channel header.
-    } else {
-        visibleOptions.size + if (showOtherRegionsToggle) 1 else 0
+    // Each quarter's header row needs to be revealed inside the one tall plays/stats item, which a
+    // list index alone cannot do.
+    val periodBringIntoViews = remember(event.id, playPeriodNames) {
+        List(playPeriodNames.size) { BringIntoViewRequester() }
     }
-    fun scrollAndFocus(lazyIndex: Int, target: FocusRequester): Boolean {
+    val hasPlayByPlayControl = !hideScores && playPeriodGroups.isNotEmpty()
+    // Items 0..3 are header, scoreboard, actions and channels-header; channel rows start at index 4.
+    val firstChannelLazyIndex = 4
+    // The play-by-play toggle sits at the top of the plays/stats card, after the channel rows (or the
+    // empty-channel card) and the optional "other regions" toggle.
+    val statsLazyIndex = firstChannelLazyIndex +
+        if (visibleOptions.isEmpty()) 1 else visibleOptions.size + if (showOtherRegionsToggle) 1 else 0
+    // Only the latest request may chase focus. A held or repeatedly pressed key used to start one
+    // loop per press, and each loop animated the list to its target, so the page was yanked around
+    // under a scroll that was already in progress.
+    val focusChase = remember { arrayOfNulls<Job>(1) }
+    fun cancelFocusChase() {
+        focusChase[0]?.cancel()
+        focusChase[0] = null
+    }
+    /**
+     * Brings [lazyIndex] into the list, then asks [target] for the keys until it is composed. The
+     * jump is not animated: focus can only be requested on a composed control, and an animation
+     * cancelled by the next key left the item off screen while the request kept being refused. When
+     * [reveal] is given it scrolls the control's own row into view inside a taller item.
+     *
+     * A lazy item can also be missing from the list the index was counted for (its section changed
+     * while the key was in flight, or a jammed frame used up the retries). The retries wait for
+     * frames, so a busy frame cannot use them up, and then the key is handed to the focus system
+     * itself ([fallbackDirection] from the control that has the keys): the page still moves, and a
+     * navigation key never dies on the way. Null skips that (a sideways step between quarters has
+     * already been brought into view).
+     */
+    fun chaseFocus(
+        lazyIndex: Int,
+        target: FocusRequester,
+        reveal: BringIntoViewRequester? = null,
+        fallbackDirection: FocusDirection? = FocusDirection.Down,
+    ): Boolean {
+        cancelFocusChase()
+        // A control inside a taller item is revealed first even when it already holds the keys, so a
+        // sideways step between quarters lands on something the person can actually see.
+        if (reveal == null && runCatching { target.requestFocusLogged() }.getOrDefault(false)) return true
         val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == lazyIndex }
-        if (visible && runCatching { target.requestFocusLogged() }.getOrDefault(false)) return true
-        scope.launch {
-            runCatching { listState.animateScrollToItem(lazyIndex.coerceAtLeast(0)) }
+        focusChase[0] = scope.launch {
+            if (!visible) runCatching { listState.requestScrollToItem(lazyIndex.coerceAtLeast(0)) }
             repeat(10) {
-                delay(32)
+                withFrameNanos { }
+                if (reveal != null) runCatching { reveal.bringIntoView() }
                 if (runCatching { target.requestFocusLogged() }.getOrDefault(false)) return@launch
+            }
+            if (fallbackDirection != null && pageFocus.moveFocus(fallbackDirection)) return@launch
+            // Nothing on the page would take the keys at all: still move it a step, so a navigation
+            // key is never a dead press.
+            if (reveal != null || fallbackDirection == null) return@launch
+            val info = listState.layoutInfo
+            detailLog.w {
+                "focus chase missed item $lazyIndex of ${info.totalItemsCount} " +
+                    "(visible ${info.visibleItemsInfo.joinToString { it.index.toString() }})"
+            }
+            val back = fallbackDirection == FocusDirection.Up
+            val canScroll = if (back) listState.canScrollBackward else listState.canScrollForward
+            if (canScroll) {
+                val step = (listState.layoutInfo.viewportSize.height * 0.72f).coerceAtLeast(1f)
+                runCatching { listState.animateScrollBy(if (back) -step else step) }
             }
         }
         return true
+    }
+
+    fun scrollAndFocus(
+        lazyIndex: Int,
+        target: FocusRequester,
+        direction: FocusDirection = FocusDirection.Down,
+    ): Boolean = chaseFocus(lazyIndex, target, fallbackDirection = direction)
+
+    fun focusPeriod(index: Int, fallbackDirection: FocusDirection? = null): Boolean {
+        val target = periodFocusRequesters.getOrNull(index) ?: return false
+        return chaseFocus(
+            statsLazyIndex,
+            target,
+            periodBringIntoViews.getOrNull(index),
+            fallbackDirection,
+        )
     }
 
     fun scrollDetail(direction: Int): Boolean {
@@ -267,7 +369,7 @@ internal fun SportsGameDetail(
     }
 
     fun focusPlayByPlay(): Boolean = if (hasPlayByPlayControl) {
-        scrollAndFocus(playByPlayLazyIndex, playByPlayFocus)
+        focusPeriod(0, FocusDirection.Down)
     } else {
         stepStatsDown()
     }
@@ -350,7 +452,7 @@ internal fun SportsGameDetail(
                 onPlaySportsStream = onPlaySportsStream,
                 bandRequester = actionsBandFocus,
                 primaryFocus = primaryActionFocus,
-                onUp = { scrollAndFocus(0, entryFocus) },
+                onUp = { scrollAndFocus(0, entryFocus, FocusDirection.Up) },
                 onDown = { scrollAndFocus(3, channelsHeaderBandFocus) },
                 onOpenChannelPicker = { channelPickerOpen = true },
             )
@@ -364,13 +466,14 @@ internal fun SportsGameDetail(
                         .sportsHorizontalBand(
                             bandRequester = channelsHeaderBandFocus,
                             fallbackRequester = fixChannelFocus,
-                            onUp = { scrollAndFocus(2, actionsBandFocus) },
+                            onUp = { scrollAndFocus(2, actionsBandFocus, FocusDirection.Up) },
                             onDown = {
                                 when {
                                     visibleOptions.isNotEmpty() ->
                                         scrollAndFocus(firstChannelLazyIndex, channelBand(0))
                                     iptvSettings.playlists.isNotEmpty() ->
                                         scrollAndFocus(firstChannelLazyIndex, emptyPickFocus)
+                                    hasPlayByPlayControl -> focusPlayByPlay()
                                     else -> stepStatsDown()
                                 }
                             },
@@ -432,7 +535,7 @@ internal fun SportsGameDetail(
                                     bandRequester = emptyPickFocus,
                                     onUp = {
                                         if (stepStatsUpIfScrolled(firstChannelLazyIndex)) true
-                                        else scrollAndFocus(3, channelsHeaderBandFocus)
+                                        else scrollAndFocus(3, channelsHeaderBandFocus, FocusDirection.Up)
                                     },
                                     onDown = { stepStatsDown() },
                                 )
@@ -495,9 +598,9 @@ internal fun SportsGameDetail(
                         if (index == visibleOptions.lastIndex && !showOtherRegionsToggle && stepStatsUpIfScrolled(lazyIdx)) {
                             true
                         } else if (index == 0) {
-                            scrollAndFocus(3, channelsHeaderBandFocus)
+                            scrollAndFocus(3, channelsHeaderBandFocus, FocusDirection.Up)
                         } else {
-                            scrollAndFocus(lazyIdx - 1, channelBand(index - 1))
+                            scrollAndFocus(lazyIdx - 1, channelBand(index - 1), FocusDirection.Up)
                         }
                     },
                     onDown = {
@@ -564,10 +667,10 @@ internal fun SportsGameDetail(
                                     true
                                 } else {
                                     val lastIdx = visibleOptions.lastIndex
-                                    scrollAndFocus(firstChannelLazyIndex + lastIdx, channelBand(lastIdx))
+                                    scrollAndFocus(firstChannelLazyIndex + lastIdx, channelBand(lastIdx), FocusDirection.Up)
                                 }
                             },
-                            onDown = { focusPlayByPlay() },
+                            onDown = { if (hasPlayByPlayControl) focusPlayByPlay() else stepStatsDown() },
                         ),
                     ) {
                         SportsSmallPill(
@@ -587,38 +690,14 @@ internal fun SportsGameDetail(
         val loadedSummary = summary
         val moneyline = event.moneyline ?: loadedSummary?.moneyline
         if (!hideScores && loadedSummary != null) {
-            if (hasPlayByPlayControl) {
-                item(key = "play-by-play-toggle") {
-                    val (period, _) = playPeriodGroups.first()
-                    val periodExpanded = period in expandedPlayPeriods
-                    Row(
-                        modifier = Modifier
-                            .fillMaxWidth()
-                            .onPreviewKeyEvent { keyEvent ->
-                                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
-                                when (keyEvent.navigationKey()) {
-                                    Key.DirectionUp -> scrollDetail(-1)
-                                    Key.DirectionDown -> scrollDetail(1)
-                                    else -> false
-                                }
-                            },
-                    ) {
-                        SportsSmallPill(
-                            label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
-                            selected = periodExpanded,
-                            focusRequester = playByPlayFocus,
-                            onClick = {
-                                expandedPlayPeriods = if (periodExpanded) {
-                                    expandedPlayPeriods - period
-                                } else {
-                                    expandedPlayPeriods + period
-                                }
-                            },
-                        )
-                    }
-                }
-            }
-            if (loadedSummary.playByPlay.isNotEmpty() || loadedSummary.teamStats.isNotEmpty() || moneyline != null) {
+            if (
+                loadedSummary.playByPlay.isNotEmpty() ||
+                loadedSummary.teamStats.isNotEmpty() ||
+                loadedSummary.categories.isNotEmpty() ||
+                loadedSummary.leaders.isNotEmpty() ||
+                loadedSummary.news.isNotEmpty() ||
+                moneyline != null
+            ) {
                 item(key = "play-by-play-stats-odds") {
                     BoxWithConstraints(Modifier.fillMaxWidth()) {
                         val playsContent: @Composable () -> Unit = {
@@ -641,36 +720,48 @@ internal fun SportsGameDetail(
                                             Row(
                                                 modifier = Modifier
                                                     .fillMaxWidth()
+                                                    .bringIntoViewRequester(periodBringIntoViews[index])
                                                     .onPreviewKeyEvent { keyEvent ->
                                                         if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
                                                         when (keyEvent.navigationKey()) {
+                                                            // Up and Down scroll the page as they always
+                                                            // have; Left and Right walk the quarters'
+                                                            // toggles, which is how each one is reached
+                                                            // without a focus stop per play row.
                                                             Key.DirectionDown -> scrollDetail(1)
                                                             Key.DirectionUp -> scrollDetail(-1)
-                                                            else -> false
+                                                            else -> {
+                                                                val target = periodSideStepTarget(
+                                                                    keyEvent.navigationKey(),
+                                                                    index,
+                                                                    playPeriodGroups.lastIndex,
+                                                                )
+                                                                if (target != null) focusPeriod(target) else false
+                                                            }
                                                         }
                                                     },
+                                                verticalAlignment = Alignment.CenterVertically,
+                                                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
                                             ) {
-                                                if (index == 0) {
-                                                    Text(
-                                                        text = period,
-                                                        style = MaterialTheme.typography.labelLarge,
-                                                        fontWeight = FontWeight.SemiBold,
-                                                        color = tokens.colors.textSecondary,
-                                                    )
-                                                } else {
-                                                    SportsSmallPill(
-                                                        label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
-                                                        selected = periodExpanded,
-                                                        focusRequester = periodFocusRequesters[index],
-                                                        onClick = {
-                                                            expandedPlayPeriods = if (periodExpanded) {
-                                                                expandedPlayPeriods - period
-                                                            } else {
-                                                                expandedPlayPeriods + period
-                                                            }
-                                                        },
-                                                    )
-                                                }
+                                                Text(
+                                                    text = period,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = tokens.colors.textSecondary,
+                                                    modifier = Modifier.weight(1f),
+                                                )
+                                                SportsSmallPill(
+                                                    label = if (periodExpanded) "Show less" else "Latest 5",
+                                                    selected = periodExpanded,
+                                                    focusRequester = periodFocusRequesters[index],
+                                                    onClick = {
+                                                        expandedPlayPeriods = if (periodExpanded) {
+                                                            expandedPlayPeriods - period
+                                                        } else {
+                                                            expandedPlayPeriods + period
+                                                        }
+                                                    },
+                                                )
                                             }
                                             val visiblePeriodPlays = if (periodExpanded) periodPlays else if (event.isLive) {
                                                 periodPlays.take(5)
@@ -678,34 +769,112 @@ internal fun SportsGameDetail(
                                                 periodPlays.takeLast(5)
                                             }
                                             visiblePeriodPlays.forEach { play ->
-                                                SportsPlayByPlayRow(play, clockSettings.twelveHour)
+                                                SportsPlayByPlayRow(
+                                                    play = play,
+                                                    twelveHour = clockSettings.twelveHour,
+                                                    awayTeam = event.away.team,
+                                                    homeTeam = event.home.team,
+                                                )
                                             }
                                         }
                                     }
                                 }
                             }
                         }
+                        val hasPlayByPlay = loadedSummary.playByPlay.isNotEmpty()
+                        val hasTeamStats = loadedSummary.teamStats.isNotEmpty()
+                        val hasPlayerStats = loadedSummary.categories.isNotEmpty()
+                        val hasLeaders = loadedSummary.leaders.isNotEmpty()
+                        val hasNews = loadedSummary.news.isNotEmpty()
                         if (maxWidth >= 1100.dp) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
                                 verticalAlignment = Alignment.Top,
                             ) {
-                                if (loadedSummary.playByPlay.isNotEmpty()) {
-                                    Column(Modifier.weight(1.35f)) { playsContent() }
+                                if (hasPlayByPlay) {
+                                    Column(Modifier.weight(1.3f)) { playsContent() }
                                 }
-                                if (loadedSummary.teamStats.isNotEmpty()) {
-                                    SportsTeamStats(event, loadedSummary.teamStats, Modifier.weight(1.1f))
-                                }
-                                if (moneyline != null) {
-                                    SportsMoneylinePanel(event, moneyline, Modifier.weight(0.75f))
+                                val hasMiddle = hasTeamStats || hasPlayerStats
+                                val hasRight = moneyline != null || hasNews || hasLeaders
+                                if (hasMiddle || hasRight) {
+                                    Column(
+                                        modifier = Modifier.weight(1.95f),
+                                        verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+                                    ) {
+                                        if (hasTeamStats) {
+                                            // Team stats and the odds/news/leaders stack share one
+                                            // height: the news card stretches so season leaders finish
+                                            // level with the bottom of team stats, not player stats.
+                                            Row(
+                                                modifier = Modifier
+                                                    .fillMaxWidth()
+                                                    .height(IntrinsicSize.Min),
+                                                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                Column(Modifier.weight(1.05f)) {
+                                                    SportsTeamStats(event, loadedSummary.teamStats)
+                                                }
+                                                if (hasRight) {
+                                                    SportsOddsNewsColumn(
+                                                        event = event,
+                                                        moneyline = moneyline,
+                                                        news = loadedSummary.news,
+                                                        leaders = loadedSummary.leaders,
+                                                        stretchNews = true,
+                                                        modifier = Modifier.weight(0.9f).fillMaxHeight(),
+                                                    )
+                                                }
+                                            }
+                                            if (hasPlayerStats) {
+                                                Row(
+                                                    modifier = Modifier.fillMaxWidth(),
+                                                    horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+                                                ) {
+                                                    Box(Modifier.weight(1.05f)) {
+                                                        SportsPlayerStats(loadedSummary.categories)
+                                                    }
+                                                    if (hasRight) Spacer(Modifier.weight(0.9f))
+                                                }
+                                            }
+                                        } else {
+                                            // Nothing to pin the leaders against (no team stats): lay
+                                            // player stats and the odds/news/leaders column side by
+                                            // side at their natural heights.
+                                            Row(
+                                                modifier = Modifier.fillMaxWidth(),
+                                                horizontalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+                                                verticalAlignment = Alignment.Top,
+                                            ) {
+                                                if (hasPlayerStats) {
+                                                    Box(Modifier.weight(1.05f)) {
+                                                        SportsPlayerStats(loadedSummary.categories)
+                                                    }
+                                                }
+                                                if (hasRight) {
+                                                    SportsOddsNewsColumn(
+                                                        event = event,
+                                                        moneyline = moneyline,
+                                                        news = loadedSummary.news,
+                                                        leaders = loadedSummary.leaders,
+                                                        stretchNews = false,
+                                                        modifier = Modifier.weight(if (hasPlayerStats) 0.9f else 1f),
+                                                    )
+                                                }
+                                            }
+                                        }
+                                    }
                                 }
                             }
                         } else {
                             Column(verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap)) {
                                 playsContent()
-                                if (loadedSummary.teamStats.isNotEmpty()) SportsTeamStats(event, loadedSummary.teamStats)
+                                if (hasTeamStats) SportsTeamStats(event, loadedSummary.teamStats)
+                                if (hasPlayerStats) SportsPlayerStats(loadedSummary.categories)
                                 if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
+                                if (hasNews) SportsTeamNews(event, loadedSummary.news)
+                                if (hasLeaders) SportsSeasonLeaders(event, loadedSummary.leaders)
                             }
                         }
                     }
@@ -723,19 +892,6 @@ internal fun SportsGameDetail(
                 item(key = "scoring-body") {
                     val orderedPlays = if (event.isLive) loadedSummary.scoring.asReversed() else loadedSummary.scoring
                     SportsScoringPlays(orderedPlays)
-                }
-            }
-            if (loadedSummary.categories.isNotEmpty()) {
-                item(key = "player-stats-header") {
-                    Text(
-                        text = "Player stats",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tokens.colors.textPrimary,
-                    )
-                }
-                item(key = "player-stats-body") {
-                    SportsPlayerStats(loadedSummary.categories)
                 }
             }
         } else if (moneyline != null) {
@@ -1080,7 +1236,7 @@ private fun SportsScoreboard(
         modifier = Modifier
             .fillMaxWidth()
             .clip(tokens.shapes.card)
-            .background(tokens.colors.surfaceCard)
+            .sportsMatchupGradientBackground(event)
             .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
             .padding(tokens.spacing.cardPadding),
         horizontalAlignment = Alignment.CenterHorizontally,
@@ -1252,6 +1408,7 @@ private fun SportsScoreTeam(side: GameSide, modifier: Modifier = Modifier) {
             modifier = Modifier.size(52.dp),
             contentAlignment = Alignment.Center,
         ) {
+            val logo = side.team.logo?.takeIf { it.isNotBlank() }
             Box(
                 modifier = Modifier
                     .fillMaxSize()
@@ -1259,16 +1416,18 @@ private fun SportsScoreTeam(side: GameSide, modifier: Modifier = Modifier) {
                     .background(side.team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
                 contentAlignment = Alignment.Center,
             ) {
-                Text(
-                    text = side.team.abbreviation.take(4),
-                    style = MaterialTheme.typography.labelMedium,
-                    color = Color.White,
-                    maxLines = 1,
-                )
+                if (logo == null) {
+                    Text(
+                        text = side.team.abbreviation.take(4),
+                        style = MaterialTheme.typography.labelMedium,
+                        color = Color.White,
+                        maxLines = 1,
+                    )
+                }
             }
-            side.team.logo?.let { logo ->
+            logo?.let {
                 NuvioAsyncImage(
-                    model = logo,
+                    model = it,
                     contentDescription = null,
                     modifier = Modifier.size(52.dp),
                     contentScale = ContentScale.Fit,
@@ -1677,6 +1836,42 @@ private fun SportsTeamStats(
 
 private const val MAX_LIVE_PLAY_BY_PLAY = 30
 
+/**
+ * The odds, news and season-leaders stack to the right of the stats column.
+ *
+ * When [stretchNews] is set the stack shares its height with the team-stats card, so the news card
+ * absorbs the spare space and the season leaders below it finish on the team-stats bottom edge
+ * rather than running down beside player stats.
+ */
+@Composable
+private fun SportsOddsNewsColumn(
+    event: SportsEvent,
+    moneyline: MoneylineOdds?,
+    news: List<TeamNews>,
+    leaders: List<TeamLeaders>,
+    stretchNews: Boolean,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    Column(
+        modifier = modifier,
+        verticalArrangement = Arrangement.spacedBy(tokens.spacing.controlGap),
+    ) {
+        if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
+        if (news.isNotEmpty()) {
+            SportsTeamNews(
+                event = event,
+                news = news,
+                modifier = if (stretchNews) Modifier.weight(1f) else Modifier,
+                fillHeight = stretchNews,
+            )
+        } else if (stretchNews && leaders.isNotEmpty()) {
+            Spacer(Modifier.weight(1f))
+        }
+        if (leaders.isNotEmpty()) SportsSeasonLeaders(event, leaders)
+    }
+}
+
 @Composable
 private fun SportsMoneylinePanel(
     event: SportsEvent,
@@ -1687,19 +1882,62 @@ private fun SportsMoneylinePanel(
     Column(
         modifier = modifier
             .clip(tokens.shapes.card)
-            .background(tokens.colors.surfaceCard)
+            .sportsMatchupGradientBackground(event, awayShare = moneylineAwayShare(odds))
             .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
             .padding(tokens.spacing.cardPaddingCompact),
         verticalArrangement = Arrangement.spacedBy(8.dp),
     ) {
-        Text(
-            text = "MONEYLINE & ODDS",
-            style = MaterialTheme.typography.labelLarge,
-            fontWeight = FontWeight.SemiBold,
-            color = tokens.colors.textSecondary,
-        )
-        odds?.provider?.takeIf { it.isNotBlank() }?.let { provider ->
-            Text(provider, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp),
+            verticalAlignment = Alignment.Top,
+        ) {
+            Column(Modifier.weight(1f)) {
+                Text(
+                    text = "MONEYLINE & ODDS",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textSecondary,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                odds?.provider?.takeIf { it.isNotBlank() }?.let { provider ->
+                    Text(
+                        text = provider,
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+            }
+            // Spread and total read as part of the heading, so the moneyline numbers keep the
+            // card's body to themselves and the panel stays short above the news.
+            val spread = odds?.spread?.takeIf { it.isNotBlank() }
+            val total = odds?.overUnder?.takeIf { it.isNotBlank() }
+            if (spread != null || total != null) {
+                Column(
+                    horizontalAlignment = Alignment.End,
+                    verticalArrangement = Arrangement.spacedBy(1.dp),
+                ) {
+                    spread?.let {
+                        Text(
+                            text = "Spread  $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textSecondary,
+                            maxLines = 1,
+                        )
+                    }
+                    total?.let {
+                        Text(
+                            text = "Total  $it",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = tokens.colors.textSecondary,
+                            maxLines = 1,
+                        )
+                    }
+                }
+            }
         }
         Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(6.dp)) {
             Column(Modifier.weight(1f), horizontalAlignment = Alignment.Start) {
@@ -1711,12 +1949,6 @@ private fun SportsMoneylinePanel(
                 Text(odds?.home ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary, maxLines = 1)
             }
         }
-        odds?.spread?.let { value ->
-            Text("Spread  $value", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textSecondary)
-        }
-        odds?.overUnder?.let { value ->
-            Text("Total  $value", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textSecondary)
-        }
         if (odds == null) {
             Text("Odds aren't available for this event.", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
         }
@@ -1724,10 +1956,23 @@ private fun SportsMoneylinePanel(
 }
 
 @Composable
-private fun SportsPlayByPlayRow(play: PlayByPlayEntry, twelveHour: Boolean) {
+private fun SportsPlayByPlayRow(
+    play: PlayByPlayEntry,
+    twelveHour: Boolean,
+    awayTeam: Team,
+    homeTeam: Team,
+) {
     val tokens = MaterialTheme.nuvio
     val localTime = play.wallclockMs?.let { formatSportsPlayTime(it, twelveHour) }
     val meta = listOfNotNull(localTime, play.clock?.takeIf { it.isNotBlank() }).joinToString(" · ")
+    val scoringTeam = when (play.scoringTeamId) {
+        awayTeam.id -> awayTeam
+        homeTeam.id -> homeTeam
+        else -> null
+    }
+    // The hero's round team card uses the brand colour straight from the feed; the points use the
+    // same so the two sides stay distinguishable instead of both washing out toward white.
+    val scoringColor = scoringTeam?.color?.let(::Color) ?: tokens.colors.accent
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1757,6 +2002,26 @@ private fun SportsPlayByPlayRow(play: PlayByPlayEntry, twelveHour: Boolean) {
                     style = MaterialTheme.typography.labelSmall,
                     color = tokens.colors.textMuted,
                 )
+            }
+        }
+        // The points this play scored, tinted in the colour of the team that got them.
+        play.points?.takeIf { it > 0 }?.let { points ->
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = "+$points",
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold,
+                    color = scoringColor,
+                    maxLines = 1,
+                )
+                scoringTeam?.let { team ->
+                    Text(
+                        text = team.abbreviation.ifBlank { team.shortName.take(3) },
+                        style = MaterialTheme.typography.labelSmall,
+                        color = tokens.colors.textMuted,
+                        maxLines = 1,
+                    )
+                }
             }
         }
     }
@@ -1803,41 +2068,94 @@ private fun SportsScoringPlays(plays: List<ScoringPlay>) {
 }
 
 @Composable
-private fun SportsPlayerStats(categories: List<StatCategory>) {
+private fun SportsPlayerStats(categories: List<StatCategory>, modifier: Modifier = Modifier) {
     val tokens = MaterialTheme.nuvio
     Column(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .clip(tokens.shapes.card)
             .background(tokens.colors.surfaceCard)
             .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
-            .padding(tokens.spacing.cardPadding),
-        verticalArrangement = Arrangement.spacedBy(8.dp),
+            .padding(tokens.spacing.cardPaddingCompact),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
-        categories.forEach { category ->
-            Text(
-                text = category.name,
-                style = MaterialTheme.typography.labelLarge,
-                fontWeight = FontWeight.SemiBold,
-                color = tokens.colors.textPrimary,
-            )
-            category.players.forEach { player ->
-                Row(Modifier.fillMaxWidth()) {
-                    Text(
-                        text = listOfNotNull(player.name, player.position).joinToString(" · "),
-                        style = MaterialTheme.typography.bodySmall,
-                        color = tokens.colors.textSecondary,
-                        modifier = Modifier.weight(1f),
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis,
-                    )
-                    if (player.headline != null) {
+        Text(
+            text = "PLAYER STATS",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textSecondary,
+        )
+        categories.forEachIndexed { categoryIndex, category ->
+            if (categoryIndex > 0) {
+                Box(
+                    Modifier
+                        .fillMaxWidth()
+                        .height(tokens.borders.hairline)
+                        .background(tokens.colors.borderSubtle),
+                )
+            }
+            val labels = category.players.firstOrNull()?.stats?.map { it.label }.orEmpty()
+            val columns = sportsPlayerStatColumns(labels)
+            Column(verticalArrangement = Arrangement.spacedBy(3.dp)) {
+                Text(
+                    text = category.name,
+                    style = MaterialTheme.typography.labelMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+                // Column headings once per category, then a dense one-line row per player.
+                if (columns.isNotEmpty()) {
+                    Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                        Spacer(Modifier.weight(1.7f))
+                        columns.forEach { index ->
+                            Text(
+                                text = labels.getOrNull(index).orEmpty(),
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tokens.colors.textMuted,
+                                modifier = Modifier.weight(0.62f),
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                    }
+                }
+                category.players.forEach { player ->
+                    Row(
+                        modifier = Modifier.fillMaxWidth().padding(vertical = 1.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                    ) {
                         Text(
-                            text = player.headline,
-                            style = MaterialTheme.typography.labelSmall,
-                            color = tokens.colors.textMuted,
+                            text = listOfNotNull(player.name, player.position).joinToString(" · "),
+                            style = MaterialTheme.typography.bodySmall,
+                            color = tokens.colors.textSecondary,
+                            modifier = Modifier.weight(1.7f),
                             maxLines = 1,
+                            overflow = TextOverflow.Ellipsis,
                         )
+                        columns.forEach { index ->
+                            Text(
+                                text = player.stats.getOrNull(index)?.value?.takeIf { it.isNotBlank() } ?: "—",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tokens.colors.textPrimary,
+                                modifier = Modifier.weight(0.62f),
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        // A provider with no column labels still gets its numbers shown.
+                        if (columns.isEmpty() && player.headline != null) {
+                            Text(
+                                text = player.headline,
+                                style = MaterialTheme.typography.labelSmall,
+                                color = tokens.colors.textMuted,
+                                modifier = Modifier.weight(1.2f),
+                                textAlign = TextAlign.End,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
                     }
                 }
             }

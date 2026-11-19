@@ -32,7 +32,7 @@ enum class NavBarEntry(val key: String, val label: String) {
     Discover("discover", "Discover"),
     Library("library", "Library"),
     LiveTv("livetv", "Live TV"),
-    /** fork:sports - only in the navigation on a build launched with -Pnuvio.sports=true. */
+    /** fork:sports - part of the normal navigation in this fork. */
     Sports("sports", "Sports"),
     YouTube("youtube", "YouTube"),
     Music("music", "Music"),

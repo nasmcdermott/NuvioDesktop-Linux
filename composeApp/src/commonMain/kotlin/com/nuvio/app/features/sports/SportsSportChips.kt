@@ -6,6 +6,7 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
+import androidx.compose.ui.input.key.KeyEvent
 import androidx.compose.material.icons.rounded.SportsFootball
 import androidx.compose.material.icons.rounded.SportsBasketball
 import androidx.compose.material.icons.rounded.SportsHockey
@@ -91,6 +92,7 @@ internal fun SportsChip(
     focusRequester: FocusRequester? = null,
     modifier: Modifier = Modifier,
     icon: ImageVector? = null,
+    onExtraKey: ((KeyEvent) -> Boolean)? = null,
 ) {
     val tokens = MaterialTheme.nuvio
     val interaction = rememberSportsInteraction(baseScale = 1.05f, label = "sportsChipZoom")
@@ -102,6 +104,7 @@ internal fun SportsChip(
             .sportsInteractive(
                 state = interaction,
                 focusRequester = focusRequester,
+                onExtraKey = onExtraKey,
                 onClick = onClick,
             )
             .clip(shape)

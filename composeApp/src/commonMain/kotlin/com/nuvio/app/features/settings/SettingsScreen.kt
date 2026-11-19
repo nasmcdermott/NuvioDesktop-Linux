@@ -3190,14 +3190,15 @@ private fun DesktopSettingsTopBar(
     val focusManager = LocalFocusManager.current
     val navBarEntry = remember { FocusRequester() }
     val utilityEntry = remember { FocusRequester() }
-    DisposableEffect(focusManager) {
+    val settingsTopBarOwner = remember { Any() }
+    DisposableEffect(focusManager, settingsTopBarOwner) {
         SettingsTopBarFocus.register(navBarEntry, focusManager)
         SettingsTopBarUtilityFocus.register(utilityEntry, focusManager)
-        com.nuvio.app.core.ui.RootNavFocus.settingsTopBarAvailable = true
+        com.nuvio.app.core.ui.RootNavFocus.registerSettingsTopBar(settingsTopBarOwner)
         onDispose {
             SettingsTopBarFocus.unregister(navBarEntry)
             SettingsTopBarUtilityFocus.unregister(utilityEntry)
-            com.nuvio.app.core.ui.RootNavFocus.settingsTopBarAvailable = false
+            com.nuvio.app.core.ui.RootNavFocus.unregisterSettingsTopBar(settingsTopBarOwner)
         }
     }
     // The search field's clear X sits in the window's top-right corner, under the fullscreen

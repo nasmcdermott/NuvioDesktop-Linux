@@ -19,9 +19,9 @@ expect object AppFeaturePolicy {
     val customServerConnectionsEnabled: Boolean
 
     /**
-     * Whether this build carries the Sports tab (see fork:sports). Off on every build that is not
-     * launched with `-Pnuvio.sports=true`, so an ordinary build behaves exactly as upstream does:
-     * the Sports entry, its settings page and its store are all absent, not merely hidden.
+     * Whether this build carries the Sports tab (see fork:sports). Always true in this fork: the
+     * Sports entry, its settings page and its store are part of the normal build, with no launch
+     * parameter required.
      */
     val sportsEnabled: Boolean
 }

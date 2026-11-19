@@ -39,11 +39,13 @@ import androidx.compose.ui.focus.onFocusChanged
 import androidx.compose.ui.input.key.onKeyEvent
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import com.nuvio.app.core.ui.NuvioAsyncImage
 import com.nuvio.app.core.ui.NuvioModalDialog
 import com.nuvio.app.core.ui.NuvioTextField
 import com.nuvio.app.core.ui.nuvio
@@ -374,12 +376,22 @@ private fun SportsPickerTeamRow(
                 .background(team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = team.abbreviation.take(4),
-                fontSize = 8.sp,
-                color = Color.White,
-                maxLines = 1,
-            )
+            val logo = team.logo?.takeIf { it.isNotBlank() }
+            if (logo == null) {
+                Text(
+                    text = team.abbreviation.take(4),
+                    fontSize = 8.sp,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            } else {
+                NuvioAsyncImage(
+                    model = logo,
+                    contentDescription = null,
+                    modifier = Modifier.size(tokens.icons.sm),
+                    contentScale = ContentScale.Fit,
+                )
+            }
         }
         Column(Modifier.weight(1f)) {
             Text(
@@ -389,11 +401,13 @@ private fun SportsPickerTeamRow(
                 maxLines = 1,
                 overflow = TextOverflow.Ellipsis,
             )
-            Text(
-                text = team.abbreviation,
-                style = MaterialTheme.typography.labelSmall,
-                color = tokens.colors.textMuted,
-            )
+            if (team.shortName.isNotBlank() && team.shortName != team.name) {
+                Text(
+                    text = team.shortName,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                )
+            }
         }
         SportsFollowCheck(followed)
     }

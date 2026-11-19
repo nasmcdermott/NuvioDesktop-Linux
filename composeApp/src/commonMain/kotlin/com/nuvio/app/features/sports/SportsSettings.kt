@@ -192,8 +192,7 @@ internal object SportsSettingsRepository {
     }
 
     private fun persist() {
-        // A build that does not carry the feature must not write its store, so an ordinary build
-        // never leaves a file behind that a Sports build would then half-read.
+        // Keep the store behind the feature policy rather than writing it from every entry point.
         if (!AppFeaturePolicy.sportsEnabled) return
         runCatching { SportsSettingsStorage.savePayload(json.encodeToString(SportsSettings.serializer(), _settings.value)) }
             .onFailure { log.e(it) { "Failed to save sports settings" } }
