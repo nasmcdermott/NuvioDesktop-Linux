@@ -2,6 +2,7 @@ package com.nuvio.app.features.sports
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.gestures.animateScrollBy
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -19,33 +20,54 @@ import androidx.compose.foundation.lazy.LazyRow
 import androidx.compose.foundation.lazy.itemsIndexed
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.DropdownMenu
+import androidx.compose.material3.DropdownMenuItem
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableIntStateOf
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import androidx.compose.runtime.rememberUpdatedState
 import androidx.compose.runtime.setValue
+import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.focus.FocusRequester
+import androidx.compose.ui.focus.focusRequester
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.SolidColor
+import androidx.compose.ui.input.key.Key
+import androidx.compose.ui.input.key.KeyEventType
+import androidx.compose.ui.input.key.onKeyEvent
+import androidx.compose.ui.input.key.onPreviewKeyEvent
+import androidx.compose.ui.input.key.type
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
+import com.nuvio.app.core.ui.KeyRouteLayer
 import com.nuvio.app.core.ui.NuvioAsyncImage
+import com.nuvio.app.core.ui.navigationKey
 import com.nuvio.app.core.ui.nuvio
 import com.nuvio.app.core.ui.requestFocusLogged
 import com.nuvio.app.core.ui.smoothBorder
+import com.nuvio.app.features.debrid.DebridSettingsRepository
 import com.nuvio.app.features.iptv.IptvRepository
+import com.nuvio.app.features.streams.AddonStreamGroup
+import com.nuvio.app.features.streams.StreamItem
+import com.nuvio.app.features.streams.StreamScoreContexts
+import com.nuvio.app.features.streams.StreamScoreRepository
+import com.nuvio.app.features.streams.StreamScorer
+import com.nuvio.app.features.streams.StreamsRepository
+import com.nuvio.app.features.streams.isSelectableForPlayback
+import com.nuvio.app.features.tonight.TonightSettingsRepository
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
@@ -62,10 +84,19 @@ internal fun SportsGameDetail(
     entryFocus: FocusRequester = remember { FocusRequester() },
     onUpToHeader: () -> Boolean = { false },
     onOpenTable: (() -> Unit)? = null,
+    onFindSportsStreams: (String?) -> Unit = {},
+    onPlaySportsStream: (StreamItem) -> Unit = {},
     modifier: Modifier = Modifier,
 ) {
     val tokens = MaterialTheme.nuvio
     val settings by SportsSettingsRepository.settings.collectAsState()
+    val clockSettings by TonightSettingsRepository.state.collectAsState()
+    remember { TonightSettingsRepository.ensureLoaded() }
+    val streamState by StreamsRepository.uiState.collectAsState()
+    val debridSettings by DebridSettingsRepository.uiState.collectAsStateWithLifecycle()
+    val scoreProfile by StreamScoreRepository.uiState.collectAsStateWithLifecycle()
+    remember { DebridSettingsRepository.ensureLoaded() }
+    remember { StreamScoreRepository.ensureLoaded() }
     remember { IptvRepository.ensureLoaded() }
     val iptvSettings by IptvRepository.settings.collectAsState()
 
@@ -82,6 +113,27 @@ internal fun SportsGameDetail(
         iptvSettings.playlists,
     ) {
         SportsWatch.choicesFor(event, SportsWatch.optionsFor(event, settings))
+    }
+
+    val sportsStreamId = league?.let { sportsEventStreamId(it, event) }
+    val sportsRequestToken = sportsStreamId?.let { videoId ->
+        StreamsRepository.requestToken("sports", videoId, manualSelection = true)
+    }
+    val addonGroups = if (sportsRequestToken != null && streamState.requestToken == sportsRequestToken) {
+        streamState.groups.filter { it.addonId != "local-library" }
+    } else {
+        emptyList()
+    }
+    LaunchedEffect(event.id, sportsStreamId) {
+        if (sportsStreamId != null) {
+            StreamsRepository.load(
+                type = "sports",
+                videoId = sportsStreamId,
+                parentMetaId = sportsStreamId,
+                title = event.displayTitle,
+                manualSelection = true,
+            )
+        }
     }
 
     val regionChoice = settings.channelRegion
@@ -110,6 +162,7 @@ internal fun SportsGameDetail(
 
     var channelPickerOpen by remember { mutableStateOf(false) }
     var regionDialogOpen by remember { mutableStateOf(false) }
+    var expandedPlayPeriods by remember(event.id) { mutableStateOf(emptySet<String>()) }
 
     // Fetch box score / scoring summary on open, and keep refreshing while the game is live.
     var summary by remember(event.id) { mutableStateOf<GameSummary?>(null) }
@@ -133,6 +186,7 @@ internal fun SportsGameDetail(
     val scope = rememberCoroutineScope()
 
     val backFocus = remember { FocusRequester() }
+    val playByPlayFocus = remember { FocusRequester() }
     val actionsBandFocus = remember { FocusRequester() }
     val primaryActionFocus = remember { FocusRequester() }
     val channelsHeaderBandFocus = remember { FocusRequester() }
@@ -149,9 +203,10 @@ internal fun SportsGameDetail(
     val isFieldEvent = event.away.team.id.endsWith(":event")
     val hasPrimaryWatchAction = (bestOption != null && event.state != GameState.POST) ||
         (replayOption != null && event.state == GameState.POST)
+    val hasAddonWatchAction = event.state != GameState.POST
 
     LaunchedEffect(event.id) {
-        val initial = if (hasPrimaryWatchAction) primaryActionFocus else backFocus
+        val initial = if (hasPrimaryWatchAction || hasAddonWatchAction) primaryActionFocus else backFocus
         repeat(10) {
             if (initial.requestFocusLogged()) return@LaunchedEffect
             delay(48)
@@ -160,25 +215,46 @@ internal fun SportsGameDetail(
 
     // Items 0..3 are header, scoreboard, actions, channels-header; channel rows start at index 4.
     val firstChannelLazyIndex = 4
+    val playByPlayEntries = if (event.isLive) {
+        summary?.playByPlay.orEmpty().asReversed().take(MAX_LIVE_PLAY_BY_PLAY)
+    } else {
+        summary?.playByPlay.orEmpty()
+    }
+    val playPeriodGroups = playByPlayEntries.groupBy { it.period?.takeIf(String::isNotBlank) ?: "Other" }.toList()
+    val playPeriodNames = playPeriodGroups.map { it.first }
+    val periodFocusRequesters = remember(event.id, playPeriodNames) {
+        List(playPeriodNames.size) { index -> if (index == 0) playByPlayFocus else FocusRequester() }
+    }
+    val hasPlayByPlayControl = !hideScores && playPeriodGroups.isNotEmpty()
+    val playByPlayLazyIndex = firstChannelLazyIndex + if (visibleOptions.isEmpty()) {
+        1 // The empty-channel message occupies the first item after the channel header.
+    } else {
+        visibleOptions.size + if (showOtherRegionsToggle) 1 else 0
+    }
     fun scrollAndFocus(lazyIndex: Int, target: FocusRequester): Boolean {
-        if (runCatching { target.requestFocusLogged() }.getOrDefault(false)) return true
+        val visible = listState.layoutInfo.visibleItemsInfo.any { it.index == lazyIndex }
+        if (visible && runCatching { target.requestFocusLogged() }.getOrDefault(false)) return true
         scope.launch {
-            runCatching { listState.scrollToItem(lazyIndex.coerceAtLeast(0)) }
-            repeat(5) {
+            runCatching { listState.animateScrollToItem(lazyIndex.coerceAtLeast(0)) }
+            repeat(10) {
+                delay(32)
                 if (runCatching { target.requestFocusLogged() }.getOrDefault(false)) return@launch
-                delay(16)
             }
         }
         return true
     }
 
-    fun stepStatsDown(): Boolean {
-        if (!listState.canScrollForward) return true
-        val next = (listState.firstVisibleItemIndex + 1)
-            .coerceAtMost((listState.layoutInfo.totalItemsCount - 1).coerceAtLeast(0))
-        scope.launch { runCatching { listState.animateScrollToItem(next) } }
+    fun scrollDetail(direction: Int): Boolean {
+        val canScroll = if (direction > 0) listState.canScrollForward else listState.canScrollBackward
+        if (!canScroll) return false
+        scope.launch {
+            val step = (listState.layoutInfo.viewportSize.height * 0.72f).coerceAtLeast(1f)
+            runCatching { listState.animateScrollBy(step * direction) }
+        }
         return true
     }
+
+    fun stepStatsDown(): Boolean = scrollDetail(1)
 
     fun stepStatsUpIfScrolled(minAnchorIndex: Int): Boolean {
         if (listState.firstVisibleItemIndex <= minAnchorIndex) return false
@@ -187,9 +263,24 @@ internal fun SportsGameDetail(
         return true
     }
 
+    fun focusPlayByPlay(): Boolean = if (hasPlayByPlayControl) {
+        scrollAndFocus(playByPlayLazyIndex, playByPlayFocus)
+    } else {
+        stepStatsDown()
+    }
+
     LazyColumn(
         state = listState,
-        modifier = modifier.fillMaxSize(),
+        modifier = modifier
+            .fillMaxSize()
+            .onKeyEvent { keyEvent ->
+                if (keyEvent.type != KeyEventType.KeyDown) return@onKeyEvent false
+                when (keyEvent.navigationKey()) {
+                    Key.DirectionDown -> scrollDetail(1)
+                    Key.DirectionUp -> scrollDetail(-1)
+                    else -> false
+                }
+            },
         verticalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap),
         contentPadding = PaddingValues(horizontal = 4.dp, vertical = 4.dp),
     ) {
@@ -247,6 +338,13 @@ internal fun SportsGameDetail(
                 allOptions = allOptions,
                 settings = settings,
                 isFieldEvent = isFieldEvent,
+                onFindSportsStreams = { onFindSportsStreams(null) },
+                addonGroups = addonGroups,
+                isAddonLoading = streamState.requestToken == sportsRequestToken &&
+                    (streamState.isAnyLoading || addonGroups.any { it.isLoading }),
+                debridEnabled = debridSettings.canResolvePlayableLinks,
+                scoreProfile = scoreProfile,
+                onPlaySportsStream = onPlaySportsStream,
                 bandRequester = actionsBandFocus,
                 primaryFocus = primaryActionFocus,
                 onUp = { scrollAndFocus(0, entryFocus) },
@@ -405,7 +503,7 @@ internal fun SportsGameDetail(
                                 scrollAndFocus(lazyIdx + 1, channelBand(index + 1))
                             showOtherRegionsToggle ->
                                 scrollAndFocus(firstChannelLazyIndex + visibleOptions.size, otherRegionsFocus)
-                            else -> stepStatsDown()
+                            else -> focusPlayByPlay()
                         }
                     },
                     onPlay = {
@@ -466,7 +564,7 @@ internal fun SportsGameDetail(
                                     scrollAndFocus(firstChannelLazyIndex + lastIdx, channelBand(lastIdx))
                                 }
                             },
-                            onDown = { stepStatsDown() },
+                            onDown = { focusPlayByPlay() },
                         ),
                     ) {
                         SportsSmallPill(
@@ -484,26 +582,121 @@ internal fun SportsGameDetail(
         }
 
         val loadedSummary = summary
+        val moneyline = event.moneyline ?: loadedSummary?.moneyline
         if (!hideScores && loadedSummary != null) {
-            if (loadedSummary.playByPlay.isNotEmpty()) {
-                item(key = "play-by-play-header") {
-                    Text(
-                        text = if (event.isLive) "Play by play · latest first" else "Play by play",
-                        style = MaterialTheme.typography.titleMedium,
-                        fontWeight = FontWeight.SemiBold,
-                        color = tokens.colors.textPrimary,
-                    )
+            if (hasPlayByPlayControl) {
+                item(key = "play-by-play-toggle") {
+                    val (period, _) = playPeriodGroups.first()
+                    val periodExpanded = period in expandedPlayPeriods
+                    Row(
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .onPreviewKeyEvent { keyEvent ->
+                                if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                when (keyEvent.navigationKey()) {
+                                    Key.DirectionUp -> scrollDetail(-1)
+                                    Key.DirectionDown -> scrollDetail(1)
+                                    else -> false
+                                }
+                            },
+                    ) {
+                        SportsSmallPill(
+                            label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
+                            selected = periodExpanded,
+                            focusRequester = playByPlayFocus,
+                            onClick = {
+                                expandedPlayPeriods = if (periodExpanded) {
+                                    expandedPlayPeriods - period
+                                } else {
+                                    expandedPlayPeriods + period
+                                }
+                            },
+                        )
+                    }
                 }
-                val plays = if (event.isLive) {
-                    loadedSummary.playByPlay.asReversed().take(MAX_LIVE_PLAY_BY_PLAY)
-                } else {
-                    loadedSummary.playByPlay
-                }
-                itemsIndexed(
-                    items = plays,
-                    key = { index, play -> "play-by-play:${play.id}:$index" },
-                ) { _, play ->
-                    SportsPlayByPlayRow(play)
+            }
+            if (loadedSummary.playByPlay.isNotEmpty() || moneyline != null) {
+                val plays = playByPlayEntries
+                item(key = "play-by-play-and-odds") {
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.spacedBy(tokens.spacing.sectionGap),
+                        verticalAlignment = Alignment.Top,
+                    ) {
+                        Column(
+                            modifier = Modifier.weight(0.62f),
+                            verticalArrangement = Arrangement.spacedBy(10.dp),
+                        ) {
+                            if (plays.isEmpty()) {
+                                Text(
+                                    text = "Play-by-play isn't available for this event.",
+                                    style = MaterialTheme.typography.bodySmall,
+                                    color = tokens.colors.textMuted,
+                                )
+                            } else {
+                                playPeriodGroups.forEachIndexed { index, (period, periodPlays) ->
+                                    val periodExpanded = period in expandedPlayPeriods
+                                    Column(
+                                        modifier = Modifier
+                                            .fillMaxWidth()
+                                            .clip(tokens.shapes.compactCard)
+                                            .background(tokens.colors.surfaceCard)
+                                            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.compactCard)
+                                            .padding(tokens.spacing.cardPaddingCompact),
+                                        verticalArrangement = Arrangement.spacedBy(4.dp),
+                                    ) {
+                                        Row(
+                                            modifier = Modifier
+                                                .fillMaxWidth()
+                                                .onPreviewKeyEvent { keyEvent ->
+                                                    if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                                                    when (keyEvent.navigationKey()) {
+                                                        Key.DirectionDown -> scrollDetail(1)
+                                                        Key.DirectionUp -> scrollDetail(-1)
+                                                        else -> false
+                                                    }
+                                                },
+                                        ) {
+                                            if (index == 0) {
+                                                Text(
+                                                    text = period,
+                                                    style = MaterialTheme.typography.labelLarge,
+                                                    fontWeight = FontWeight.SemiBold,
+                                                    color = tokens.colors.textSecondary,
+                                                )
+                                            } else {
+                                                SportsSmallPill(
+                                                    label = "$period • ${if (periodExpanded) "show less" else "latest 5"}",
+                                                    selected = periodExpanded,
+                                                    focusRequester = periodFocusRequesters[index],
+                                                    onClick = {
+                                                        expandedPlayPeriods = if (periodExpanded) {
+                                                            expandedPlayPeriods - period
+                                                        } else {
+                                                            expandedPlayPeriods + period
+                                                        }
+                                                    },
+                                                )
+                                            }
+                                        }
+                                        val visiblePeriodPlays = if (periodExpanded) periodPlays else if (event.isLive) {
+                                            periodPlays.take(5)
+                                        } else {
+                                            periodPlays.takeLast(5)
+                                        }
+                                        visiblePeriodPlays.forEach { play ->
+                                            SportsPlayByPlayRow(play, clockSettings.twelveHour)
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        SportsMoneylinePanel(
+                            event = event,
+                            odds = moneyline,
+                            modifier = Modifier.weight(0.38f),
+                        )
+                    }
                 }
             }
             if (loadedSummary.scoring.isNotEmpty() && loadedSummary.playByPlay.isEmpty()) {
@@ -544,6 +737,27 @@ internal fun SportsGameDetail(
                 }
                 item(key = "player-stats-body") {
                     SportsPlayerStats(loadedSummary.categories)
+                }
+            }
+        } else if (moneyline != null) {
+            item(key = "moneyline-fallback-header") {
+                Text(
+                    text = "Moneyline & odds",
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.SemiBold,
+                    color = tokens.colors.textPrimary,
+                )
+            }
+            item(key = "moneyline-fallback") {
+                SportsMoneylinePanel(event = event, odds = moneyline, modifier = Modifier.fillMaxWidth())
+            }
+            if (hideScores && event.state != GameState.PRE) {
+                item(key = "scores-hidden-note") {
+                    Text(
+                        text = "Box score and scoring plays are hidden while Hide scores is turned on.",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = tokens.colors.textMuted,
+                    )
                 }
             }
         } else if (hideScores && event.state != GameState.PRE) {
@@ -607,6 +821,12 @@ private fun SportsDetailActionRow(
     allOptions: List<SportsWatch.Option>,
     settings: SportsSettings,
     isFieldEvent: Boolean,
+    onFindSportsStreams: () -> Unit,
+    addonGroups: List<AddonStreamGroup>,
+    isAddonLoading: Boolean,
+    debridEnabled: Boolean,
+    scoreProfile: com.nuvio.app.features.streams.StreamScoreProfile,
+    onPlaySportsStream: (StreamItem) -> Unit,
     bandRequester: FocusRequester,
     primaryFocus: FocusRequester,
     onUp: () -> Boolean,
@@ -619,12 +839,48 @@ private fun SportsDetailActionRow(
     val fallbackFocus = remember { FocusRequester() }
     var fallbackAssigned = false
 
+    val playableGroups = remember(addonGroups, debridEnabled) {
+        addonGroups.mapNotNull { group ->
+            val streams = group.streams.filter { it.isSelectableForPlayback(debridEnabled) }
+            group.copy(streams = streams).takeIf { streams.isNotEmpty() }
+        }
+    }
+    val scoreContext = remember(event.id, event.displayTitle) {
+        StreamScoreContexts.forPlayback(isEpisode = false, contentType = "sports")
+    }
+    val playableStreams = remember(playableGroups) {
+        playableGroups.flatMap { group -> group.streams.map { stream -> group to stream } }
+    }
+    val bestAddonStream = remember(playableStreams, scoreProfile, scoreContext) {
+        val streams = playableStreams.map { it.second }
+        if (streams.isEmpty()) null
+        else if (scoreProfile.enabled && scoreProfile.appliesToFirstStream()) {
+            StreamScorer.rank(streams, scoreProfile, scoreContext).firstOrNull() ?: streams.first()
+        } else {
+            streams.firstOrNull { it.playableDirectUrl != null } ?: streams.first()
+        }
+    }
+    val hasAddonAction = event.state != GameState.POST
+    val addonBestFocus = remember { FocusRequester() }
+    val addonSourceFocusRequesters = remember(playableStreams.size) {
+        List(playableStreams.size + 1) { FocusRequester() }
+    }
+    var addonMenuFocusIndex by remember(event.id) { mutableIntStateOf(0) }
+    var addonMenuExpanded by remember(event.id) { mutableStateOf(false) }
+    LaunchedEffect(addonMenuExpanded, addonSourceFocusRequesters) {
+        if (addonMenuExpanded) {
+            delay(60)
+            addonMenuFocusIndex = 0
+            addonSourceFocusRequesters.first().requestFocusLogged()
+        }
+    }
+
     LazyRow(
         modifier = Modifier
             .fillMaxWidth()
             .sportsHorizontalBand(
                 bandRequester = bandRequester,
-                fallbackRequester = if (hasWatchPrimary) primaryFocus else fallbackFocus,
+                fallbackRequester = if (hasWatchPrimary || hasAddonAction) primaryFocus else fallbackFocus,
                 onUp = onUp,
                 onDown = onDown,
             ),
@@ -652,6 +908,105 @@ private fun SportsDetailActionRow(
                     focusRequester = primaryFocus,
                     onClick = { SportsWatch.playFromStart(event, replayOption, allOptions) },
                 )
+            }
+        }
+
+        if (event.state != GameState.POST) {
+            val providerName = bestAddonStream?.addonName?.ifBlank { "add-on" }
+            val sourceLoading = isAddonLoading
+            item(key = "act:best-addon") {
+                SportsSmallPill(
+                    label = when {
+                        bestAddonStream != null -> "▶ Best add-on · $providerName"
+                        sourceLoading -> "◌ Searching add-ons…"
+                        else -> "▶ Search add-ons…"
+                    },
+                    selected = false,
+                    focusRequester = if (hasWatchPrimary) addonBestFocus else primaryFocus,
+                    onClick = {
+                        if (bestAddonStream != null) onPlaySportsStream(bestAddonStream)
+                        else onFindSportsStreams()
+                    },
+                )
+            }
+            item(key = "act:addon-menu") {
+                Box {
+                    SportsSmallPill(
+                        label = "▾ Sources (${playableStreams.size})",
+                        selected = addonMenuExpanded,
+                        onClick = { addonMenuExpanded = true },
+                    )
+                    DropdownMenu(
+                        expanded = addonMenuExpanded,
+                        onDismissRequest = { addonMenuExpanded = false },
+                        modifier = Modifier.onPreviewKeyEvent { keyEvent ->
+                            if (keyEvent.type != KeyEventType.KeyDown) return@onPreviewKeyEvent false
+                            val nextIndex = when (keyEvent.navigationKey()) {
+                                Key.DirectionDown -> (addonMenuFocusIndex + 1).coerceAtMost(playableStreams.size)
+                                Key.DirectionUp -> (addonMenuFocusIndex - 1).coerceAtLeast(0)
+                                else -> return@onPreviewKeyEvent false
+                            }
+                            if (nextIndex != addonMenuFocusIndex) {
+                                addonMenuFocusIndex = nextIndex
+                                addonSourceFocusRequesters.getOrNull(nextIndex)?.requestFocusLogged()
+                            }
+                            true
+                        },
+                    ) {
+                        KeyRouteLayer("sports add-on sources")
+                        playableStreams.forEachIndexed { index, (group, stream) ->
+                            val streamName = stream.title?.takeIf(String::isNotBlank)
+                                ?: stream.name?.takeIf(String::isNotBlank)
+                                ?: stream.description?.takeIf(String::isNotBlank)
+                                ?: "Sports stream ${index + 1}"
+                            val label = "${group.addonName}: $streamName"
+                            DropdownMenuItem(
+                                modifier = Modifier.focusRequester(addonSourceFocusRequesters[index]),
+                                text = {
+                                    Text(
+                                        text = label,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis,
+                                    )
+                                },
+                                leadingIcon = stream.addonLogo?.takeIf(String::isNotBlank)?.let { logo ->
+                                    {
+                                        NuvioAsyncImage(
+                                            model = logo,
+                                            contentDescription = "${group.addonName} logo",
+                                            modifier = Modifier.size(24.dp).clip(RoundedCornerShape(5.dp)),
+                                            contentScale = ContentScale.Fit,
+                                        )
+                                    }
+                                },
+                                onClick = {
+                                    addonMenuExpanded = false
+                                    onPlaySportsStream(stream)
+                                },
+                            )
+                        }
+                        if (playableStreams.isEmpty()) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        text = if (sourceLoading) "Searching enabled add-ons…" else "No playable streams yet",
+                                        maxLines = 2,
+                                    )
+                                },
+                                enabled = false,
+                                onClick = {},
+                            )
+                        }
+                        DropdownMenuItem(
+                            modifier = Modifier.focusRequester(addonSourceFocusRequesters.last()),
+                            text = { Text("Find streams in all add-ons") },
+                            onClick = {
+                                addonMenuExpanded = false
+                                onFindSportsStreams()
+                            },
+                        )
+                    }
+                }
             }
         }
 
@@ -1299,9 +1654,56 @@ private fun SportsTeamStats(stats: List<TeamStatPair>, event: SportsEvent) {
 private const val MAX_LIVE_PLAY_BY_PLAY = 30
 
 @Composable
-private fun SportsPlayByPlayRow(play: PlayByPlayEntry) {
+private fun SportsMoneylinePanel(
+    event: SportsEvent,
+    odds: MoneylineOdds?,
+    modifier: Modifier = Modifier,
+) {
     val tokens = MaterialTheme.nuvio
-    val meta = listOfNotNull(play.period, play.clock?.takeIf { it.isNotBlank() }).joinToString(" · ")
+    Column(
+        modifier = modifier
+            .clip(tokens.shapes.card)
+            .background(tokens.colors.surfaceCard)
+            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
+            .padding(tokens.spacing.cardPaddingCompact),
+        verticalArrangement = Arrangement.spacedBy(8.dp),
+    ) {
+        Text(
+            text = "MONEYLINE & ODDS",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textSecondary,
+        )
+        odds?.provider?.takeIf { it.isNotBlank() }?.let { provider ->
+            Text(provider, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
+        }
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
+            Column(horizontalAlignment = Alignment.Start) {
+                Text(event.away.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
+                Text(odds?.away ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary)
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(event.home.team.abbreviation, style = MaterialTheme.typography.labelSmall, color = tokens.colors.textMuted)
+                Text(odds?.home ?: "—", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold, color = tokens.colors.textPrimary)
+            }
+        }
+        odds?.spread?.let { value ->
+            Text("Spread  $value", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textSecondary)
+        }
+        odds?.overUnder?.let { value ->
+            Text("Total  $value", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textSecondary)
+        }
+        if (odds == null) {
+            Text("Odds aren't available for this event.", style = MaterialTheme.typography.bodySmall, color = tokens.colors.textMuted)
+        }
+    }
+}
+
+@Composable
+private fun SportsPlayByPlayRow(play: PlayByPlayEntry, twelveHour: Boolean) {
+    val tokens = MaterialTheme.nuvio
+    val localTime = play.wallclockMs?.let { formatSportsPlayTime(it, twelveHour) }
+    val meta = listOfNotNull(localTime, play.clock?.takeIf { it.isNotBlank() }).joinToString(" · ")
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1315,7 +1717,7 @@ private fun SportsPlayByPlayRow(play: PlayByPlayEntry) {
             text = meta.ifBlank { "—" },
             style = MaterialTheme.typography.labelSmall,
             color = tokens.colors.textMuted,
-            modifier = Modifier.width(94.dp),
+            modifier = Modifier.width(142.dp),
             maxLines = 1,
         )
         Column(Modifier.weight(1f)) {

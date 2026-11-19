@@ -140,6 +140,34 @@ class EspnBoxScoreTest {
     }
 
     @Test
+    fun `summary parses odds from pickcenter when scoreboard has none`() = runBlocking {
+        val body = """
+            {"pickcenter":[{"provider":{"name":"DraftKings"},"details":"CLE -4.5","overUnder":239.5,
+              "awayTeamOdds":{"moneyLine":155},"homeTeamOdds":{"moneyLine":-185}}]}
+        """.trimIndent()
+
+        val odds = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").moneyline
+
+        assertEquals("DraftKings", odds?.provider)
+        assertEquals("155", odds?.away)
+        assertEquals("-185", odds?.home)
+        assertEquals("CLE -4.5", odds?.spread)
+        assertEquals("239.5", odds?.overUnder)
+    }
+
+    @Test
+    fun `play wallclock is retained as an epoch timestamp`() = runBlocking {
+        val body = """
+            {"plays":[{"id":"p1","text":"Jump Ball","period":{"displayValue":"1st Quarter"},
+              "clock":{"displayValue":"12:00"},"wallclock":"2026-11-19T00:10:26Z"}]}
+        """.trimIndent()
+
+        val play = feed(body).summary(SportsCatalog.league("basketball/nba")!!, "1").playByPlay.single()
+
+        assertEquals(epochMillis(2026, 11, 19, 0, 10, 26), play.wallclockMs)
+    }
+
+    @Test
     fun `NFL drive plays flatten in chronological order and include the current drive`() = runBlocking {
         val body = """
             {"drives":{"previous":[{"plays":[

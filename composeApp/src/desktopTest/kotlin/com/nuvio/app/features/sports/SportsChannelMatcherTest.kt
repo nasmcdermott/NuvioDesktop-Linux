@@ -141,6 +141,20 @@ class SportsChannelMatcherTest {
     }
 
     @Test
+    fun `CBS SN is an alias for CBS Sports Network`() {
+        val game = bearsAtLions(network = "CBS SN")
+        val channels = listOf(
+            channel("CBS Sports Network HD", num = 1),
+            channel("CBS News HD", num = 2),
+            channel("CBS SN", num = 3),
+        )
+
+        val matches = SportsChannelMatcher.match(game, nfl, channels, guide = null)
+
+        assertEquals(listOf("key1", "key3"), matches.map { it.channel.key })
+    }
+
+    @Test
     fun `network aliases match and false sibling networks are excluded`() {
         val fs1Game = bearsAtLions(network = "FS1", broadcasts = listOf("FS1", "TSN"))
         val channels = listOf(

@@ -349,6 +349,54 @@ class EspnSportsFeedParsingTest {
     }
 
     @Test
+    fun `scoreboard parses moneyline and totals when provider includes odds`() = runBlocking {
+        val body = """
+            {"events":[{"id":"odds-1","date":"2026-11-20T20:45:00Z","competitions":[{
+              "odds":[{"provider":{"name":"Test Book"},"details":"BOS -2.5","overUnder":"217.5",
+                "awayTeamOdds":{"moneyLine":"+120"},"homeTeamOdds":{"moneyLine":"-140"}}],
+              "competitors":[
+                {"homeAway":"away","team":{"id":"1","displayName":"Away","shortDisplayName":"AWY","abbreviation":"AWY"}},
+                {"homeAway":"home","team":{"id":"2","displayName":"Home","shortDisplayName":"HME","abbreviation":"HME"}}
+              ]}]}]}
+        """.trimIndent()
+
+        val odds = feed(body).scoreboard(nfl, "20261120", "20261120").single().moneyline
+
+        assertEquals("Test Book", odds?.provider)
+        assertEquals("+120", odds?.away)
+        assertEquals("-140", odds?.home)
+        assertEquals("BOS -2.5", odds?.spread)
+        assertEquals("217.5", odds?.overUnder)
+    }
+
+    @Test
+    fun `scoreboard reads nested sportsbook moneyline and numeric spread values`() = runBlocking {
+        val nba = SportsCatalog.league("basketball/nba")!!
+        val body = """
+            {"events":[{"id":"401910013","shortName":"DET @ NO","date":"2026-11-19T01:00Z",
+              "competitions":[{"odds":[{"provider":{"displayName":"DraftKings"},
+                "awayTeamOdds":{"favorite":true},"homeTeamOdds":{"underdog":true},
+                "moneyline":{"home":{"close":{"odds":"+137"},"open":{"odds":"+247"}},
+                  "away":{"close":{"odds":"-163"},"open":{"odds":"-305"}}},
+                "pointSpread":{"away":{"close":{"line":"-3.5","odds":"-114"}},
+                  "home":{"close":{"line":"+3.5","odds":"-106"}}},
+                "total":{"over":{"close":{"line":"o224.5","odds":"-110"}}}}],
+                "competitors":[
+                  {"homeAway":"away","team":{"id":"8","displayName":"Detroit Pistons","shortDisplayName":"Pistons","abbreviation":"DET"}},
+                  {"homeAway":"home","team":{"id":"3","displayName":"New Orleans Pelicans","shortDisplayName":"Pelicans","abbreviation":"NO"}}
+                ]}]}]}
+        """.trimIndent()
+
+        val odds = feed(body).scoreboard(nba, "20261118", "20261120").single().moneyline
+
+        assertEquals("DraftKings", odds?.provider)
+        assertEquals("-163", odds?.away)
+        assertEquals("+137", odds?.home)
+        assertEquals("-3.5", odds?.spread)
+        assertEquals("224.5", odds?.overUnder)
+    }
+
+    @Test
     fun `scoreboard collects all broadcasts, linescores, and 1v1 athlete fights`() = runBlocking {
         val ufc = SportsCatalog.league("mma/ufc")!!
         val body = """

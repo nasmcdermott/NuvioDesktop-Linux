@@ -222,6 +222,7 @@ private fun HeroTeamName(
 @Composable
 private fun HeroCrest(team: Team) {
     val tokens = MaterialTheme.nuvio
+    val logo = team.logo?.takeIf { it.isNotBlank() }
     Box(
         modifier = Modifier.size(52.dp),
         contentAlignment = Alignment.Center,
@@ -234,17 +235,19 @@ private fun HeroCrest(team: Team) {
                 .background(team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = team.abbreviation.take(4),
-                style = MaterialTheme.typography.titleMedium,
-                fontWeight = FontWeight.Bold,
-                color = Color.White,
-                maxLines = 1,
-            )
+            if (logo == null) {
+                Text(
+                    text = team.abbreviation.take(4),
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
         }
-        team.logo?.takeIf { it.isNotBlank() }?.let { logo ->
+        logo?.let {
             NuvioAsyncImage(
-                model = logo,
+                model = it,
                 contentDescription = null,
                 modifier = Modifier.size(52.dp),
                 contentScale = ContentScale.Fit,

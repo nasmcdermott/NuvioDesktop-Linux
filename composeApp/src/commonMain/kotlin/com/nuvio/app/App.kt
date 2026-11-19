@@ -1552,7 +1552,7 @@ private fun MainAppContent(
         LaunchedEffect(currentBackStackEntry?.id, streamPickerRequest?.launchId) {
             val request = streamPickerRequest ?: return@LaunchedEffect
             val entry = currentBackStackEntry ?: return@LaunchedEffect
-            if (entry.id == request.ownerEntryId) return@LaunchedEffect
+            if (entry.id == request.ownerEntryId || (request.ownerEntryId == null && entry.destination.hasRoute<TabsRoute>())) return@LaunchedEffect
             if (entry.destination.hasRoute<PlayerRoute>()) return@LaunchedEffect
             StreamPickerController.close()
         }
@@ -4621,6 +4621,7 @@ private fun MainAppContent(
                                                 .padding(innerPadding)
                                                 .padding(start = if (showDesktopSidebar) DesktopSidebarCollapsedWidth else 0.dp),
                                             selectedTab = selectedTab,
+                                            streamPickerOwnerEntryId = currentBackStackEntry?.id,
                                             // Passed rather than read from RootNavFocus: see the
                                             // hand-off above. Requires the desktop sidebar layout, so
                                             // the floating bar and bottom tabs keep their arrows.
@@ -6462,7 +6463,12 @@ private fun MainAppContent(
                     }
                 }
 
-                val streamsOnBack: () -> Unit = { StreamPickerController.close() }
+                val streamsOnBack: () -> Unit = {
+                    // The Sports detail mirrors its search results inline; retain them when its
+                    // picker closes so the selected game's source list remains populated.
+                    val isSportsPicker = launch.type.equals("sports", ignoreCase = true)
+                    StreamPickerController.close(clearStreams = !isSportsPicker, notifyClosed = isSportsPicker)
+                }
                 if (streamPickerHidden) return@session
                 // Watch party: mark the party's source and offer the host's shared stream when the
                 // party is watching what this picker is for.
@@ -6518,6 +6524,8 @@ private fun MainAppContent(
                             resumePositionMs = launch.resumePositionMs,
                             resumeProgressFraction = launch.resumeProgressFraction,
                             manualSelection = launch.manualSelection,
+                            initialFilterAddonId = launch.initialFilterAddonId,
+                            initialStream = request.initialStream,
                             preferLocalStreams = launch.preferLocalStreams,
                             startFromBeginning = launch.startFromBeginning,
                             onStreamSelected = { stream, resolvedResumePositionMs, resolvedResumeProgressFraction ->
@@ -6905,6 +6913,7 @@ private inline fun <reified T : Any> NavBackStackEntry.routeOrNull(): T? =
 @Composable
 private fun AppTabHost(
     selectedTab: AppScreenTab,
+    streamPickerOwnerEntryId: String? = null,
     /** Whether the desktop sidebar is on screen beside this host; the keys fall back to it. */
     sidebarDrawn: Boolean = false,
     modifier: Modifier = Modifier,
@@ -7119,6 +7128,42 @@ private fun AppTabHost(
                         modifier = Modifier.fillMaxSize(),
                         topChromePadding = topChromePadding,
                         onOpenSettings = onSportsSettingsClick,
+                        onFindSportsStreams = { event, league, addonId ->
+                            val sportsId = com.nuvio.app.features.sports.sportsEventStreamId(league, event)
+                            StreamPickerController.open(
+                                launch = StreamLaunch(
+                                    type = "sports",
+                                    videoId = sportsId,
+                                    parentMetaId = sportsId,
+                                    parentMetaType = "sports",
+                                    title = event.displayTitle,
+                                    logo = event.home.team.logo ?: event.away.team.logo,
+                                    poster = event.home.team.logo ?: event.away.team.logo,
+                                    manualSelection = true,
+                                    initialFilterAddonId = addonId,
+                                    disableProgressTracking = true,
+                                ),
+                                ownerEntryId = streamPickerOwnerEntryId,
+                            )
+                        },
+                        onPlaySportsStream = { event, league, stream ->
+                            val sportsId = com.nuvio.app.features.sports.sportsEventStreamId(league, event)
+                            StreamPickerController.open(
+                                launch = StreamLaunch(
+                                    type = "sports",
+                                    videoId = sportsId,
+                                    parentMetaId = sportsId,
+                                    parentMetaType = "sports",
+                                    title = event.displayTitle,
+                                    logo = event.home.team.logo ?: event.away.team.logo,
+                                    poster = event.home.team.logo ?: event.away.team.logo,
+                                    manualSelection = true,
+                                    disableProgressTracking = true,
+                                ),
+                                ownerEntryId = streamPickerOwnerEntryId,
+                                initialStream = stream,
+                            )
+                        },
                     )
                 }
             } else {

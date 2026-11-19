@@ -80,19 +80,45 @@ internal class LinuxMprisPlayer(
             "PlayPause" -> controller.dispatchKeyboardShortcut("keyboardToggle")
             "Next" -> controller.dispatchKeyboardShortcut("mediaNext")
             "Previous" -> controller.dispatchKeyboardShortcut("mediaPrevious")
-            "Seek", "SetPosition" -> {
-                // Resolve relative seek against live mpv position on the UI thread, not the bus snapshot.
-                val target = if (method == "Seek") controller.snapshot().positionMs * 1000.0 + value else value
-                if (target > state.durationUs) {
-                    if (method == "Seek" && state.canNext) controller.dispatchKeyboardShortcut("mediaNext")
-                } else if (method == "Seek" || target >= 0) {
-                    controller.dispatchKeyboardShortcut("scrubFinish", target.coerceAtLeast(0.0) / 1000.0)
-                    seekSerial++
+            "Seek" -> {
+                // MPRIS offsets are relative to the current position. Preserve that operation
+                // through the controller (including IPTV's cached live-window handling), while
+                // retaining the existing end-of-file/next-item behavior.
+                linuxMprisRelativeSeekMs(value)?.let { offsetMs ->
+                    val positionMs = controller.snapshot().positionMs.coerceAtLeast(0L)
+                    val targetMs = linuxMprisSeekTargetMs(positionMs, value)
+                    if (targetMs != null && targetMs > state.durationUs / 1_000L) {
+                        if (state.canNext) controller.dispatchKeyboardShortcut("mediaNext")
+                    } else if (targetMs != null) {
+                        controller.seekBy(targetMs - positionMs)
+                        seekSerial++
+                    }
                 }
+            }
+            "SetPosition" -> if (value >= 0 && value <= state.durationUs) {
+                controller.dispatchKeyboardShortcut("scrubFinish", value / 1000.0)
+                seekSerial++
             }
             "Volume" -> controller.setVolume(value.toFloat().coerceIn(0f, controller.maxVolumeFraction))
             "Rate" -> controller.dispatchKeyboardShortcut("setPlaybackSpeed", value)
         }
     }
     override fun close() = client.close()
+}
+
+/** MPRIS relative Seek uses microseconds; the player controller's relative operation uses millis. */
+internal fun linuxMprisRelativeSeekMs(offsetUs: Double): Long? =
+    offsetUs.takeIf { it.isFinite() }?.div(1_000.0)?.toLong()
+
+internal fun linuxMprisSeekTargetMs(positionMs: Long, offsetUs: Double): Long? {
+    val offsetMs = linuxMprisRelativeSeekMs(offsetUs) ?: return null
+    val position = positionMs.coerceAtLeast(0L)
+    val target = if (offsetMs > 0 && position > Long.MAX_VALUE - offsetMs) {
+        Long.MAX_VALUE
+    } else if (offsetMs < 0 && position < Long.MIN_VALUE - offsetMs) {
+        Long.MIN_VALUE
+    } else {
+        position + offsetMs
+    }
+    return target.coerceAtLeast(0L)
 }

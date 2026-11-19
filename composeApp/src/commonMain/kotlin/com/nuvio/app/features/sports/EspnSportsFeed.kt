@@ -79,6 +79,7 @@ internal class EspnSportsFeed(
                 ?.get("venue")?.jsonObject?.get("fullName")?.stringOrNull(),
             teamStats = teamStats(boxscore),
             categories = statCategories(boxscore),
+            moneyline = moneylineOf(root),
         )
     }
 
@@ -331,8 +332,63 @@ internal class EspnSportsFeed(
             broadcasts = broadcasts,
             title = if (isFieldEvent || league.sport == Sport.FIGHTING) eventName else null,
             progress = progressOf(status),
+            moneyline = moneylineOf(competition),
         )
     }
+
+    private fun moneylineOf(source: JsonObject): MoneylineOdds? {
+        val candidates = source["odds"]?.asArray().orEmpty()
+            .mapNotNull { it.jsonObjectOrNull() } +
+            source["pickcenter"]?.asArray().orEmpty().mapNotNull { it.jsonObjectOrNull() }
+        val odds = candidates.firstOrNull { it.hasMoneylineQuote() } ?: return null
+        val away = odds["awayTeamOdds"]?.jsonObjectOrNull()
+        val home = odds["homeTeamOdds"]?.jsonObjectOrNull()
+        val market = odds["moneyline"]?.jsonObjectOrNull()
+        val awayLine = away?.get("moneyLine")?.stringOrNull()
+            ?: away?.get("moneyline")?.stringOrNull()
+            ?: odds["awayMoneyLine"]?.stringOrNull()
+            ?: market?.get("away")?.closingOdds()
+        val homeLine = home?.get("moneyLine")?.stringOrNull()
+            ?: home?.get("moneyline")?.stringOrNull()
+            ?: odds["homeMoneyLine"]?.stringOrNull()
+            ?: market?.get("home")?.closingOdds()
+        val spread = odds["details"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+            ?: odds["spread"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+            ?: odds["pointSpread"]?.jsonObjectOrNull()?.let { markets ->
+                markets["away"]?.closingLine()?.takeIf { it.isNotBlank() }
+                    ?: markets["home"]?.closingLine()
+            }
+        val overUnder = odds["overUnder"]?.stringOrNull()?.takeIf { it.isNotBlank() }
+            ?: odds["total"]?.jsonObjectOrNull()?.get("over")?.closingLine()?.removePrefix("o")
+        val provider = odds["provider"]?.jsonObjectOrNull()?.let { providerObj ->
+            providerObj["displayName"]?.stringOrNull() ?: providerObj["name"]?.stringOrNull()
+        }
+        if (awayLine == null && homeLine == null && spread == null && overUnder == null) return null
+        return MoneylineOdds(
+            provider = provider,
+            away = awayLine,
+            home = homeLine,
+            spread = spread,
+            overUnder = overUnder,
+        )
+    }
+
+    private fun JsonObject.hasMoneylineQuote(): Boolean {
+        val market = this["moneyline"]?.jsonObjectOrNull()
+        return market?.get("away")?.closingOdds() != null || market?.get("home")?.closingOdds() != null ||
+            this["awayTeamOdds"]?.jsonObjectOrNull()?.let { it["moneyLine"]?.stringOrNull() ?: it["moneyline"]?.stringOrNull() } != null ||
+            this["homeTeamOdds"]?.jsonObjectOrNull()?.let { it["moneyLine"]?.stringOrNull() ?: it["moneyline"]?.stringOrNull() } != null ||
+            this["awayMoneyLine"]?.stringOrNull() != null || this["homeMoneyLine"]?.stringOrNull() != null
+    }
+
+    private fun JsonElement?.closingOdds(): String? = this?.jsonObjectOrNull()
+        ?.get("close")?.jsonObjectOrNull()?.get("odds")?.stringOrNull()
+        ?: this?.jsonObjectOrNull()?.get("open")?.jsonObjectOrNull()?.get("odds")?.stringOrNull()
+        ?: this?.stringOrNull()
+
+    private fun JsonElement?.closingLine(): String? = this?.jsonObjectOrNull()
+        ?.get("close")?.jsonObjectOrNull()?.get("line")?.stringOrNull()
+        ?: this?.stringOrNull()
 
     private fun athleteAsTeam(athleteObj: JsonObject, league: League): Team {
         val fullName = athleteObj["displayName"]?.stringOrNull()
@@ -445,6 +501,7 @@ internal class EspnSportsFeed(
                 awayScore = obj["awayScore"]?.stringOrNull(),
                 homeScore = obj["homeScore"]?.stringOrNull(),
                 scoring = obj["scoringPlay"]?.jsonPrimitive?.booleanOrNull == true,
+                wallclockMs = obj["wallclock"]?.stringOrNull()?.let(::parseEpoch)?.takeIf { it > 0L },
             )
         }.distinctBy { it.id }
     }
@@ -572,20 +629,25 @@ internal class EspnSportsFeed(
 
     private fun parseEpoch(raw: String?): Long {
         val text = raw?.trim() ?: return 0L
-        // The provider sends ISO-8601 UTC ("2026-11-17T20:45:00Z"). Parsed by hand rather than with
-        // java.time so the model layer stays free of platform types.
-        val match = IsoUtc.matchEntire(text) ?: return 0L
-        val (year, month, day, hour, minute, second) = match.destructured
-        // The seconds group is optional: "2026-11-18T00:30Z" has none, and destructuring gives ""
-        // for an unmatched optional group. toIntOrNull("") would have thrown; 0 is the right answer.
-        return epochMillis(
-            year.toIntOrNull() ?: return 0L,
-            month.toIntOrNull() ?: return 0L,
-            day.toIntOrNull() ?: return 0L,
-            hour.toIntOrNull() ?: return 0L,
-            minute.toIntOrNull() ?: return 0L,
-            second.toIntOrNull() ?: 0,
-        )
+        // Parsed by hand rather than with java.time so the sports model remains platform-neutral.
+        val match = IsoTimestamp.matchEntire(text) ?: return 0L
+        val year = match.groupValues[1].toIntOrNull() ?: return 0L
+        val month = match.groupValues[2].toIntOrNull() ?: return 0L
+        val day = match.groupValues[3].toIntOrNull() ?: return 0L
+        val hour = match.groupValues[4].toIntOrNull() ?: return 0L
+        val minute = match.groupValues[5].toIntOrNull() ?: return 0L
+        val second = match.groupValues[6].toIntOrNull() ?: 0
+        val millis = match.groupValues[7].take(3).padEnd(3, '0').toIntOrNull() ?: 0
+        val zone = match.groupValues[8]
+        val offsetMinutes = if (zone.isNotEmpty() && zone != "Z") {
+            val sign = if (zone[0] == '-') -1 else 1
+            val offsetHour = zone.substring(1, 3).toIntOrNull() ?: return 0L
+            val offsetMinute = zone.substring(4, 6).toIntOrNull() ?: return 0L
+            sign * (offsetHour * 60 + offsetMinute)
+        } else {
+            0
+        }
+        return epochMillis(year, month, day, hour, minute, second) + millis - offsetMinutes * 60_000L
     }
 
     // endregion
@@ -598,8 +660,8 @@ internal class EspnSportsFeed(
         val META_STAT_NAMES = setOf("rank", "rankChange", "clincher", "playoffSeed")
         val FIELD_EVENT_SPORTS = setOf(Sport.RACING, Sport.GOLF)
 
-        val IsoUtc = Regex(
-            """(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):?(\d{2})?Z?""",
+        val IsoTimestamp = Regex(
+            """(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2})(?::(\d{2})(?:\.(\d+))?)?(Z|[+-]\d{2}:\d{2})?""",
         )
     }
 }

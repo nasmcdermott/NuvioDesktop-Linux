@@ -11,6 +11,8 @@ data class StreamPickerRequest(
     val launch: StreamLaunch,
     /** Back-stack entry that opened the picker; leaving it for anything but the player closes it. */
     val ownerEntryId: String?,
+    /** A source selected outside the picker, such as Sports' inline source menu. */
+    val initialStream: StreamItem? = null,
 )
 
 /**
@@ -50,15 +52,16 @@ object StreamPickerController {
 
     val isOpen: Boolean get() = _request.value != null
 
-    fun open(launch: StreamLaunch, ownerEntryId: String?) {
+    fun open(launch: StreamLaunch, ownerEntryId: String?, initialStream: StreamItem? = null) {
         val current = _request.value
         // Held Enter on Play repeats the same request every key-repeat; reopening would restart the
-        // whole search each time.
-        if (current != null && current.launch == launch && current.ownerEntryId == ownerEntryId) return
+        // whole search each time. A different explicitly selected source is a different request.
+        if (current != null && current.launch == launch && current.ownerEntryId == ownerEntryId && current.initialStream == initialStream) return
         _request.value = StreamPickerRequest(
             launchId = nextLaunchId++,
             launch = launch,
             ownerEntryId = ownerEntryId,
+            initialStream = initialStream,
         )
     }
 
@@ -66,14 +69,13 @@ object StreamPickerController {
      * @param clearStreams false when playback is starting from this search: the player still reads
      * the loaded source list (its sources panel), so only a user closing the picker drops it.
      */
-    fun close(clearStreams: Boolean = true) {
+    fun close(clearStreams: Boolean = true, notifyClosed: Boolean = clearStreams) {
         if (_request.value == null) return
         _request.value = null
-        if (clearStreams) {
-            StreamsRepository.clear()
-            // Only a dismissal hands focus back; closing for playback leaves it to the player.
-            _closedCount.value += 1
-        }
+        if (clearStreams) StreamsRepository.clear()
+        // A retained Sports search still needs to hand keyboard/controller focus back to details.
+        // Playback closes keep the default false and leave focus management to the player route.
+        if (notifyClosed) _closedCount.value += 1
     }
 
     fun reportDock(ownerKey: String, bounds: Rect) {

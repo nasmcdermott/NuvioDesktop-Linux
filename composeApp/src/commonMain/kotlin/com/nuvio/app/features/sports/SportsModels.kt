@@ -73,6 +73,10 @@ data class Team(
     val color: Long? = null,
 )
 
+/** Stable stream identifier passed to add-ons that explicitly support the `sports` type. */
+internal fun sportsEventStreamId(league: League, event: SportsEvent): String =
+    "espn:${league.path}:${event.id}"
+
 /** Where a game is in its life. What the card shows and how often it is refreshed both key off this. */
 @Serializable
 enum class GameState { PRE, LIVE, POST }
@@ -123,6 +127,8 @@ data class SportsEvent(
     val title: String? = null,
     /** 0f..1f through the game, when it can be known; null for untimed sports. */
     val progress: Float? = null,
+    /** Moneyline quote from the scoreboard feed, when this league/provider supplies one. */
+    val moneyline: MoneylineOdds? = null,
 ) {
     val isLive: Boolean get() = state == GameState.LIVE
 
@@ -186,6 +192,16 @@ data class ScoringPlay(
     val homeScore: String? = null,
 )
 
+/** One event's moneyline quote from a sportsbook listing. */
+@Serializable
+data class MoneylineOdds(
+    val provider: String? = null,
+    val away: String? = null,
+    val home: String? = null,
+    val spread: String? = null,
+    val overUnder: String? = null,
+)
+
 /** One chronological play-by-play entry from a game's provider summary. */
 @Serializable
 data class PlayByPlayEntry(
@@ -196,6 +212,8 @@ data class PlayByPlayEntry(
     val awayScore: String? = null,
     val homeScore: String? = null,
     val scoring: Boolean = false,
+    /** ESPN's per-play wall-clock instant, independent of the game clock. */
+    val wallclockMs: Long? = null,
 )
 
 /** One numbered statistic of a team ("Total Yards", "3rd down efficiency"): label plus display text. */
@@ -240,6 +258,8 @@ data class GameSummary(
     val teamStats: List<TeamStatPair> = emptyList(),
     /** Per-player categories (passing, rushing, receiving…), in the provider's order. */
     val categories: List<StatCategory> = emptyList(),
+    /** Moneyline/line data from the summary's pickcenter when the scoreboard has none. */
+    val moneyline: MoneylineOdds? = null,
 )
 
 /**

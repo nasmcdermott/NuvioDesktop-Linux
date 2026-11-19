@@ -230,6 +230,9 @@ fun StreamsScreen(
     resumePositionMs: Long? = null,
     resumeProgressFraction: Float? = null,
     manualSelection: Boolean = false,
+    initialFilterAddonId: String? = null,
+    /** A source selected from Sports' inline provider menu; use the normal playback callback. */
+    initialStream: StreamItem? = null,
     preferLocalStreams: Boolean = false,
     startFromBeginning: Boolean = false,
     onStreamSelected: (stream: StreamItem, resumePositionMs: Long?, resumeProgressFraction: Float?) -> Unit = { _, _, _ -> },
@@ -266,6 +269,9 @@ fun StreamsScreen(
         PlaybackStartTrace.markPendingOrActive("sourceSelected")
         onStreamSelected(stream, position, fraction)
     }
+    LaunchedEffect(initialStream) {
+        initialStream?.let { tracedStreamSelection(it, null, null) }
+    }
     val uiState by StreamsRepository.uiState.collectAsStateWithLifecycle()
     val playerSettings by PlayerSettingsRepository.uiState.collectAsStateWithLifecycle()
     val debridSettings by DebridSettingsRepository.uiState.collectAsStateWithLifecycle()
@@ -296,6 +302,7 @@ fun StreamsScreen(
     // An inspected season pack waiting on the user to confirm which files to download.
     var packSelectionPrompt by remember(videoId) { mutableStateOf<PackSelectionPrompt?>(null) }
     var preferredFilterApplied by remember(videoId) { mutableStateOf(false) }
+    var initialFilterApplied by remember(videoId) { mutableStateOf(false) }
     var autoPlayOverlayLogoLoadError by remember(logo) { mutableStateOf(false) }
     val keyboardFocusRequester = remember { FocusRequester() }
     val providerListState = rememberLazyListState()
@@ -435,8 +442,17 @@ fun StreamsScreen(
         )
     }
 
-    LaunchedEffect(uiState.groups, storedProgress?.providerAddonId, preferredFilterApplied) {
-        if (preferredFilterApplied) return@LaunchedEffect
+    LaunchedEffect(uiState.groups, initialFilterAddonId, initialFilterApplied) {
+        val filterId = initialFilterAddonId ?: return@LaunchedEffect
+        if (initialFilterApplied || uiState.groups.none { it.addonId == filterId && (it.isLoading || it.streams.isNotEmpty()) }) {
+            return@LaunchedEffect
+        }
+        StreamsRepository.selectFilter(filterId)
+        initialFilterApplied = true
+    }
+
+    LaunchedEffect(uiState.groups, storedProgress?.providerAddonId, preferredFilterApplied, initialFilterAddonId) {
+        if (preferredFilterApplied || initialFilterAddonId != null) return@LaunchedEffect
         val preferredAddonId = storedProgress?.providerAddonId ?: return@LaunchedEffect
         if (uiState.groups.any { it.addonId == preferredAddonId }) {
             StreamsRepository.selectFilter(preferredAddonId)

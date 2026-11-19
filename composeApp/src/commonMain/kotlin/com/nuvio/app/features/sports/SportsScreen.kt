@@ -59,6 +59,7 @@ import com.nuvio.app.core.ui.requestFocusLogged
 import com.nuvio.app.core.ui.smoothBorder
 import java.time.LocalDate
 import com.nuvio.app.features.iptv.IptvContentState
+import com.nuvio.app.features.streams.StreamItem
 import com.nuvio.app.features.iptv.IptvEpgRepository
 import com.nuvio.app.features.iptv.IptvRepository
 import kotlinx.coroutines.Dispatchers
@@ -83,6 +84,8 @@ internal fun SportsScreen(
     modifier: Modifier = Modifier,
     topChromePadding: androidx.compose.ui.unit.Dp? = null,
     onOpenSettings: () -> Unit = {},
+    onFindSportsStreams: (SportsEvent, League, String?) -> Unit = { _, _, _ -> },
+    onPlaySportsStream: (SportsEvent, League, StreamItem) -> Unit = { _, _, _ -> },
 ) {
     val tokens = MaterialTheme.nuvio
     val settings by SportsSettingsRepository.settings.collectAsState()
@@ -320,6 +323,8 @@ internal fun SportsScreen(
                     event = openGame.first,
                     league = gameLeague,
                     hideScores = settings.hideScores,
+                    onFindSportsStreams = { addonId -> onFindSportsStreams(openGame.first, gameLeague, addonId) },
+                    onPlaySportsStream = { stream -> onPlaySportsStream(openGame.first, gameLeague, stream) },
                     entryFocus = detailBandFocus,
                     onUpToHeader = { headerBandFocus.requestFocusLogged() },
                     onBack = { openGameId = null },
@@ -742,7 +747,9 @@ private fun SportsDayList(
     val shownResults = if (settings.onlyGamesOnMyChannels && channelsResolved) {
         filterGamesByChannelAvailability(sections.results, settings, matchedByEvent.keys)
     } else sections.results
-    val shownTeamSections = if (settings.onlyGamesOnMyChannels && channelsResolved) {
+    val shownTeamSections = if (day != SportsRepository.today()) {
+        emptyList()
+    } else if (settings.onlyGamesOnMyChannels && channelsResolved) {
         teamSections.map { section ->
             section.copy(games = filterGamesByChannelAvailability(section.games, settings, matchedByEvent.keys))
         }.filter { it.games.isNotEmpty() }
@@ -762,6 +769,11 @@ private fun SportsDayList(
             live = shownLive,
             upcoming = shownUpcoming,
             results = shownResults,
+            dayCategory = when {
+                day == SportsRepository.today() -> SportsDayCategory.TODAY
+                day < SportsRepository.today() -> SportsDayCategory.PAST
+                else -> SportsDayCategory.FUTURE
+            },
             leagues = leagues,
             settings = settings,
             teamMode = teamMode,
@@ -906,28 +918,44 @@ private fun buildGridSections(
     results: List<SportsEvent>,
     leagues: List<League>,
     settings: SportsSettings,
+    dayCategory: SportsDayCategory = SportsDayCategory.TODAY,
     teamMode: Boolean = false,
     teamSections: List<SportsTeamAhead> = emptyList(),
     liveCaption: String? = null,
 ): List<SportsSectionGridLayout.Companion.SectionInput<SportsEvent>> {
-    // My Sports: one Live & Upcoming section (live, then coming, then today's finals), then a
-    // games-ahead section per followed team — the reference page's row per team.
+    // My Sports retains its team-ahead rows, while the selected day itself uses the same
+    // Live / Upcoming / Past categories as All Events.
     if (teamMode) {
         return buildList {
-            val merged = live + upcoming + results
-            if (merged.isNotEmpty()) {
-                add(
-                    SportsSectionGridLayout.Companion.SectionInput(
-                        key = "mysports",
-                        title = "Live & Upcoming",
-                        items = merged,
-                        live = true,
-                        caption = liveCaption ?: "Everything you follow, soonest first",
-                        itemKey = { "${it.leagueId}:${it.id}" },
-                    ),
-                )
-            }
-            teamSections.forEach { teamSection ->
+            if (live.isNotEmpty()) add(
+                SportsSectionGridLayout.Companion.SectionInput(
+                    key = "mysports-live",
+                    title = "Live",
+                    items = live,
+                    live = true,
+                    caption = liveCaption ?: "Everything you follow, live now",
+                    itemKey = { "${it.leagueId}:${it.id}" },
+                ),
+            )
+            if (upcoming.isNotEmpty()) add(
+                SportsSectionGridLayout.Companion.SectionInput(
+                    key = "mysports-upcoming",
+                    title = if (dayCategory == SportsDayCategory.FUTURE) "Upcoming Games" else "Upcoming",
+                    items = upcoming,
+                    live = false,
+                    itemKey = { "${it.leagueId}:${it.id}" },
+                ),
+            )
+            if (results.isNotEmpty()) add(
+                SportsSectionGridLayout.Companion.SectionInput(
+                    key = "mysports-past",
+                    title = "Past Games",
+                    items = results,
+                    live = false,
+                    itemKey = { "${it.leagueId}:${it.id}" },
+                ),
+            )
+            (if (dayCategory == SportsDayCategory.TODAY) teamSections else emptyList()).forEach { teamSection ->
                 val league = leagues.firstOrNull { it.id == teamSection.leagueId }
                 val name = teamSection.team?.shortName?.takeIf { it.isNotBlank() }
                     ?: teamSection.team?.name
@@ -1010,8 +1038,9 @@ private fun buildGridSections(
                 ),
             )
         }
-        addAll(groupByLeagueOrdered(upcoming, stagePrefix = "upcoming", stageSuffix = "Coming up"))
-        addAll(groupByLeagueOrdered(results, stagePrefix = "results", stageSuffix = "Results"))
+        val upcomingTitle = if (dayCategory == SportsDayCategory.FUTURE) "Upcoming Games" else "Upcoming"
+        addAll(groupByLeagueOrdered(upcoming, stagePrefix = "upcoming", stageSuffix = upcomingTitle))
+        addAll(groupByLeagueOrdered(results, stagePrefix = "results", stageSuffix = "Past Games"))
     }
 }
 
@@ -1153,7 +1182,7 @@ private fun collectSections(
         // game was on reads as finished here and everywhere downstream (cards, badges, detail).
         .map { it.withResolvedState() }
         .filter { !mySportsOnly || SportsFollows.isInMySports(settings, it) }
-    val split = splitDay(allGames)
+    val split = splitDayForDate(allGames, day, SportsRepository.today())
     fun followedFirst(list: List<SportsEvent>): List<SportsEvent> =
         if (SportsFollows.isEmpty(settings)) list
         else list.sortedByDescending {
@@ -1174,6 +1203,8 @@ private fun collectSections(
     )
 }
 
+internal enum class SportsDayCategory { TODAY, PAST, FUTURE }
+
 internal data class SplitDay(
     val live: List<SportsEvent>,
     val upcoming: List<SportsEvent>,
@@ -1187,6 +1218,13 @@ internal fun splitDay(games: List<SportsEvent>): SplitDay = SplitDay(
     upcoming = games.filter { it.state == GameState.PRE }.sortedBy { it.startMs },
     results = games.filter { it.state == GameState.POST }.sortedByDescending { it.startMs },
 )
+
+/** Historical and future date tabs are categories of the selected date, not stale feed states. */
+internal fun splitDayForDate(games: List<SportsEvent>, day: String, today: String): SplitDay = when {
+    day < today -> SplitDay(emptyList(), emptyList(), games.sortedByDescending { it.startMs })
+    day > today -> SplitDay(emptyList(), games.sortedBy { it.startMs }, emptyList())
+    else -> splitDay(games)
+}
 
 /** How long a game may legitimately stay live after kick-off; multi-day sports are exempt. */
 private const val MAX_LIVE_WINDOW_MS = 8 * 60 * 60_000L

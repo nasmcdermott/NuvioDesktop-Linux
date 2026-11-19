@@ -245,6 +245,7 @@ private fun SportsTeamRow(
 @Composable
 private fun TeamBadge(team: Team) {
     val tokens = MaterialTheme.nuvio
+    val logo = team.logo?.takeIf { it.isNotBlank() }
     Box(
         modifier = Modifier.size(tokens.icons.lg),
         contentAlignment = Alignment.Center,
@@ -256,16 +257,18 @@ private fun TeamBadge(team: Team) {
                 .background(team.color?.let(::Color) ?: tokens.colors.surfaceElevated),
             contentAlignment = Alignment.Center,
         ) {
-            Text(
-                text = team.abbreviation.take(4),
-                style = MaterialTheme.typography.labelSmall,
-                color = Color.White,
-                maxLines = 1,
-            )
+            if (logo == null) {
+                Text(
+                    text = team.abbreviation.take(4),
+                    style = MaterialTheme.typography.labelSmall,
+                    color = Color.White,
+                    maxLines = 1,
+                )
+            }
         }
-        team.logo?.takeIf { it.isNotBlank() }?.let { logo ->
+        logo?.let {
             NuvioAsyncImage(
-                model = logo,
+                model = it,
                 contentDescription = null,
                 modifier = Modifier.size(tokens.icons.lg),
                 contentScale = ContentScale.Fit,

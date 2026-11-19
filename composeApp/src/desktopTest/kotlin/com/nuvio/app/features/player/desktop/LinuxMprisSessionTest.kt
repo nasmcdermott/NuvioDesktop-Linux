@@ -8,6 +8,15 @@ import java.util.concurrent.atomic.AtomicInteger
 import kotlin.test.*
 
 class LinuxMprisSessionTest {
+    @Test fun relativeSeekOffsetsPreserveDirectionAndClampAtStart() {
+        assertEquals(5_000L, linuxMprisRelativeSeekMs(5_000_000.0))
+        assertEquals(-5_000L, linuxMprisRelativeSeekMs(-5_000_000.0))
+        assertNull(linuxMprisRelativeSeekMs(Double.NaN))
+        assertEquals(15_000L, linuxMprisSeekTargetMs(10_000L, 5_000_000.0))
+        assertEquals(0L, linuxMprisSeekTargetMs(3_000L, -5_000_000.0))
+        assertEquals(Long.MAX_VALUE, linuxMprisSeekTargetMs(Long.MAX_VALUE, Double.MAX_VALUE))
+    }
+
     private class Backend : LinuxMprisBackend {
         val attempts = AtomicInteger()
         val releases = AtomicInteger()

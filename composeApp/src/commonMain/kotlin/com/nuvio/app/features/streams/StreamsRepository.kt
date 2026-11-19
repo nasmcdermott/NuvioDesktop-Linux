@@ -31,6 +31,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.flow.update
 import nuvio.composeapp.generated.resources.*
 import org.jetbrains.compose.resources.getString
@@ -73,6 +74,9 @@ object StreamsRepository {
         episode: Int? = null,
         manualSelection: Boolean = false,
     ): String {
+        if (type.equals("sports", ignoreCase = true)) {
+            return "$type::$videoId::${season}::${episode}::$manualSelection"
+        }
         val resolvedEpisode = MediaIdResolver.resolveLocalEpisodeIdentity(
             contentType = type,
             parentMetaId = parentMetaId ?: videoId,
@@ -135,7 +139,8 @@ object StreamsRepository {
     }
 
     private suspend fun prepareLoad(type: String, videoId: String, parentMetaId: String?, title: String?, season: Int?, episode: Int?, manualSelection: Boolean, forceRefresh: Boolean, preferLocalStreams: Boolean) {
-        val resolvedEpisode = MediaIdResolver.resolveLocalEpisodeIdentity(
+        val isSportsRequest = type.equals("sports", ignoreCase = true)
+        val resolvedEpisode = if (isSportsRequest) null else MediaIdResolver.resolveLocalEpisodeIdentity(
             contentType = type,
             parentMetaId = parentMetaId ?: videoId,
             videoId = videoId,
@@ -146,9 +151,10 @@ object StreamsRepository {
         )
         currentCoroutineContext().ensureActive()
         PlaybackStartTrace.markPendingOrActive("streamsPrepare:identity")
-        val effectiveVideoId = resolvedEpisode.videoId
-        val effectiveSeason = resolvedEpisode.streamSeason
-        val effectiveEpisode = resolvedEpisode.streamEpisode
+        val effectiveVideoId = resolvedEpisode?.videoId ?: videoId
+        val effectiveSeason = resolvedEpisode?.streamSeason ?: season
+        val effectiveEpisode = resolvedEpisode?.streamEpisode ?: episode
+        if (isSportsRequest) AddonRepository.initialize()
         val pluginUiState = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.initialize()
             PluginRepository.uiState.value
@@ -187,10 +193,10 @@ object StreamsRepository {
         val streamBadgeRules = StreamBadgeSettingsRepository.snapshot()
         currentCoroutineContext().ensureActive()
         PlaybackStartTrace.markPendingOrActive("streamsPrepare:settings")
-        val localStreams = MetaDetailsRepository.findLocalStreams(effectiveVideoId)
+        val localStreams = if (isSportsRequest) emptyList() else MetaDetailsRepository.findLocalStreams(effectiveVideoId)
         // Media servers (upstream's servers feature): one group per connection that can serve this
         // title, loaded alongside the addons; a server set to "list first" goes on top.
-        val serverSources = com.nuvio.app.features.servers.ServerStreams.sources(
+        val serverSources = if (isSportsRequest) emptyList() else com.nuvio.app.features.servers.ServerStreams.sources(
             type = type,
             videoId = effectiveVideoId,
             season = effectiveSeason,
@@ -199,7 +205,7 @@ object StreamsRepository {
         )
         val preferredGroupIds = serverSources.filter { it.preferred }.mapTo(mutableSetOf()) { it.addonId }
         // Built-in Usenet (NuvioTV PR 4679): the user's indexers, searched alongside the addons.
-        val searchUsenet = com.nuvio.app.features.usenet.BuiltInUsenet.canSearch(type, effectiveVideoId)
+        val searchUsenet = !isSportsRequest && com.nuvio.app.features.usenet.BuiltInUsenet.canSearch(type, effectiveVideoId)
         currentCoroutineContext().ensureActive()
         PlaybackStartTrace.markPendingOrActive("streamsPrepare:localSources")
         val includeLocalInPicker = localStreams.isNotEmpty() && !preferLocalStreams
@@ -208,7 +214,7 @@ object StreamsRepository {
         // fetch below uses, so a background search and this load agree on the key for anime ids
         // that the resolver rewrote. A forced refresh never reads them: reload() exists precisely
         // because the caller has reason to distrust what it already has.
-        val prefetchContentKey = StreamPrefetchCache.contentKey(
+        val prefetchContentKey = if (isSportsRequest) "sports::$effectiveVideoId" else StreamPrefetchCache.contentKey(
             type = type,
             videoId = effectiveVideoId,
             season = effectiveSeason,
@@ -221,7 +227,7 @@ object StreamsRepository {
         }
         // The Continue Watching cache is shown first and refreshed; a forced refresh skips reading
         // it for the same reason it skips the prefetch, but still writes what it finds back.
-        val readCwCache = !forceRefresh
+        val readCwCache = !forceRefresh && !isSportsRequest
         _isEpisodeRequest.value = effectiveEpisode != null
         val scoreContext = StreamScoreContexts.forPlayback(
             isEpisode = effectiveEpisode != null,
@@ -270,7 +276,7 @@ object StreamsRepository {
         // A title the user set to play its best online source is the exception: its local copy is a
         // backup, still listed should auto-play fall back to the picker, but never a reason to stop.
         // Auto-play already skips the local group when it picks.
-        val localCopyIsBackup = includeLocalInPicker && !manualSelection &&
+        val localCopyIsBackup = !isSportsRequest && includeLocalInPicker && !manualSelection &&
             LocalLibraryRepository.routingFor(parentMetaId, effectiveVideoId).ignoresLocalFile
         val isDirectAutoPlayFlow = (!includeLocalInPicker || localCopyIsBackup || forcedAuto) && isAutoPlayEnabled
 
@@ -283,7 +289,7 @@ object StreamsRepository {
             )
         }
 
-        val embeddedStreams = MetaDetailsRepository.findEmbeddedStreams(effectiveVideoId)
+        val embeddedStreams = if (isSportsRequest) emptyList() else MetaDetailsRepository.findEmbeddedStreams(effectiveVideoId)
         val directStreams = when {
             preferLocalStreams && localStreams.isNotEmpty() -> localStreams
             embeddedStreams.isNotEmpty() -> embeddedStreams
@@ -317,18 +323,30 @@ object StreamsRepository {
             return
         }
 
+        if (isSportsRequest) {
+            AddonRepository.initialize()
+            kotlinx.coroutines.withTimeoutOrNull(3_000L) {
+                AddonRepository.awaitManifestsLoaded()
+            }
+        }
         val installedAddons = AddonRepository.uiState.value.addons.enabledAddons()
         val pluginScrapers = if (AppFeaturePolicy.pluginsEnabled) {
             PluginRepository.getEnabledScrapersForType(type)
         } else {
             emptyList()
         }
-        val pluginProviderGroups = pluginScrapers.toPluginProviderGroups(
+        val sportsPluginScrapers = if (isSportsRequest) pluginScrapers.filter { scraper ->
+            scraper.supportedTypes.any { it.equals("sports", ignoreCase = true) }
+        } else pluginScrapers
+        val pluginProviderGroups = sportsPluginScrapers.toPluginProviderGroups(
             repositories = pluginUiState.repositories,
             groupByRepository = pluginUiState.groupStreamsByRepository,
         )
 
-        if (installedAddons.isEmpty() && pluginProviderGroups.isEmpty()) {
+        val sportsCatalogTargets = if (isSportsRequest) sportsAddonCatalogTargets(installedAddons) else emptyList()
+        val sportsSearchTerms = if (isSportsRequest) sportsSearchTerms(title.orEmpty()) else emptyList()
+
+        if (installedAddons.isEmpty() && sportsCatalogTargets.isEmpty() && pluginProviderGroups.isEmpty()) {
             if (includeLocalInPicker) {
                 _uiState.value = localOnlyStreamsState(requestToken, localStreams, streamBadgeRules)
                 return
@@ -346,7 +364,7 @@ object StreamsRepository {
                 val manifest = addon.manifest ?: return@mapNotNull null
                 val supportsRequestedStream = manifest.resources.any { resource ->
                     resource.name == "stream" &&
-                        resource.types.contains(type) &&
+                        resource.types.any { it.equals(type, ignoreCase = true) } &&
                         (resource.idPrefixes.isEmpty() ||
                             resource.idPrefixes.any { effectiveVideoId.startsWith(it) })
                 }
@@ -359,9 +377,12 @@ object StreamsRepository {
                 )
             }
 
-        log.d { "Found ${streamAddons.size} addons for stream type=$type id=$effectiveVideoId" }
+        log.d {
+            "Found ${streamAddons.size} direct addons and ${sportsCatalogTargets.size} searchable catalogs " +
+                "for stream type=$type id=$effectiveVideoId"
+        }
 
-        if (streamAddons.isEmpty() && pluginProviderGroups.isEmpty() && serverSources.isEmpty() && !searchUsenet) {
+        if (streamAddons.isEmpty() && sportsCatalogTargets.isEmpty() && pluginProviderGroups.isEmpty() && serverSources.isEmpty() && !searchUsenet) {
             if (includeLocalInPicker) {
                 _uiState.value = localOnlyStreamsState(requestToken, localStreams, streamBadgeRules)
                 return
@@ -389,20 +410,28 @@ object StreamsRepository {
                     )
                 }
                 addAll(streamAddons.map { addon ->
-            AddonStreamGroup(
-                addonName = addon.addonName,
-                addonId = addon.addonId,
-                streams = emptyList(),
-                isLoading = true,
-            )
+                    AddonStreamGroup(
+                        addonName = addon.addonName,
+                        addonId = addon.addonId,
+                        streams = emptyList(),
+                        isLoading = true,
+                    )
+                })
+                addAll(sportsCatalogTargets.map { target ->
+                    AddonStreamGroup(
+                        addonName = "${target.addon.displayTitle} · ${target.catalog.name}",
+                        addonId = target.groupId,
+                        streams = emptyList(),
+                        isLoading = true,
+                    )
                 })
                 addAll(pluginProviderGroups.map { providerGroup ->
-            AddonStreamGroup(
-                addonName = providerGroup.addonName,
-                addonId = providerGroup.addonId,
-                streams = emptyList(),
-                isLoading = true,
-            )
+                    AddonStreamGroup(
+                        addonName = providerGroup.addonName,
+                        addonId = providerGroup.addonId,
+                        streams = emptyList(),
+                        isLoading = true,
+                    )
                 })
                 addAll(serverSources.map { it.loadingGroup() })
                 if (searchUsenet) add(com.nuvio.app.features.usenet.BuiltInUsenet.loadingGroup())
@@ -431,7 +460,7 @@ object StreamsRepository {
         activeJob = scope.launch {
             val completions = Channel<StreamLoadCompletion>(capacity = Channel.BUFFERED)
             // Native anime episodes: TMDB coordinates for plugin scrapers and the addon fallback.
-            val animeTmdbLocation = if (AnimeTmdbEpisodeLocator.appliesTo(resolvedEpisode)) {
+            val animeTmdbLocation = if (resolvedEpisode != null && AnimeTmdbEpisodeLocator.appliesTo(resolvedEpisode)) {
                 async { runCatchingUnlessCancelled { AnimeTmdbEpisodeLocator.locate(resolvedEpisode) }.getOrNull() }
             } else {
                 null
@@ -441,6 +470,7 @@ object StreamsRepository {
                 .toMutableMap()
             val pluginFirstErrorByAddonId = mutableMapOf<String, String>()
             val totalTasks = streamAddons.size +
+                sportsCatalogTargets.size +
                 pluginProviderGroups.sumOf { it.scrapers.size }
 
             val installedAddonNames = installedAddonOrder.toSet()
@@ -722,6 +752,73 @@ object StreamsRepository {
                 },
             )
 
+            sportsCatalogTargets.forEach { target ->
+                launch {
+                    val terms = sportsSearchTerms
+                    val groupName = "${target.addon.displayTitle} · ${target.catalog.name}"
+                    val results = runCatchingUnlessCancelled {
+                        val manifest = requireNotNull(target.addon.manifest)
+                        val candidates = terms.flatMap { term ->
+                            com.nuvio.app.features.catalog.fetchCatalogPage(
+                                manifestUrl = manifest.transportUrl,
+                                type = target.type,
+                                catalogId = target.catalog.id,
+                                search = term,
+                                maxItems = 50,
+                            ).items
+                        }.distinctBy { "${it.type}:${it.id}" }
+                            .filter { sportsMatchesEvent(it, terms) }
+                            .take(12)
+                        kotlinx.coroutines.coroutineScope {
+                            candidates.map { meta ->
+                                async {
+                                    val streamResource = manifest.resources.firstOrNull { resource ->
+                                        resource.name.equals("stream", ignoreCase = true) &&
+                                            resource.types.any { it.equals(meta.type, ignoreCase = true) } &&
+                                            (resource.idPrefixes.isEmpty() || resource.idPrefixes.any { meta.id.startsWith(it) })
+                                    } ?: return@async emptyList()
+                                    val url = buildAddonResourceUrl(
+                                        manifestUrl = manifest.transportUrl,
+                                        resource = streamResource.name,
+                                        type = meta.type,
+                                        id = meta.id,
+                                    )
+                                    StreamParser.parse(
+                                        payload = httpGetTextWithHeaders(url, STREAM_METADATA_REQUEST_HEADERS),
+                                        addonName = groupName,
+                                        addonId = target.groupId,
+                                        addonLogo = manifest.logoUrl,
+                                    ).map { stream ->
+                                        stream.copy(
+                                            title = stream.title ?: meta.name,
+                                            description = stream.description ?: "${meta.name} · ${target.addon.displayTitle}",
+                                        )
+                                    }
+                                }
+                            }.flatMap { it.await() }
+                        }.distinctBy { it.directPlaybackUrl ?: it.infoHash ?: it.title }
+                    }
+                    val (streams, error) = results.fold(
+                        onSuccess = { it to null },
+                        onFailure = { exception ->
+                            log.w(exception) { "Sports catalog search failed for ${target.addon.displayTitle}" }
+                            emptyList<StreamItem>() to exception.message
+                        },
+                    )
+                    publishCompletion(
+                        StreamLoadCompletion.Addon(
+                            AddonStreamGroup(
+                                addonName = groupName,
+                                addonId = target.groupId,
+                                streams = streams,
+                                isLoading = false,
+                                error = error,
+                            ),
+                        ),
+                    )
+                }
+            }
+
             streamAddons.forEach { addon ->
                 launch {
                     val displayName = addon.addonName
@@ -804,7 +901,10 @@ object StreamsRepository {
                         if (removedCount > 0) {
                             log.d { "Filtered $removedCount explicit episode mismatches from $displayName" }
                         }
-                        if (!streams.hasPlayableStream() && AnimeFranchiseEpisodeLocator.appliesTo(resolvedEpisode)) {
+                        if (
+                            resolvedEpisode != null && !streams.hasPlayableStream() &&
+                            AnimeFranchiseEpisodeLocator.appliesTo(resolvedEpisode)
+                        ) {
                             animeFranchiseFallbackStreams(
                                 franchiseVideoId = AnimeFranchiseEpisodeLocator.franchiseVideoId(
                                     identity = resolvedEpisode,
@@ -909,7 +1009,12 @@ object StreamsRepository {
                             if (cwRows.isNotEmpty()) publishCachedPluginRows(providerGroup.addonId, cwRows)
                         }
 
-                        val pluginTarget = resolvedEpisode.pluginEpisodeTarget(animeTmdbLocation?.await())
+                        val pluginTarget = resolvedEpisode?.pluginEpisodeTarget(animeTmdbLocation?.await())
+                            ?: com.nuvio.app.features.streams.PluginEpisodeTarget(
+                                contentId = effectiveVideoId,
+                                season = null,
+                                episode = null,
+                            )
                         val completion = PluginRepository.executeScraper(
                             scraper = scraper,
                             tmdbId = pluginTarget.contentId,

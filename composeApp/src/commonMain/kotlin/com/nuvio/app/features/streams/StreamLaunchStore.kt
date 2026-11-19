@@ -23,6 +23,8 @@ data class StreamLaunch(
     val resumePositionMs: Long? = null,
     val resumeProgressFraction: Float? = null,
     val manualSelection: Boolean = false,
+    /** Sports detail source row: start the picker on this provider/catalog group. */
+    val initialFilterAddonId: String? = null,
     // Continue Watching's source shortcut: replay the cached last link even when Reuse Last Link
     // is off. Falls through to the normal flow when nothing is cached.
     val reuseLastLink: Boolean = false,

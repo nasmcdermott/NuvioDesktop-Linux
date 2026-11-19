@@ -48,6 +48,43 @@ class SportsResultsAndStalenessTest {
     }
 
     @Test
+    fun `past selected dates categorize every event as past games`() {
+        val split = splitDayForDate(
+            listOf(game("post", GameState.POST, 3L), game("stale-live", GameState.LIVE, 2L), game("pre", GameState.PRE, 1L)),
+            day = "20260109",
+            today = "20260110",
+        )
+
+        assertTrue(split.live.isEmpty())
+        assertTrue(split.upcoming.isEmpty())
+        assertEquals(listOf("post", "stale-live", "pre"), split.results.map { it.id })
+    }
+
+    @Test
+    fun `future selected dates categorize every event as upcoming`() {
+        val split = splitDayForDate(
+            listOf(game("post", GameState.POST, 3L), game("live", GameState.LIVE, 2L), game("pre", GameState.PRE, 1L)),
+            day = "20260111",
+            today = "20260110",
+        )
+
+        assertTrue(split.live.isEmpty())
+        assertTrue(split.results.isEmpty())
+        assertEquals(listOf("pre", "live", "post"), split.upcoming.map { it.id })
+    }
+
+    @Test
+    fun `today retains actual live upcoming and past states`() {
+        val games = listOf(game("live", GameState.LIVE, 2L), game("pre", GameState.PRE, 1L), game("post", GameState.POST, 3L))
+
+        val split = splitDayForDate(games, day = "20260110", today = "20260110")
+
+        assertEquals(listOf("live"), split.live.map { it.id })
+        assertEquals(listOf("pre"), split.upcoming.map { it.id })
+        assertEquals(listOf("post"), split.results.map { it.id })
+    }
+
+    @Test
     fun `a day of nothing is empty, which drives the empty state`() {
         assertTrue(splitDay(emptyList()).isEmpty)
         // One finished game is not nothing: a past day with results must not say "No games".
@@ -76,6 +113,14 @@ class SportsResultsAndStalenessTest {
 
         assertTrue(SportsFollows.isInMySports(settings, finished))
         assertEquals(listOf("a"), splitDay(SportsFollows.mySports(settings, listOf(finished))).results.map { it.id })
+    }
+
+    @Test
+    fun `sports event stream id carries ESPN league path and event id`() {
+        val league = SportsCatalog.league("football/nfl")!!
+        val event = game("401234567", GameState.PRE, 1L)
+
+        assertEquals("espn:football/nfl:401234567", sportsEventStreamId(league, event))
     }
 
     @Test
