@@ -126,7 +126,7 @@ private fun LeaderRow(category: TeamLeaderCategory, team: Team) {
         verticalAlignment = Alignment.CenterVertically,
         horizontalArrangement = Arrangement.spacedBy(7.dp),
     ) {
-        PlayerAvatar(category.leader, team)
+        PlayerAvatar(category.leader.name, category.leader.headshot, team)
         Column(Modifier.weight(1f)) {
             Text(
                 text = category.name,
@@ -158,11 +158,133 @@ private fun LeaderRow(category: TeamLeaderCategory, team: Team) {
     }
 }
 
+/** Both teams' reported injuries, underneath season leaders. */
+@Composable
+internal fun SportsInjuryReport(
+    event: SportsEvent,
+    injuries: List<TeamInjuries>,
+    modifier: Modifier = Modifier,
+) {
+    val tokens = MaterialTheme.nuvio
+    val byTeam = remember(injuries) { injuries.associateBy { it.teamId } }
+    val ordered = listOf(event.away.team, event.home.team).mapNotNull { team ->
+        byTeam[team.id]?.takeIf { it.reports.isNotEmpty() }?.let { team to it.reports }
+    }
+    if (ordered.isEmpty()) return
+
+    Column(
+        modifier = modifier
+            .fillMaxWidth()
+            .clip(tokens.shapes.card)
+            .background(tokens.colors.surfaceCard)
+            .border(tokens.borders.hairline, tokens.colors.borderSubtle, tokens.shapes.card)
+            .padding(tokens.spacing.cardPaddingCompact),
+        verticalArrangement = Arrangement.spacedBy(9.dp),
+    ) {
+        Text(
+            text = "INJURY REPORT",
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.SemiBold,
+            color = tokens.colors.textSecondary,
+        )
+        ordered.forEach { (team, reports) ->
+            Column(verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(6.dp),
+                ) {
+                    TeamMark(team)
+                    Text(
+                        text = team.shortName.ifBlank { team.abbreviation },
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = tokens.colors.textSecondary,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                    )
+                }
+                reports.forEach { report -> InjuryRow(report, team) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun InjuryRow(report: InjuryReport, team: Team) {
+    val tokens = MaterialTheme.nuvio
+    val statusColor = when {
+        report.status == null -> tokens.colors.textSecondary
+        report.status.contains("out", ignoreCase = true) ||
+            report.status.contains("reserve", ignoreCase = true) -> tokens.colors.danger
+        report.status.contains("day", ignoreCase = true) ||
+            report.status.contains("question", ignoreCase = true) ||
+            report.status.contains("doubtful", ignoreCase = true) -> tokens.colors.warning
+        else -> tokens.colors.textSecondary
+    }
+    Row(
+        modifier = Modifier.fillMaxWidth(),
+        verticalAlignment = Alignment.Top,
+        horizontalArrangement = Arrangement.spacedBy(7.dp),
+    ) {
+        PlayerAvatar(report.name, report.headshot, team)
+        Column(Modifier.weight(1f)) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(6.dp),
+            ) {
+                Text(
+                    text = listOfNotNull(report.name, report.position?.takeIf { it.isNotBlank() })
+                        .joinToString(" · "),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = tokens.colors.textPrimary,
+                    modifier = Modifier.weight(1f),
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+                report.status?.let { status ->
+                    Text(
+                        text = status,
+                        style = MaterialTheme.typography.labelSmall,
+                        fontWeight = FontWeight.SemiBold,
+                        color = statusColor,
+                        maxLines = 1,
+                    )
+                }
+            }
+            val detail = listOfNotNull(
+                report.injury,
+                report.note?.takeIf { it != report.injury },
+                report.side,
+            ).joinToString(" · ")
+            val meta = listOfNotNull(
+                detail.takeIf { it.isNotBlank() },
+                report.returnDate?.let(::injuryReturnText)?.let { "Return $it" },
+            ).joinToString(" · ")
+            if (meta.isNotBlank()) {
+                Text(
+                    text = meta,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = tokens.colors.textMuted,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis,
+                )
+            }
+        }
+    }
+}
+
+/** "2026-11-29" → "Nov 29"; the raw ISO date is not what a reader wants under a name. */
+private fun injuryReturnText(raw: String): String? = runCatching {
+    java.time.LocalDate.parse(raw)
+        .format(java.time.format.DateTimeFormatter.ofPattern("MMM d", java.util.Locale.getDefault()))
+}.getOrNull()
+
 /** A player's headshot in a team-coloured circle; initials when the provider sends no picture. */
 @Composable
-private fun PlayerAvatar(leader: SeasonLeader, team: Team) {
+private fun PlayerAvatar(name: String, headshotUrl: String?, team: Team) {
     val tokens = MaterialTheme.nuvio
-    val headshot = leader.headshot?.takeIf { it.isNotBlank() }
+    val headshot = headshotUrl?.takeIf { it.isNotBlank() }
     Box(
         modifier = Modifier
             .size(26.dp)
@@ -179,7 +301,7 @@ private fun PlayerAvatar(leader: SeasonLeader, team: Team) {
             )
         } else {
             Text(
-                text = leader.name.split(' ').lastOrNull()?.take(1)?.uppercase() ?: "?",
+                text = name.split(' ').lastOrNull()?.take(1)?.uppercase() ?: "?",
                 style = MaterialTheme.typography.labelSmall,
                 fontWeight = FontWeight.Bold,
                 color = Color.White,

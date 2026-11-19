@@ -702,6 +702,7 @@ internal fun SportsGameDetail(
                 loadedSummary.categories.isNotEmpty() ||
                 loadedSummary.leaders.isNotEmpty() ||
                 loadedSummary.news.isNotEmpty() ||
+                loadedSummary.injuries.isNotEmpty() ||
                 moneyline != null
             ) {
                 item(key = "play-by-play-stats-odds") {
@@ -792,6 +793,7 @@ internal fun SportsGameDetail(
                         val hasPlayerStats = loadedSummary.categories.isNotEmpty()
                         val hasLeaders = loadedSummary.leaders.isNotEmpty()
                         val hasNews = loadedSummary.news.isNotEmpty()
+                        val hasInjuries = loadedSummary.injuries.isNotEmpty()
                         if (maxWidth >= 1100.dp) {
                             Row(
                                 modifier = Modifier.fillMaxWidth(),
@@ -802,7 +804,7 @@ internal fun SportsGameDetail(
                                     Column(Modifier.weight(1.3f)) { playsContent() }
                                 }
                                 val hasMiddle = hasTeamStats || hasPlayerStats
-                                val hasRight = moneyline != null || hasNews || hasLeaders
+                                val hasRight = moneyline != null || hasNews || hasLeaders || hasInjuries
                                 if (hasMiddle || hasRight) {
                                     Column(
                                         modifier = Modifier.weight(1.95f),
@@ -828,6 +830,7 @@ internal fun SportsGameDetail(
                                                         moneyline = moneyline,
                                                         news = loadedSummary.news,
                                                         leaders = loadedSummary.leaders,
+                                                        injuries = loadedSummary.injuries,
                                                         stretchNews = true,
                                                         modifier = Modifier.weight(0.9f).fillMaxHeight(),
                                                     )
@@ -864,6 +867,7 @@ internal fun SportsGameDetail(
                                                         moneyline = moneyline,
                                                         news = loadedSummary.news,
                                                         leaders = loadedSummary.leaders,
+                                                        injuries = loadedSummary.injuries,
                                                         stretchNews = false,
                                                         modifier = Modifier.weight(if (hasPlayerStats) 0.9f else 1f),
                                                     )
@@ -881,6 +885,7 @@ internal fun SportsGameDetail(
                                 if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
                                 if (hasNews) SportsTeamNews(event, loadedSummary.news)
                                 if (hasLeaders) SportsSeasonLeaders(event, loadedSummary.leaders)
+                                if (hasInjuries) SportsInjuryReport(event, loadedSummary.injuries)
                             }
                         }
                     }
@@ -1855,6 +1860,7 @@ private fun SportsOddsNewsColumn(
     moneyline: MoneylineOdds?,
     news: List<TeamNews>,
     leaders: List<TeamLeaders>,
+    injuries: List<TeamInjuries>,
     stretchNews: Boolean,
     modifier: Modifier = Modifier,
 ) {
@@ -1862,6 +1868,7 @@ private fun SportsOddsNewsColumn(
     val gap = tokens.spacing.controlGap
     val hasNews = news.isNotEmpty()
     val hasLeaders = leaders.isNotEmpty()
+    val hasInjuries = injuries.isNotEmpty()
     if (!stretchNews) {
         Column(
             modifier = modifier,
@@ -1870,6 +1877,7 @@ private fun SportsOddsNewsColumn(
             if (moneyline != null) SportsMoneylinePanel(event, moneyline, Modifier.fillMaxWidth())
             if (hasNews) SportsTeamNews(event = event, news = news)
             if (hasLeaders) SportsSeasonLeaders(event, leaders)
+            if (hasInjuries) SportsInjuryReport(event, injuries)
         }
         return
     }
@@ -1880,6 +1888,7 @@ private fun SportsOddsNewsColumn(
         }
         if (hasNews) add { SportsTeamNews(event = event, news = news) }
         if (hasLeaders) add { SportsSeasonLeaders(event, leaders) }
+        if (hasInjuries) add { SportsInjuryReport(event, injuries) }
     }
     if (contents.isEmpty()) return
 

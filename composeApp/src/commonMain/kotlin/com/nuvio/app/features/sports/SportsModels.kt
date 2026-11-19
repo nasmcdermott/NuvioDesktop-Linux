@@ -266,6 +266,31 @@ data class TeamNews(
     val articles: List<NewsArticle> = emptyList(),
 )
 
+/** One player on a team's injury report. */
+@Serializable
+data class InjuryReport(
+    val name: String,
+    val position: String? = null,
+    val headshot: String? = null,
+    /** "Out", "Day-To-Day", "Injured Reserve". */
+    val status: String? = null,
+    /** The injury itself ("Hamstring", "Concussion"). */
+    val injury: String? = null,
+    /** Extra note from the provider ("Surgery"), when it says more than [injury]. */
+    val note: String? = null,
+    /** "Left", "Right" — dropped when the provider sends "Not Specified". */
+    val side: String? = null,
+    /** ISO date ("2026-11-29"), when the provider projects one. */
+    val returnDate: String? = null,
+)
+
+/** One team's injury report. */
+@Serializable
+data class TeamInjuries(
+    val teamId: String,
+    val reports: List<InjuryReport> = emptyList(),
+)
+
 /** A stat line for one player. [headline] is the provider's own summary of them. */
 @Serializable
 data class PlayerStat(
@@ -306,6 +331,8 @@ data class GameSummary(
     val leaders: List<TeamLeaders> = emptyList(),
     /** Recent news for each of the game's two teams. */
     val news: List<TeamNews> = emptyList(),
+    /** Injury reports per team, when the provider sends them. */
+    val injuries: List<TeamInjuries> = emptyList(),
     /** Per-player categories (passing, rushing, receiving…), in the provider's order. */
     val categories: List<StatCategory> = emptyList(),
     /** Moneyline/line data from the summary's pickcenter when the scoreboard has none. */

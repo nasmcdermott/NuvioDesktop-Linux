@@ -167,6 +167,35 @@ class EspnBoxScoreTest {
     }
 
     @Test
+    fun `injury reports parse per team with status and return date`() = runBlocking {
+        val body = """
+            {"injuries":[
+              {"team":{"id":"17"},"injuries":[
+                {"status":"Out","athlete":{"displayName":"Brenden Schooler",
+                  "position":{"abbreviation":"S"},"headshot":{"href":"https://cdn/schooler.png"}},
+                 "details":{"type":"Hamstring","detail":"Not Specified","side":"Left",
+                   "returnDate":"2026-11-29"}}
+              ]},
+              {"team":{"id":"19"},"injuries":[]}
+            ]}
+        """.trimIndent()
+
+        val injuries = feed(body).summary(nfl, "1").injuries
+
+        assertEquals(1, injuries.size)
+        assertEquals("17", injuries.single().teamId)
+        val report = injuries.single().reports.single()
+        assertEquals("Brenden Schooler", report.name)
+        assertEquals("S", report.position)
+        assertEquals("Out", report.status)
+        assertEquals("Hamstring", report.injury)
+        assertNull(report.note, "\"Not Specified\" is not a note")
+        assertEquals("Left", report.side)
+        assertEquals("2026-11-29", report.returnDate)
+        assertEquals("https://cdn/schooler.png", report.headshot)
+    }
+
+    @Test
     fun `one team alone is not a comparison`() = runBlocking {
         val body = """{"boxscore":{"teams":[{"statistics":[{"name":"sacks","displayValue":"3"}]}]}}"""
 

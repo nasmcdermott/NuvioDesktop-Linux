@@ -88,6 +88,7 @@ internal class EspnSportsFeed(
             teamStats = teamStats(boxscore),
             leaders = extras.first,
             news = extras.second,
+            injuries = injuriesOf(root["injuries"]?.asArray()),
             categories = statCategories(boxscore),
             moneyline = moneylineOf(root),
         )
@@ -975,6 +976,37 @@ internal class EspnSportsFeed(
         if (!header.isNullOrBlank()) return header
         return images.firstNotNullOfOrNull {
             it.jsonObjectOrNull()?.get("url")?.stringOrNull()?.takeIf(String::isNotBlank)
+        }
+    }
+
+    /** The provider's embedded injury report, per team; empty when a league sends none. */
+    private fun injuriesOf(blocks: JsonArray?): List<TeamInjuries> {
+        if (blocks == null) return emptyList()
+        return blocks.mapNotNull { blockElement ->
+            val block = blockElement.jsonObjectOrNull() ?: return@mapNotNull null
+            val teamId = block["team"]?.jsonObjectOrNull()?.get("id")?.stringOrNull()
+                ?: return@mapNotNull null
+            val reports = block["injuries"]?.asArray().orEmpty().mapNotNull { entryElement ->
+                val entry = entryElement.jsonObjectOrNull() ?: return@mapNotNull null
+                val athlete = entry["athlete"]?.jsonObjectOrNull() ?: return@mapNotNull null
+                val name = athlete["displayName"]?.stringOrNull() ?: return@mapNotNull null
+                val details = entry["details"]?.jsonObjectOrNull()
+                InjuryReport(
+                    name = name,
+                    position = athlete["position"]?.jsonObjectOrNull()?.get("abbreviation")?.stringOrNull(),
+                    headshot = athlete["headshot"]?.jsonObjectOrNull()?.get("href")?.stringOrNull(),
+                    status = entry["status"]?.stringOrNull()?.takeIf { it.isNotBlank() },
+                    injury = details?.get("type")?.stringOrNull()
+                        ?.takeIf { it.isNotBlank() && it != "Not Specified" },
+                    note = details?.get("detail")?.stringOrNull()
+                        ?.takeIf { it.isNotBlank() && it != "Not Specified" },
+                    side = details?.get("side")?.stringOrNull()
+                        ?.takeIf { it.isNotBlank() && it != "Not Specified" },
+                    returnDate = details?.get("returnDate")?.stringOrNull()
+                        ?.takeIf { it.isNotBlank() },
+                )
+            }
+            TeamInjuries(teamId, reports).takeIf { reports.isNotEmpty() }
         }
     }
 
